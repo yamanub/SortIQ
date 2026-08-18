@@ -254,6 +254,46 @@
   #topBar { position: sticky; top: 0; z-index: 600;
     transition: transform .18s ease; }
   #topBar.hid { transform: translateY(-100%); }
+  /* ------- the report modal: summary + per-bin views ------- */
+  #repModal { display: none; position: fixed; inset: 0; z-index: 990;
+    background: rgba(10,12,16,.72); overflow-y: auto; }
+  .repMBox { background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; width: min(1060px, 94vw); margin: 5vh auto 7vh;
+    padding: 18px 22px; box-shadow: 0 16px 60px rgba(0,0,0,.6); }
+  .repHead { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .repHead h2 { margin: 0; font-size: 17px; color: var(--brass); }
+  .repVitals { display: flex; gap: 30px; margin: 16px 2px 6px; flex-wrap: wrap; }
+  .repVitals .v b { display: block; font-size: 30px; font-weight: 800;
+    line-height: 1.05; }
+  .repVitals .v span { font-size: 11px; color: var(--dim);
+    text-transform: uppercase; letter-spacing: .05em; }
+  .repBins { display: grid; grid-template-columns: repeat(4, minmax(0,1fr));
+    gap: 10px; margin-top: 14px; }
+  .rbt { background: var(--panel2); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 13px; cursor: pointer; display: flex;
+    gap: 11px; align-items: center; }
+  .rbt:hover { border-color: var(--brass); }
+  .rbt.um { border-color: var(--um); }
+  .rbt .lbl { font-size: 12.5px; font-weight: 600; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+  .rbt .lbl small { display: block; color: var(--dim); font-weight: 400; }
+  .rbt .cnt { margin-left: auto; font-size: 21px; font-weight: 800; }
+  .numB2 { font-size: 12.5px; font-weight: 800; color: var(--bg);
+    background: var(--brass); border-radius: 6px; padding: 1px 9px; flex: none; }
+  .repBanner { display: flex; gap: 12px; align-items: baseline;
+    background: var(--brass); color: var(--bg); border-radius: 8px;
+    padding: 9px 15px; margin-top: 14px; flex-wrap: wrap; }
+  .repBanner b { font-size: 17px; letter-spacing: .5px; }
+  .repBanner span { font-size: 12.5px; font-weight: 600;
+    color: rgba(0,0,0,.62); }
+  .repPager { display: flex; gap: 6px; justify-content: center;
+    margin-top: 14px; flex-wrap: wrap; }
+  #repZoom { display: none; position: fixed; inset: 0; z-index: 1200;
+    background: rgba(10,12,16,.85); align-items: center;
+    justify-content: center; cursor: zoom-out; }
+  #repZoom img { max-width: 92vw; max-height: 92vh; border-radius: 10px;
+    box-shadow: 0 20px 80px rgba(0,0,0,.8); }
+  .revCard img { cursor: zoom-in; }
   .thumbGrid .cell { position: relative; }
   .thumbGrid img { width: 100%; border-radius: 6px; border: 1px solid var(--line);
                    display: block; }
@@ -1369,12 +1409,8 @@
     </div>
     <div class="ctlRow">
       <select id="revRun" style="max-width:320px"></select>
-      <button class="ghost" id="btnRevLoad">Load rejects</button>
-      <button class="ghost" id="btnRepView"
-        title="the picked run's full per-bin report, every section at once">View report</button>
+      <button class="ghost" id="btnRepView">View report</button>
     </div>
-    <div id="repView"></div>
-    <div id="revGrid" class="revGrid"></div>
     <div class="msg" id="revMsg"></div>
   </div>
 </section>
@@ -1573,6 +1609,16 @@
     </div>
   </details>
 </section>
+
+<!-- the run-report modal: summary of bins, or one bin's cases —
+     rejects included (they're part of the run's story) -->
+<div id="repModal" onclick="if(event.target===this) repClose()">
+  <div class="repMBox">
+    <div id="repMBody"></div>
+    <div class="msg" id="repMMsg"></div>
+  </div>
+</div>
+<div id="repZoom" onclick="this.style.display='none'"><img id="repZoomImg"></div>
 
 <!-- ================================ DOCS ================================ -->
 <section id="docs">
@@ -5093,29 +5139,12 @@ function renderBinStats() {
       // a bin earns its link from the live count OR from the loaded
       // report itself — the latter keeps reports reachable after a
       // server restart, when every live count reads zero
-      const hasRep = !!(pollRun._repHtml && pollRun._repHtml[i]);
+      const rd = pollRun._repData;
+      const hasRep = !!(rd && rd.cases.some(c => c.bin === i));
       if (finished && (cnt || isUM || hasRep)) {
         v.style.display = "";
-        if (isUM) {
-          // rejects review AND the classified riders' report section —
-          // riders (no_bin_mapping without an OVERFLOW bin, classes
-          // mapped here on purpose) are not rejects and live only in
-          // the report
-          v.innerHTML = `<span class="umRej">review rejects ›</span>${
-            hasRep ? `<span style="color:var(--dim); font-weight:400">
-              &nbsp;·&nbsp;</span><span class="umRode">view bin ›</span>` : ""}`;
-          v.onclick = null;
-          v.querySelector(".umRej").onclick = () => {
-            $("repView").innerHTML = "";
-            $("btnRevLoad").click();
-            $("revGrid").scrollIntoView({ behavior: "smooth" });
-          };
-          const rode = v.querySelector(".umRode");
-          if (rode) rode.onclick = () => showBinReport(i);
-        } else {
-          v.textContent = "view cases ›";
-          v.onclick = () => showBinReport(i);
-        }
+        v.textContent = isUM ? "review rejects ›" : "view cases ›";
+        v.onclick = () => repOpen(pollRun._repRun, "bin", i);
       } else v.style.display = "none";
     }
   });
@@ -5168,8 +5197,9 @@ function renderSortBar(s) {
       <div class="sgStat"><b>${s.jams}</b><span>jams</span></div>${extra}
       <div class="sgRight">
         <span class="muted" style="font-size:12.5px">${s.run_id} · finished</span>
+        <button class="ghost" onclick="repOpen('${s.run_id}', 'summary')">Report</button>
         ${s.rejected ? `<button class="ghost" style="color:var(--amber)"
-          onclick="$('btnRevLoad').click(); $('revGrid').scrollIntoView({behavior:'smooth'})"
+          onclick="repOpen('${s.run_id}', 'bin', ${STATE.unmatched_bin ?? 0})"
           >Review rejects (${s.rejected})</button>` : ""}
         <button style="background:var(--green); border-color:var(--green);
           color:var(--bg); font:inherit; font-weight:700; border-radius:7px;
@@ -5335,7 +5365,7 @@ async function pollRun() {
   // a new LIVE run instantly retires the previous run's cached report —
   // its stats and sections must never dress the new run's tally
   if (s.running && s.run_id !== pollRun._repRun) {
-    pollRun._repHtml = pollRun._repStats = pollRun._repSim = null;
+    pollRun._repData = pollRun._repStats = pollRun._repSim = null;
     pollRun._repRun = null;
   }
   const recentKey = last ? s.recent.map(r => r.n).join() : "";
@@ -5473,7 +5503,6 @@ async function loadRuns() {
       : `<option value="">no sorting runs yet</option>`;
   } catch {}
 }
-$("btnRevLoad").onclick = () => loadRejects();
 let lastReportShown = null;
 
 async function loadReport(runId) {
@@ -5481,84 +5510,11 @@ async function loadReport(runId) {
   if (!run) return;
   try {
     const j = await api(`/api/runs/${run}/report`);
-    // pure DATA loader — paints nothing. An open reject review (typed,
-    // unsaved corrections in revGrid) must survive a report refresh.
-    const reasonRow = Object.entries(j.reasons).sort((a, c) => c[1] - a[1])
-      .map(([r, n]) => `${REASONS[r] || r}: <b>${n}</b>`).join(" · ");
-    const byBin = {};
-    const repHtml = {};
-    j.cases.forEach(c => (byBin[c.bin] = byBin[c.bin] || []).push(c));
-    const caseCard = c => `
-        <div class="revCard" id="case_${c.n}">
-          ${c.thumb ? `<img src="${c.thumb}">` : ""}
-          <div class="why">#${c.n} · ${c.stamp || "?"} · ${Math.round(c.conf * 100)}%</div>
-          <div class="caseAct" style="display:flex; gap:6px">${c.filed
-            ? `<span class="pill ok">filed ✓</span>`
-            : `<input list="classList" class="revStamp" style="flex:1"
-                 autocomplete="off" spellcheck="false"
-                 value="${c.stamp || ""}">
-               <button class="ghost" style="padding:2px 10px"
-                 onclick="caseResolve('${run}', ${c.n})">File</button>`}
-          </div>
-        </div>`;
-    // a shared slot (several classes deliberately mapped to one bin,
-    // plus unmatched overflow) sub-groups its cases by class: mapped
-    // classes first, then the unassigned riders — single-class bins
-    // keep the flat grid
-    const grids = Object.entries(byBin).map(([b, cs]) => {
-      const byCls = {};
-      cs.forEach(c => {
-        const s = c.stamp || "?";
-        (byCls[s] = byCls[s] || []).push(c);
-      });
-      const raw = (STATE.bins || [])[+b];
-      const mapped = new Set(binClasses(raw));
-      const isUMb = binGroup(raw).includes("UNMATCHED");
-      const isOFb = binGroup(raw).includes("OVERFLOW");
-      // the reject-reason breakdown rides the catch-all bin's section —
-      // that's where the rejected cases it explains actually live
-      const reasons = isUMb && reasonRow ? `
-        <div class="muted" style="margin:8px 0 2px; font-size:12.5px">
-          reject reasons — ${reasonRow}</div>` : "";
-      const names = Object.keys(byCls).sort((a, z) =>
-        (mapped.has(z) - mapped.has(a)) || (byCls[z].length - byCls[a].length)
-        || a.localeCompare(z));
-      // a scroll-stopping banner, not a small h3: each bin section
-      // starts with a brass-edged band naming the bin and its mapping
-      const head = `
-        <div id="repBin${b}" style="margin-top:26px; padding:10px 14px; background:var(--brass);
-             border-radius:7px; color:var(--bg);
-             display:flex; gap:12px; align-items:baseline; flex-wrap:wrap">
-          <span style="font-size:18px; font-weight:800;
-                letter-spacing:.5px">BIN ${b}</span>
-          <span style="font-size:13px; font-weight:600;
-                color:rgba(0,0,0,.62)">${cs.length} classified</span>
-          <span style="flex:1"></span>
-          <span style="font-size:12px; font-weight:600;
-                color:rgba(0,0,0,.62)">slot holds: ${
-            binGroup(raw).length
-              ? binGroup(raw).map(binEntryLabel).join(", ")
-              : "nothing mapped"}</span>
-        </div>`;
-      if (names.length < 2)
-        return (repHtml[b] = head + reasons
-          + `<div class="revGrid">${cs.map(caseCard).join("")}</div>`);
-      return (repHtml[b] = head + reasons + names.map(s => `
-        <div class="muted" style="margin:8px 0 2px; font-size:12.5px">
-          <b style="color:var(--text)">${s}</b> ×${byCls[s].length}${
-          mapped.has(s) ? ""
-          : isOFb ? ` — no bin of its own, routed here`
-          : ` — no slot of its own, rode the Unmatched bin`}</div>
-        <div class="revGrid">${byCls[s].map(caseCard).join("")}</div>`).join(""));
-    }).join("");
-    // no monolithic report page: the slot cards are the report's
-    // entry points — cache each bin's section, paint on demand.
+    // pure DATA loader — the modal renders views from this on demand.
     // _repRun tags the cache so stale runs can never dress a new tally.
-    pollRun._repHtml = repHtml;
+    pollRun._repData = j;
     pollRun._repRun = run;
     pollRun._repSim = j.mode === "sim";
-    void grids;
-    // the top bar's finished-state stats ride the report data
     const confs = j.cases.map(c => c.conf).filter(c => c != null).sort((a, b) => a - b);
     const dur = j.duration_s;
     pollRun._repStats = {
@@ -5569,64 +5525,236 @@ async function loadReport(runId) {
     };
     if (lastRunStatus) renderSortBar(lastRunStatus);
     renderBinStats();
+    if (repM.open && repM.run === run) repRender();
     return true;
   } catch (e) { msg("revMsg", e.message, false); return false; }
 }
 
-// the picked run's FULL report — every bin section stacked, on demand.
-// Historical runs' only complete view (the cards always serve the
-// newest run); explicit user gesture, so painting over repView is fine
-$("btnRepView").onclick = async () => {
+$("btnRepView").onclick = () => {
   const run = $("revRun").value;
-  if (!run) return;
-  if (pollRun._repRun !== run && !(await loadReport(run))) return;
-  $("revGrid").innerHTML = "";
-  const rep = pollRun._repHtml || {};
-  const keys = Object.keys(rep).sort((a, b) => a - b);
-  $("repView").innerHTML = (pollRun._repSim
-    ? `<div class="pill bad" style="margin-top:10px">SIMULATION — synthetic cases</div>` : "")
-    + (keys.length ? keys.map(k => rep[k]).join("")
-       : `<div class="muted" style="margin-top:10px">no classified cases in
-          this run — rejects live behind “Load rejects”</div>`);
-  $("repView").scrollIntoView({ behavior: "smooth", block: "start" });
+  if (run) repOpen(run, "summary");
 };
 
-// paint ONE bin's report section (the slot card's view-cases target)
-function showBinReport(b) {
-  $("revGrid").innerHTML = "";
-  const html = (pollRun._repHtml || {})[b];
-  $("repView").innerHTML = html
-    ? (pollRun._repSim
-       ? `<div class="pill bad" style="margin-top:10px">SIMULATION — synthetic cases</div>` : "") + html
-    : `<div class="muted" style="margin-top:10px">no cases landed in bin ${b} this run</div>`;
-  $("repView").scrollIntoView({ behavior: "smooth", block: "start" });
+/* ---------------------------- report modal --------------------------- */
+// one modal, two views: the run's summary (vitals + a tile per bin) and
+// one bin's cases. Rejects live here too — they're part of the run.
+const repM = { open: false, run: null, view: "summary", bin: 0, page: 0,
+               rejects: null };
+const REP_PER_PAGE = 50;
+
+function binBadgeColor(i) {
+  const g = binGroup((STATE.bins || [])[i] || []);
+  if (g.includes("UNMATCHED")) return "var(--um)";
+  if (g.includes("OVERFLOW")) return "var(--blue)";
+  return (STATE.bin_colors || [])[i] || "var(--brass)";
 }
 
-async function loadRejects() {
-  const run = $("revRun").value;
-  if (!run) return;
-  try {
-    const j = await api(`/api/runs/${run}/rejects`);
-    $("repView").innerHTML = "";              // report and rejects swap, never stack
-    if (!j.rejects.length) {
-      $("revGrid").innerHTML = "";
-      return msg("revMsg", "No unreviewed rejects in this run.", true);
+async function repOpen(run, view, bin) {
+  repM.open = true;
+  repM.run = run;
+  repM.view = view || "summary";
+  repM.bin = bin ?? 0;
+  repM.page = 0;
+  $("repModal").style.display = "block";
+  msg("repMMsg", "");
+  if (pollRun._repRun !== run) {
+    repM.rejects = null;
+    $("repMBody").innerHTML = `<div class="muted">loading ${run}…</div>`;
+    if (!(await loadReport(run))) { repClose(); return; }
+  }
+  if (repM.rejects === null) {
+    try {
+      const rj = await api(`/api/runs/${run}/rejects`);
+      repM.rejects = rj.rejects;
+    } catch { repM.rejects = []; }
+  }
+  repRender();
+}
+
+function repClose() {
+  repM.open = false;
+  $("repModal").style.display = "none";
+}
+
+function repGoto(view, bin, page) {
+  repM.view = view;
+  if (bin !== undefined) repM.bin = bin;
+  repM.page = page || 0;
+  repRender();
+  $("repModal").scrollTop = 0;
+}
+
+function repZoomCase(run, n, thumb) {
+  const img = $("repZoomImg");
+  img.onerror = () => { img.onerror = null; img.src = thumb; };
+  img.src = `/api/runs/${run}/frame/${n}`;
+  $("repZoom").style.display = "flex";
+}
+
+// header identity for a slot, matching the cards' vocabulary
+function repTileLabel(i) {
+  const g = binGroup((STATE.bins || [])[i] || []);
+  if (g.includes("UNMATCHED")) return "UNMATCHED";
+  if (g.includes("OVERFLOW")) return "OVERFLOW";
+  const parts = g.map(s => s.startsWith(FAM) ? s.slice(FAM.length) : s);
+  if (!parts.length) return "nothing mapped";
+  return parts.length > 2 ? `${parts[0]} +${parts.length - 1}` : parts.join(" · ");
+}
+
+function repRender() {
+  if (!repM.open) return;
+  const d = pollRun._repData;
+  if (!d) return;
+  const simPill = pollRun._repSim
+    ? `<span class="pill bad">SIMULATION — synthetic cases</span>` : "";
+  const head = (inner) => `
+    <div class="repHead">${inner}${simPill}
+      <span style="flex:1"></span>
+      <button class="ghost" style="padding:3px 12px" onclick="repClose()">Close</button>
+    </div>`;
+  if (repM.view === "summary") {
+    const rs = pollRun._repStats || {};
+    const nRej = (repM.rejects || []).length;
+    const byBin = {};
+    d.cases.forEach(c => byBin[c.bin] = (byBin[c.bin] || 0) + 1);
+    const um = STATE.unmatched_bin;
+    const tiles = (STATE.bins || []).map((g, i) => {
+      const isUM = binGroup(g).includes("UNMATCHED");
+      const cnt = (byBin[i] || 0) + (isUM ? nRej : 0);
+      return `
+      <div class="rbt${isUM ? " um" : ""}" onclick="repGoto('bin', ${i})">
+        <span class="numB2" style="background:${binBadgeColor(i)}">${i}</span>
+        <span class="lbl">${repTileLabel(i)}${isUM && nRej
+          ? `<small>${nRej} reject${nRej === 1 ? "" : "s"}</small>` : ""}</span>
+        <span class="cnt">${cnt}</span>
+      </div>`;
+    }).join("");
+    $("repMBody").innerHTML = head(`<h2>Run report</h2>
+        <span class="muted" style="font-size:13px">${repM.run}</span>`) + `
+      <div class="repVitals">
+        <div class="v"><b>${d.total}</b><span>cases</span></div>
+        <div class="v"><b>${rs.dur || "—"}</b><span>duration</span></div>
+        <div class="v"><b>${rs.spc || "—"}<small style="font-size:14px;color:var(--dim)">s</small></b><span>per case</span></div>
+        <div class="v"><b>${rs.medconf || "—"}</b><span>median conf</span></div>
+        <div class="v"><b style="color:${nRej ? "var(--red)" : "var(--text)"}">${nRej}</b><span>rejects</span></div>
+      </div>
+      <div class="repBins">${tiles}</div>`;
+    return;
+  }
+  // ---- one bin ----
+  const b = repM.bin;
+  const raw = (STATE.bins || [])[b];
+  const g = binGroup(raw || []);
+  const isUM = g.includes("UNMATCHED");
+  const isOF = g.includes("OVERFLOW");
+  const mapped = new Set(binClasses(raw));
+  const rank = {};
+  const cs = d.cases.filter(c => c.bin === b);
+  const byCls = {};
+  cs.forEach(c => {
+    const s = c.stamp || "?";
+    (byCls[s] = byCls[s] || []).push(c);
+  });
+  Object.keys(byCls).sort((a, z) =>
+    (mapped.has(z) - mapped.has(a)) || (byCls[z].length - byCls[a].length)
+    || a.localeCompare(z)).forEach((s, k) => rank[s] = k);
+  const ordered = [...cs].sort((a, z) =>
+    (rank[a.stamp || "?"] - rank[z.stamp || "?"]) || (a.n - z.n));
+  // rejects lead the catch-all's list — the run's homework first
+  const items = isUM
+    ? [...(repM.rejects || []).map(r => ({ rej: true, ...r })), ...ordered]
+    : ordered;
+  const pages = Math.max(1, Math.ceil(items.length / REP_PER_PAGE));
+  const page = Math.min(repM.page, pages - 1);
+  const slice = items.slice(page * REP_PER_PAGE, (page + 1) * REP_PER_PAGE);
+  const run = repM.run;
+  let lastSec = null;
+  let body = "";
+  let grid = [];
+  const flush = () => {
+    if (grid.length) body += `<div class="revGrid">${grid.join("")}</div>`;
+    grid = [];
+  };
+  for (const it of slice) {
+    const sec = it.rej ? "__rej" : (it.stamp || "?");
+    if (sec !== lastSec) {
+      flush();
+      if (it.rej) {
+        const reasons = Object.entries(d.reasons || {})
+          .filter(([r]) => !["ok", "no_bin_mapping"].includes(r))
+          .sort((a, z) => z[1] - a[1])
+          .map(([r, n]) => `${REASONS[r] || r}: <b>${n}</b>`).join(" · ");
+        body += `<div class="muted" style="margin:10px 0 2px; font-size:12.5px">
+          <b style="color:var(--um)">rejects</b>${reasons ? " — " + reasons : ""}</div>`;
+      } else if (Object.keys(byCls).length > 1 || isUM) {
+        body += `<div class="muted" style="margin:10px 0 2px; font-size:12.5px">
+          <b style="color:var(--text)">${sec}</b> ×${(byCls[sec] || []).length}${
+          mapped.has(sec) ? ""
+          : isOF ? " — no bin of its own, routed here"
+          : isUM ? " — no slot of its own, rode the Unmatched bin" : ""}</div>`;
+      }
+      lastSec = sec;
     }
-    msg("revMsg", j.total > j.rejects.length
-      ? `Showing the first ${j.rejects.length} of ${j.total} rejects — the rest load as these are resolved.` : "");
-    $("revGrid").innerHTML = j.rejects.map(r => `
-      <div class="revCard" id="rev_${r.n}">
-        <img src="${r.thumb}">
-        <div class="why">#${r.n} · ${rejectWhy(r)}</div>
-        <input list="classList" class="revStamp" autocomplete="off"
-          spellcheck="false" value="${r.stamp || ""}"
-          placeholder="class — or UNKNOWN to set aside">
-        <div style="display:flex; gap:6px">
-          <button class="ghost" style="flex:1" onclick="revResolve('${run}', ${r.n}, true)">Save</button>
-          <button class="ghost danger" onclick="revResolve('${run}', ${r.n}, false)">Discard</button>
-        </div>
-      </div>`).join("");
-  } catch (e) { msg("revMsg", e.message, false); }
+    grid.push(it.rej ? repRejCard(run, it) : repCaseCard(run, it));
+  }
+  flush();
+  if (!items.length)
+    body = `<div class="muted" style="margin-top:12px">no cases landed in bin ${b} this run</div>`;
+  const pager = pages > 1 ? `<div class="repPager">
+      <button class="ghost" ${page <= 0 ? "disabled" : ""}
+        onclick="repGoto('bin', ${b}, ${page - 1})">‹ prev</button>
+      ${Array.from({length: pages}, (_, p) =>
+        pages <= 10 || p === 0 || p === pages - 1 || Math.abs(p - page) <= 1
+        ? `<button class="ghost" ${p === page
+            ? 'disabled style="border-color:var(--brass); color:var(--brass)"' : ""}
+            onclick="repGoto('bin', ${b}, ${p})">${p + 1}</button>` : "").join("")}
+      <button class="ghost" ${page >= pages - 1 ? "disabled" : ""}
+        onclick="repGoto('bin', ${b}, ${page + 1})">next ›</button>
+    </div>` : "";
+  $("repMBody").innerHTML = head(`
+      <button class="ghost" style="padding:3px 12px"
+        onclick="repGoto('summary')">‹ all bins</button>
+      <span class="muted" style="font-size:13px">${run}</span>`) + `
+    <div class="repBanner">
+      <span class="numB2" style="background:${binBadgeColor(b)}; font-size:14px">BIN ${b}</span>
+      <span>${cs.length} classified${isUM ? ` · ${(repM.rejects || []).length} rejects` : ""}</span>
+      <span style="flex:1"></span>
+      <span>slot holds: ${g.length ? g.map(binEntryLabel).join(", ") : "nothing mapped"}</span>
+    </div>` + body + pager;
+}
+
+function repCaseCard(run, c) {
+  const t = c.thumb || "";
+  return `
+    <div class="revCard" id="case_${c.n}">
+      ${t ? `<img src="${t}" loading="lazy"
+              onclick="repZoomCase('${run}', ${c.n}, '${t}')">` : ""}
+      <div class="why">#${c.n} · ${c.stamp || "?"} · ${Math.round(c.conf * 100)}%</div>
+      <div class="caseAct" style="display:flex; gap:6px">${c.filed
+        ? `<span class="pill ok">filed ✓</span>`
+        : `<input list="classList" class="revStamp" style="flex:1"
+             autocomplete="off" spellcheck="false"
+             value="${c.stamp || ""}">
+           <button class="ghost" style="padding:2px 10px"
+             onclick="caseResolve('${run}', ${c.n})">File</button>`}
+      </div>
+    </div>`;
+}
+
+function repRejCard(run, r) {
+  return `
+    <div class="revCard" id="rev_${r.n}">
+      <img src="${r.thumb}" loading="lazy"
+        onclick="repZoomCase('${run}', ${r.n}, '${r.thumb}')">
+      <div class="why">#${r.n} · ${rejectWhy(r)}</div>
+      <input list="classList" class="revStamp" autocomplete="off"
+        spellcheck="false" value="${r.stamp || ""}"
+        placeholder="class — or UNKNOWN to set aside">
+      <div style="display:flex; gap:6px">
+        <button class="ghost" style="flex:1" onclick="revResolve('${run}', ${r.n}, true)">Save</button>
+        <button class="ghost danger" onclick="revResolve('${run}', ${r.n}, false)">Discard</button>
+      </div>
+    </div>`;
 }
 
 // picker value -> resolve body fields (typed values must be REAL:
@@ -5653,17 +5781,15 @@ async function revResolve(run, n, save) {
   try {
     const j = await postJson(`/api/runs/${run}/rejects/${n}/resolve`, body);
     card.remove();
-    msg("revMsg", save ? `Saved as ${j.saved}` : "Discarded", true);
+    if (repM.rejects) repM.rejects = repM.rejects.filter(r => r.n !== n);
+    msg("repMMsg", save ? `Saved as ${j.saved}` : "Discarded", true);
     if (save) refresh();
     // flicking through cards must feel instant: the dropdown's
     // "N to review" counts refresh in one debounced pass, not with a
     // full runs-directory walk per click
     clearTimeout(revResolve._t);
     revResolve._t = setTimeout(loadRuns, 2500);
-    // the list is served 100 at a time — an empty grid may just mean the
-    // batch is done, so ask again for whatever is still on disk
-    if (!$("revGrid").children.length) loadRejects();
-  } catch (e) { msg("revMsg", e.message, false); }
+  } catch (e) { msg("repMMsg", e.message, false); }
 }
 
 async function caseResolve(run, n) {
@@ -5677,8 +5803,13 @@ async function caseResolve(run, n) {
     const j = await postJson(`/api/runs/${run}/cases/${n}/resolve`, body);
     card.querySelector(".caseAct").innerHTML =
       `<span class="pill ok">filed → ${j.saved}</span>`;
+    const rd = pollRun._repData;
+    if (rd && pollRun._repRun === run) {
+      const c = rd.cases.find(x => x.n === n);
+      if (c) c.filed = true;         // survives re-renders and page flips
+    }
     refresh();
-  } catch (e) { msg("revMsg", e.message, false); }
+  } catch (e) { msg("repMMsg", e.message, false); }
 }
 
 /* ------------------------------ console ----------------------------- */

@@ -4832,6 +4832,35 @@ def api_run_thumb(run_id, n):
     return resp
 
 
+@app.get("/api/runs/<run_id>/frame/<int:n>")
+def api_run_frame(run_id, n):
+    """A classified case's saved frame at inspect size — the report
+    modal's click-to-enlarge. 404s once filing consumed the frame; the
+    client falls back to the stored thumb."""
+    d = _run_dir(run_id)
+    if d is None:
+        return jsonify({"error": "unknown run"}), 404
+    a_path = d / "frames" / f"{n:04d}_A.png"
+    if not a_path.is_file():
+        a_path = d / "rejects" / f"{n:04d}_A.png"
+    if not a_path.is_file():
+        return jsonify({"error": "frame consumed"}), 404
+    img = cv2.imread(str(a_path))
+    if img is None:
+        return jsonify({"error": "unreadable"}), 404
+    img = imaging.head_view(img)
+    h, w = img.shape[:2]
+    scale = 900 / max(h, w)
+    if scale < 1:
+        img = cv2.resize(img, (int(w * scale), int(h * scale)))
+    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 88])
+    if not ok:
+        return jsonify({"error": "encode failed"}), 500
+    resp = app.response_class(buf.tobytes(), mimetype="image/jpeg")
+    resp.headers["Cache-Control"] = "private, max-age=3600"
+    return resp
+
+
 @app.get("/api/runs/<run_id>/reject_thumb/<int:n>")
 def api_run_reject_thumb(run_id, n):
     """A reject's review thumbnail, cropped to the readable head on
