@@ -2845,6 +2845,106 @@ def api_shadow_remove():
         return jsonify(json.loads(r.read()))
 
 
+# ------------------------------------------------ community starter model ---
+# A trained recognizer + gallery published as a release asset, so a fresh
+# install can SORT before its owner has collected a single image. Pinned
+# by URL and SHA-256: the download must hash to exactly the published
+# digest or nothing is installed. Re-pinned each time a new starter ships.
+STARTER_URL = ("https://github.com/yamanub/SortIQ/releases/download/"
+               "v1.4/starter_9mm.tar.gz")
+# the v5 pair (99.9% closed-set, 86 classes) packaged 2026-08-18; the
+# exact file to upload as the v1.4 release asset — re-pin if repackaged
+STARTER_SHA256 = ("e40d5abec51e4649c44790cf177d8f4ae70617deb"
+                  "33ec8540a25bf53dee9ba9c")
+
+
+@app.get("/api/models/starter")
+def api_models_starter_info():
+    return jsonify({"available": bool(STARTER_SHA256), "url": STARTER_URL,
+                    "installed": get_shadow() is not None})
+
+
+@app.post("/api/models/starter")
+def api_models_starter():
+    """Download the pinned starter asset, verify its digest, and install
+    the pair into the active profile — the same landing spot a trainer
+    push uses, so get_shadow() hot-reloads it the same way. "url"/"sha256"
+    in the body override the pin (the docs' drop-a-file path, and how the
+    asset is verified against a local server before it's ever published);
+    an override URL still gets its digest echoed back so it can be pinned."""
+    import hashlib
+    import io
+    import shutil as _sh
+    import tarfile
+    import urllib.request
+    if run_mgr.status().get("running"):
+        return jsonify({"error": "a run is active — install after it ends"}), 409
+    body = request.get_json(silent=True) or {}
+    url = body.get("url") or STARTER_URL
+    sha = body.get("sha256") if "url" in body else STARTER_SHA256
+    if "url" not in body and not STARTER_SHA256:
+        return jsonify({"error": "no starter is pinned for this build"}), 400
+    try:
+        with urllib.request.urlopen(url, timeout=300) as r:
+            blob = r.read()
+    except Exception as e:
+        return jsonify({"error": f"download failed: {e}"}), 502
+    got_sha = hashlib.sha256(blob).hexdigest()
+    if sha and got_sha != sha:
+        return jsonify({"error": "digest mismatch — the download is not the "
+                                 f"published starter (got {got_sha[:16]}…)"}), 400
+    want = {"shadow_embed.tflite", "shadow_gallery.npz"}
+    files = {}
+    try:
+        with tarfile.open(fileobj=io.BytesIO(blob), mode="r:*") as tar:
+            for m in tar.getmembers():
+                base = Path(m.name).name
+                if m.isfile() and base in want:
+                    files[base] = tar.extractfile(m).read()
+    except tarfile.TarError as e:
+        return jsonify({"error": f"not a readable tar archive: {e}"}), 400
+    if set(files) != want:
+        return jsonify({"error": "asset must carry shadow_embed.tflite "
+                                 "and shadow_gallery.npz"}), 400
+    # the pair must agree with EACH OTHER: the gallery was built by
+    # embedding crops through one exact model, and a digest mismatch
+    # means every stored vector is in a different space
+    import numpy as np
+    try:
+        gal = np.load(io.BytesIO(files["shadow_gallery.npz"]),
+                      allow_pickle=False)
+        meta = json.loads(str(gal["meta"]))
+    except Exception as e:
+        return jsonify({"error": f"gallery unreadable: {e}"}), 400
+    model_digest = hashlib.md5(files["shadow_embed.tflite"]).hexdigest()
+    if meta.get("model_digest") != model_digest:
+        return jsonify({"error": "gallery/model mismatch inside the asset"}), 400
+    # same landing as /api/models/install: archive the outgoing
+    # generation first, then write — the mtime watcher does the reload
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    arch_dir = MODELS_DIR / "archive"
+    arch_dir.mkdir(exist_ok=True)
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    archived = False
+    if (MODELS_DIR / "shadow_embed.tflite").exists():
+        for name, arch in (("shadow_embed.tflite", f"shadow_embed_{ts}.tflite"),
+                           ("shadow_gallery.npz", f"shadow_gallery_{ts}.npz"),
+                           ("shadow_embed.json", f"shadow_embed_{ts}.json")):
+            cur = MODELS_DIR / name
+            if cur.exists():
+                _sh.copy2(cur, arch_dir / arch)
+        archived = True
+    for name, data in files.items():
+        (MODELS_DIR / name).write_bytes(data)
+    # a community model carries no bench sidecar for THIS dataset
+    (MODELS_DIR / "shadow_embed.json").unlink(missing_ok=True)
+    return jsonify({"ok": True, "classes": meta.get("classes"),
+                    "vectors": meta.get("vectors"),
+                    "built_at": meta.get("built_at"),
+                    "sha256": got_sha,
+                    "archived_as": ts if archived else None})
+
+
 # ------------------------------------------------------------- USB export ---
 # "Insert a stick, click the button, walk it to the PC": the alternative to
 # the network pull for the big first sync. Exports every profile's raw

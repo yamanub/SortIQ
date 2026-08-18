@@ -637,6 +637,14 @@
           training completes.)</span></span>
       </label>
     </div>
+    <div id="nmStarterRow" style="margin-top:10px; display:none">
+      <label style="display:flex; gap:8px; align-items:flex-start; cursor:pointer">
+        <input type="checkbox" id="nmStarter" checked style="margin:3px 0 0">
+        <span style="font-size:12.5px"><b>Start with the community recognizer</b>
+          <span class="muted">— downloads the published 9mm starter so the
+          new model sorts out of the box. Train its own recognizer later.</span></span>
+      </label>
+    </div>
     <div class="msg" id="nmMsg"></div>
     <div class="ctlRow" style="margin-top:12px; justify-content:flex-end">
       <button class="ghost" id="nmCancel">Cancel</button>
@@ -1912,6 +1920,27 @@ async function switchModel(cartridge, model) {
   } catch (e) { alert("Switch failed: " + e.message); await refresh(); }
 }
 
+// published community recognizer: fetched once per page load; available
+// only when the build pins a digest AND the profile has no model yet
+window._starter = null;
+(async () => {
+  try { window._starter = await api("/api/models/starter"); }
+  catch { window._starter = { available: false }; }
+})();
+
+async function installStarter(report, btn) {
+  if (btn) btn.disabled = true;
+  report({ text: "downloading the starter (this can take a minute)…", ok: true });
+  try {
+    const j = await postJson("/api/models/starter", {});
+    report({ text: `installed — ${j.classes} classes ready to sort`, ok: true });
+    await refresh();
+  } catch (e) {
+    report({ text: e.message, ok: false });
+    if (btn) btn.disabled = false;
+  }
+}
+
 function openModelModal() {
   const opts = ['<option value="">Empty (no images)</option>'];
   for (const [c, ms] of Object.entries(STATE.profiles || {}))
@@ -1921,12 +1950,18 @@ function openModelModal() {
   $("nmCartridge").value = STATE.cartridge || "";
   $("nmName").value = "";
   // recognizer hand-me-down: only offered when the active model actually
-  // has a live embedding to lend
-  const hasEmbed = !!(STATE.models && STATE.models.embed);
+  // has a live embedding to lend; with none to lend, offer the published
+  // community starter instead (when this build pins one)
+  const hasEmbed = !!(STATE.models && STATE.models.embed
+                      && STATE.models.embed.exists);
   $("nmSeedEmbedRow").style.display = hasEmbed ? "" : "none";
   $("nmSeedEmbed").checked = hasEmbed;
   $("nmSeedEmbedSrc").textContent =
     `${STATE.cartridge || "?"} / ${STATE.model || "?"}`;
+  const offerStarter = !hasEmbed
+    && !!(window._starter && window._starter.available);
+  $("nmStarterRow").style.display = offerStarter ? "" : "none";
+  $("nmStarter").checked = offerStarter;
   $("nmMsg").textContent = "";
   $("modelModal").style.display = "flex";
 }
@@ -1946,6 +1981,12 @@ $("nmCreate").onclick = async () => {
   try {
     await postJson("/api/model/create", body);
     camStateStale();
+    // the starter lands in the NEW model (create activates it first)
+    if ($("nmStarterRow").style.display !== "none" && $("nmStarter").checked) {
+      $("nmMsg").textContent = "downloading the starter recognizer…";
+      const j = await postJson("/api/models/starter", {});
+      $("nmMsg").textContent = `starter installed — ${j.classes} classes`;
+    }
     $("modelModal").style.display = "none";
     await refresh();
   } catch (e) { $("nmMsg").textContent = e.message; }
@@ -4094,12 +4135,25 @@ function renderReadiness() {
       <span class="st">${right}</span></div>`;
   }
   const ready = nTrainable >= 2;
+  // a fresh install with nothing to train on gets offered the published
+  // community recognizer — sorting before the first photo is collected
+  const starter = window._starter && window._starter.available
+    && !(((STATE.models || {}).embed || {}).exists)
+    ? `<div class="ctlRow" style="margin-top:10px">
+         <span style="font-size:13.5px"><b>Community starter recognizer</b>
+         <span class="muted">— a trained 9mm model, sorts out of the box</span></span>
+         <button class="ghost" id="btnStarterGet">Download &amp; install</button>
+         <span class="msg" id="starterMsg"></span></div>`
+    : "";
   box.innerHTML = strip + rows + (ready
     ? `<div class="muted" style="margin-top:4px"><b>${nTrainable}</b> classes in the
        training pass.</div>`
     : `<div class="msg err" style="margin-top:4px">Not enough to train: need at least
        2 classes with ${MIN_PER_CLASS}+ images each.
-       Add images via the Collect tab (or Test → “Add to training data”).</div>`);
+       Add images via the Collect tab (or Test → “Add to training data”).</div>`
+      + starter);
+  if ($("btnStarterGet")) $("btnStarterGet").onclick = () =>
+    installStarter(t => msg("starterMsg", t.text, t.ok), $("btnStarterGet"));
 }
 
 /* ------------------------- remote training (trainer PC) --------------- */
