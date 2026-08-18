@@ -63,8 +63,14 @@ Details + wiring advice: [PI_SETUP.md](PI_SETUP.md) Part C.
 
 ## Step 4 — Collect your first classes (~1 evening)
 
-A fresh install has no trained model yet, so this first collection is
-manual naming — it gets easier immediately after the first training.
+A fresh install has no trained model yet — but it doesn't have to start
+blind: the Train tab offers the **community starter recognizer**, a
+published 9mm model that recognizes 80+ common headstamps out of the
+box. **Download & install** it and this first collection becomes
+confirm-clicks instead of manual naming (and you can even run a sort
+with **auto-assign** before collecting anything). It has never seen
+your camera, so still grow your own dataset and train your own model —
+it will beat the starter on your machine.
 
 1. Sort a coffee can of brass **by hand** into 3–6 piles of your most
    common headstamps (FC, WIN, BLAZER…).

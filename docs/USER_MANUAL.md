@@ -34,14 +34,17 @@ This is where a model is born: you feed cases and tell SortIQ what they are.
    classes as instant-select buttons, and below it every class lists
    alphabetically (or type in the filter box — Enter selects, or creates
    a new class). The number on each button is how many images that class
-   has.
+   has, tinted by the same readiness thresholds as the Dataset tab:
+   red under the 10-image training floor, amber at 300+ (novelty gate
+   armed), green at 500+ (well-fed).
 3. Press **Feed case** (or the spacebar). The machine feeds a case, the
    camera captures it, and the image saves to the selected class.
 4. With **Predict** checked, the current model guesses each case as it's
    captured — once your model is decent, you mostly just confirm.
-5. Mislabeled one? **Recent saves** shows the last few captures — click one
-   and its head crop expands to a reviewable size above the controls, so
-   you can double-check the stamp before you move or delete it.
+5. Mislabeled one? **Recent saves** shows the last few captures — click
+   one and it opens in the standard image viewer (the same one the
+   Dataset tab uses): full photo and model crop, **Move** / **Delete**,
+   and arrow keys to walk the neighboring images in that class.
 
 A class starts **sorting from 3 photos** (it enters the exemplar gallery)
 and joins the training pass at 10+; aim for 100–300 for the stamps you
@@ -70,6 +73,28 @@ physically, and a close call between two family members headed to the
 same bin is accepted rather than rejected as ambiguous. The full
 doctrine, including when a split is worth it and how to keep classes
 clean: [TRAINING_GUIDE.md](TRAINING_GUIDE.md).
+
+## Batch capture — label piles, not cases
+
+The **Batch capture** toggle (top of the Collect tab) is the fast way to
+collect: pour a pile into the hopper, press the green **Start**, and the
+machine photographs every case at full speed with no labeling in the
+loop. While it runs the page mirrors the Sort page: the case in the nest
+shows big on the left (a confident read is named; anything else shows
+**unrecognized** with the model's best guess as a footnote), and beside
+it the **hopper census** grows a pill per recognized class — what that
+pile is made of, live.
+
+When the run ends, **Review** opens the batch review: a wall of group
+tiles — recognized classes, **Looks like X** piles the model wouldn't
+auto-file, and clusters of same-looking unknowns — each with its count.
+Click a tile to work that group: the familiar confirm-card (File / File
+novel / Discard, one class picker per group, big pages of 50 thumbs),
+and clicking any photo pulls it out of its group — pulled-out cases
+collect in a floating bar to be filed to their real class or discarded
+on their own. Resolved groups keep a receipt on their tile, and older
+unreviewed batches stay in the picker until the runs-on-disk window
+drops them.
 
 ## Camera setup
 
@@ -199,6 +224,25 @@ gallery of exemplar photos — so a stamp it has never seen matches nobody
 and goes to UNMATCHED instead of a bin, and a brand-new class starts
 sorting from 3 photos with no retraining at all.
 
+### The community starter recognizer
+
+A fresh install doesn't have to start blind. Each release publishes a
+**starter**: a trained 9mm recognizer + gallery (80+ common headstamps)
+that sorts out of the box — turn on **auto-assign** and run brass
+before you've collected a single photo. It's offered wherever it makes
+sense: a **Download & install** row on the Train tab when there's
+nothing to train yet, and a checkbox in the **New model** dialog when
+the install has no recognizer of its own to lend. The download is
+verified against a digest pinned in the code — a corrupted or tampered
+file installs nothing. The starter is a loaner, not a ceiling: it has
+never seen *your* camera, so treat its reads as a head start, collect
+photos as you confirm them, and train your own model when the dataset
+clears the floor — your own generation will beat the starter on your
+machine every time. (No internet on the Pi? Download
+`starter_9mm.tar.gz` from the release on another computer and serve or
+host it anywhere reachable — the API accepts a URL override:
+`POST /api/models/starter {"url": "http://…/starter_9mm.tar.gz"}`.)
+
 ---
 
 ## Dataset — curating your classes
@@ -213,17 +257,20 @@ sorting from 3 photos with no retraining at all.
   model's eye: it can tell headstamps apart even on brass it has never
   seen, so a new caliber can collect photos, rebuild its gallery, and
   start sorting immediately — train its own recognizer later for full
-  accuracy. **Merge dataset…** copies another model's images into the
+  accuracy. On a fresh install with no recognizer to lend, the dialog
+  offers the **community starter** instead — see below.
+  **Merge dataset…** copies another model's images into the
   active one, class by class (new classes are created, the source is
   left untouched; trained models are never merged) — the tool for
   consolidating an experiment's labels back into a main model.
 - **Per class:** every class is a **card** — name, count, and the same
-  readiness bar as the Train tab. Click a card to open the class's
-  images (inspect, move mislabeled images between classes,
-  bulk-delete). **Rename…** and **Delete class…** sit on the brass
-  banner above the images — rename onto an existing class's name to
-  **merge** into it. The grid sorts A–Z or by count — count order
-  doubles as the "what needs photos" view.
+  readiness bar as the Train tab. Click a card and the class opens as
+  a modal over the grid: exemplars on top, every image paginated below
+  (inspect, move mislabeled images between classes, bulk-delete).
+  **Rename…** and **Delete class…** sit on the brass banner at the
+  top — rename onto an existing class's name to **merge** into it.
+  The grid sorts A–Z or by count — count order doubles as the "what
+  needs photos" view.
 - **Exemplars** — when viewing a class, a dedicated card shows exactly
   which photos are doing the matching for it (★ picked automatically for
   coverage, 📌 pinned by you). Click a badge to pin a photo permanently
@@ -327,27 +374,38 @@ stats and **Stop** while sorting, the finished tally afterwards.
    when the tray needs emptying; hover for the exact count/capacity.
    Unsized bins show fill relative to the busiest bin. Sizes live in
    machine settings, so they survive model switches.
-3. **Start.** The grid locks into a live dashboard: jumbo per-card
+3. **Pick bin colors** (optional): click a card's number badge while
+   idle and choose from six swatches — the badge, the recent-cases
+   list, and run reports all wear the color, so "purple bin" reads at
+   a glance across the whole app. Red and blue are never offered;
+   they stay reserved for UNMATCHED and OVERFLOW. Clicking the chosen
+   swatch again clears back to brass. Colors are machine settings,
+   like sizes.
+4. **Start.** The grid locks into a live dashboard: jumbo per-card
    counts, per-class breakdowns, fill bars, and a glow tracking the
    drops, while the top bar carries sorted / unmatched / jams / rate.
-4. Anything below the confidence floors goes to **UNMATCHED** — the
+   The recent-cases list carries each case's bin badge in its color
+   and a confidence figure — green at 95%+, amber below, red rows for
+   rejects.
+5. Anything below the confidence floors goes to **UNMATCHED** — the
    machine would rather make you re-run a case than put it in the
    wrong bin. (The **Acceptance** slider in the run options shifts
    every class's bar together; 85% is neutral.)
-5. When the hopper runs dry the run **ends itself**: the last cases
+6. When the hopper runs dry the run **ends itself**: the last cases
    still inside the feed wheel are flushed to their correct slots, and
    the finished bar adds duration, seconds-per-case, and median
-   confidence. The cards become the report's table of contents:
-   **view cases ›** on any card opens that bin's section — a brass
-   banner naming what the slot held, cases grouped by class, assigned
-   classes leading and riders labeled. The UNMATCHED card offers
-   **review rejects ›** and, when classified cases rode the catch-all,
-   **view bin ›** for them.
-6. **Reject review** — every unmatched case was photographed. One click
-   labels it into the training data, so your next model learns from
-   exactly what confused this one. For **past runs**, pick one in the
-   review card's dropdown: **View report** paints its complete per-bin
-   report, **Load rejects** its rejects.
+   confidence. **Report** opens the run as a modal over the page: a
+   summary of vitals with a tile per bin (colored badge, count, top
+   classes), and clicking a tile — or **view cases ›** on a card —
+   drills into that bin's cases, grouped by class, assigned classes
+   leading and riders labeled. Big bins page at 50 cases; click any
+   photo to zoom the full frame.
+7. **Rejects live in the report too** — every unmatched case was
+   photographed, and the UNMATCHED bin's view leads with them, each
+   one click from being filed into the training data so your next
+   model learns from exactly what confused this one. For **past
+   runs**, pick one in the review card's dropdown and **View report**
+   opens the same modal.
 
 ## Machine — connection, calibration, settings
 

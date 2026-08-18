@@ -103,6 +103,14 @@ cause here).
 
 ## Notes
 
+- **Can't find the Pi on the network?** If the box boots somewhere its
+  known Wi-Fi doesn't reach (new garage, changed router, mistyped
+  password at imaging time), after ~2 minutes it raises its own
+  hotspot: **SortIQ-\<hostname\>**, password **sortbrass**. Join it,
+  open `http://10.42.0.1:5000`, and use the network dialog (header
+  readout → Wi-Fi scan) to put the box on your real network — the
+  hotspot stands down on its own once the join succeeds or an ethernet
+  cable shows up.
 - **The Pi never trains** — by design (inference-only runtime).
   The Train tab on the Pi points you to the trainer PC; set that up with
   [TRAINER_SETUP.md](TRAINER_SETUP.md). Freshly trained models install
