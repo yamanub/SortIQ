@@ -615,6 +615,7 @@ def api_state():
         "bins": cfg.bins,
         "bin_count": cfg.bin_count,
         "bin_sizes": (raw.get("machine") or {}).get("bin_sizes") or [],
+        "bin_colors": (raw.get("machine") or {}).get("bin_colors") or [],
         "slots_enabled": cfg.slots_enabled,
         "unmatched_bin": cfg.unmatched_bin,
         "floors": cfg.floors,
@@ -4802,24 +4803,60 @@ def api_run_rejects(run_id):
             except (ValueError, KeyError):
                 pass
     items = []
-    # thumbnails make the payload heavy, so serve 100 at a time; total lets
-    # the UI say so and reload the next batch once these are resolved
+    # thumbs ship as URLs (lazy-loaded client-side), so listing every
+    # pending reject costs bytes, not image decodes
     pending = sorted((d / "rejects").glob("*_A.png"))
-    for a_path in pending[:100]:
+    for a_path in pending:
         n = int(a_path.name.split("_")[0])
-        img = cv2.imread(str(a_path))
-        if img is None:
-            continue
         e = meta.get(n, {})
-        # stored reject files stay FULL frames (the resolve flow feeds them
-        # back into the dataset, which needs raws) — only the review
-        # thumbnail is cropped to the readable head
         items.append({"n": n, "reason": e.get("reason", "?"),
                       "stamp": e.get("stamp"),
                       "conf": e.get("stamp_conf"),
                       "embed": e.get("embed"),
-                      "thumb": b64_jpg(imaging.head_view(img), max_side=220)})
+                      "thumb": f"/api/runs/{run_id}/reject_thumb/{n}"})
     return jsonify({"run": run_id, "rejects": items, "total": len(pending)})
+
+
+@app.get("/api/runs/<run_id>/thumb/<int:n>")
+def api_run_thumb(run_id, n):
+    """One report thumbnail as a plain image — the report JSON carries
+    URLs, the browser lazy-loads only what scrolls into view."""
+    d = _run_dir(run_id)
+    if d is None:
+        return jsonify({"error": "unknown run"}), 404
+    tp = d / "thumbs" / f"{n:04d}.jpg"
+    if not tp.is_file():
+        return jsonify({"error": "no thumb"}), 404
+    resp = send_file(tp, mimetype="image/jpeg")
+    resp.headers["Cache-Control"] = "private, max-age=86400"
+    return resp
+
+
+@app.get("/api/runs/<run_id>/reject_thumb/<int:n>")
+def api_run_reject_thumb(run_id, n):
+    """A reject's review thumbnail, cropped to the readable head on
+    demand. The stored file stays a FULL frame (the resolve flow feeds
+    it back into the dataset, which needs raws)."""
+    d = _run_dir(run_id)
+    if d is None:
+        return jsonify({"error": "unknown run"}), 404
+    a_path = d / "rejects" / f"{n:04d}_A.png"
+    if not a_path.is_file():
+        return jsonify({"error": "no reject"}), 404
+    img = cv2.imread(str(a_path))
+    if img is None:
+        return jsonify({"error": "unreadable"}), 404
+    img = imaging.head_view(img)
+    h, w = img.shape[:2]
+    scale = 220 / max(h, w)
+    if scale < 1:
+        img = cv2.resize(img, (int(w * scale), int(h * scale)))
+    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    if not ok:
+        return jsonify({"error": "encode failed"}), 500
+    resp = app.response_class(buf.tobytes(), mimetype="image/jpeg")
+    resp.headers["Cache-Control"] = "private, max-age=86400"
+    return resp
 
 
 @app.get("/api/runs/<run_id>/report")
@@ -4875,14 +4912,12 @@ def api_run_report(run_id):
             duration = round(max(log.stat().st_mtime - start, 0), 1) or None
         except ValueError:
             pass
-    # thumbs only for the slice that ships — a 2,000-case run was
-    # encoding 2,000 jpgs to then discard 1,600 of them
-    cases = cases[:400]
+    # thumbs ship as URLs — no encoding cost per case, so every case
+    # ships and the client's pagination decides what actually loads
+    thumbs = d / "thumbs"
     for c in cases:
-        tp = d / "thumbs" / f"{c['n']:04d}.jpg"
-        if tp.exists():
-            c["thumb"] = ("data:image/jpeg;base64,"
-                          + base64.b64encode(tp.read_bytes()).decode())
+        if (thumbs / f"{c['n']:04d}.jpg").exists():
+            c["thumb"] = f"/api/runs/{run_id}/thumb/{c['n']}"
     return jsonify({"run": run_id, "mode": meta.get("mode"),
                     "total": len(entries), "duration_s": duration,
                     "bins": bins_out, "reasons": reasons, "stamps": stamps,
@@ -5508,6 +5543,10 @@ MACHINE_DEFAULTS = {"feed_speed": 94, "feed_steps": 60, "sort_speed": 94,
                     # per-slot physical capacity in cases; None/0 entries =
                     # uncalibrated (fill bars fall back to relative widths)
                     "bin_sizes": None,
+                    # per-slot badge color (hex from the fixed palette;
+                    # None/"" = brass default). Machine-scoped like
+                    # bin_sizes: it describes the tray on the table
+                    "bin_colors": None,
                     "init_on_startup": False,
                     # SortIQ firmware fork (7.2.250925.6.1-SS1) knobs.
                     # Stock firmware answers "ok" to the setters and ignores
@@ -5530,6 +5569,12 @@ MACHINE_DEFAULTS = {"feed_speed": 94, "feed_steps": 60, "sort_speed": 94,
                                               # grid (i * sort_steps * 16)
 _MACHINE_BOOLS = ("init_on_startup", "feed_decel", "air_drop")
 MAX_SLOTS = 12                # matches the fork's slot table size
+
+# the six user-pickable bin-badge colors. Fixed on purpose: every entry
+# keeps dark badge text readable, and red/blue never appear — they stay
+# the reserved meanings (UNMATCHED / OVERFLOW)
+BIN_PALETTE = ("#e8d44d", "#4cc46a", "#a78bfa",
+               "#f08c3a", "#3fc8c8", "#e879b9")
 
 # (min, max) per numeric setting — values outside are CLAMPED on save, so
 # no amount of Machine-tab experimentation can push the board somewhere
@@ -5655,6 +5700,12 @@ def save_machine_settings(update):
                     except (TypeError, ValueError):
                         return None
                 m[k] = ([_cap(v) for v in update[k]][:MAX_SLOTS]
+                        if isinstance(update[k], list) else None)
+            elif k == "bin_colors":
+                # only the fixed palette is legal — red/blue stay the
+                # reserved meanings and never arrive here from the UI
+                m[k] = ([(v if v in BIN_PALETTE else None)
+                         for v in update[k]][:MAX_SLOTS]
                         if isinstance(update[k], list) else None)
             else:
                 m[k] = _clamp_machine(k, update[k])

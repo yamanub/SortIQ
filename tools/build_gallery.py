@@ -64,6 +64,16 @@ def main():
     model_digest = hashlib.md5(Path(args.model).read_bytes()).hexdigest()
     out_path = Path(args.model).with_name("shadow_gallery.npz")
     cache = {}
+    # cross-machine amnesty: a gallery built on ANOTHER machine (trainer
+    # build installed onto the Pi) can never match size:mtime — its sigs
+    # carry the builder's file times. Same gated fallback the live
+    # classifier's bank_vec uses: trust the banked vector when the crop
+    # PREDATES the gallery, its SIZE half still matches (crops are
+    # deterministic re-encodes, so byte size survives machines), and the
+    # imaging signature the bank was built under matches this machine's
+    # — an imaging reshape between build and install stays a full price.
+    amnesty_sig = None
+    old_gal_mtime = 0.0
     if out_path.is_file():
         try:
             old = np.load(out_path, allow_pickle=False)
@@ -72,6 +82,11 @@ def main():
                 cache = {p: (v, s) for p, v, s in
                          zip(old["g_all_path"], old["g_all_vec"],
                              old["g_all_sig"])}
+                old_gal_mtime = out_path.stat().st_mtime
+                want = om.get("crops_sig")
+                sig_p = crops / ".crops_sig"
+                if want and sig_p.is_file() and sig_p.read_text() == want:
+                    amnesty_sig = want
         except Exception as e:
             print(f"cache from previous gallery unusable ({e}) — full build")
     n_new = n_cached = 0
@@ -86,6 +101,12 @@ def main():
         if hit is not None and hit[1] == sig(path):
             n_cached += 1
             return hit[0]
+        if hit is not None and amnesty_sig is not None:
+            st = path.stat()
+            if (st.st_mtime < old_gal_mtime
+                    and str(hit[1]).split(":")[0] == str(st.st_size)):
+                n_cached += 1
+                return hit[0]
         img = cv2.imread(str(path))
         if img is None:
             return None                  # corrupt/empty file: caller skips
