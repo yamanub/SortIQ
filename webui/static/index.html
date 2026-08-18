@@ -363,7 +363,8 @@
   }
   .binSlot { display: flex; flex-direction: column; gap: 8px; min-height: 148px;
     border: 1px solid var(--line); border-radius: 11px; padding: 12px 14px;
-    background: var(--panel2); transition: box-shadow .25s, border-color .25s; }
+    background: var(--panel2); transition: box-shadow .25s, border-color .25s;
+    position: relative; }
   .binSlot.um { border-color: var(--um); }
   .binSlot.of { border-color: var(--blue); }
   .binSlot.drop { border-color: var(--brass);
@@ -444,7 +445,19 @@
     border-radius: 6px; background: var(--panel2); margin-bottom: 4px; font-size: 13px; }
   .recentRow img { width: 34px; height: 34px; object-fit: cover; border-radius: 4px; }
   .recentRow .cat { flex: 1; font-weight: 600; }
-  .recentRow.rej .cat { color: var(--amber); }
+  .recentRow.rej { background: #2a1e20; }
+  .recentRow.rej .cat { color: var(--um); }
+  .recentRow .rcConf { font-size: 12px; color: var(--amber);
+    min-width: 34px; text-align: right; }
+  .recentRow .rcConf.hi { color: var(--green); }
+  /* bin color swatches — pops off a slot card's number badge */
+  .colorPop { position: absolute; top: 36px; left: 10px; background: var(--panel);
+    border: 1px solid var(--brass); border-radius: 10px; padding: 10px 12px;
+    box-shadow: 0 10px 34px rgba(0,0,0,.6); z-index: 5; }
+  .colorPop .sw { display: flex; gap: 8px; }
+  .colorPop .s { width: 26px; height: 26px; border-radius: 7px; cursor: pointer;
+    border: 2px solid transparent; }
+  .colorPop .s.sel { border-color: #fff; }
   .revGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
              gap: 12px; margin-top: 10px; }
   /* compact set-aside tray: groups tile side by side, thumbs stay small */
@@ -830,19 +843,6 @@
         <div class="card">
           <h2>Recent saves <span class="muted">(click one to fix a mistake)</span></h2>
           <div class="recentStrip" id="recentStrip"><span class="muted">nothing saved yet this session</span></div>
-          <div id="recentPreview" style="display:none; margin-top:10px">
-            <img id="recentPrevCrop" class="thumb" style="max-width:260px" alt="model crop">
-          </div>
-          <div id="recentFix" style="display:none; margin-top:10px" class="ctlRow">
-            <span style="font-size:13.5px" id="recentFixLbl"></span>
-            <input list="classList" id="recentFixTo" autocomplete="off"
-              spellcheck="false" placeholder="type a class&hellip;"
-              style="max-width:180px">
-            <button class="ghost" id="btnRecentMove">Move</button>
-            <button class="ghost" id="btnRecentDelete" style="color:var(--red)">Delete</button>
-            <button class="ghost" id="btnRecentCancel">Cancel</button>
-          </div>
-          <div class="msg" id="recentMsg"></div>
         </div>
       </div>
     </div>
@@ -1962,7 +1962,6 @@ let colPred = null;       // last model prediction {stamp, conf, confident}
 let colBusy = false;      // a feed/capture/save round-trip is in flight
 const colSession = { saved: 0, skipped: 0 };
 const colRecent = [];     // this session's saves: {stamp, index, thumb}
-let recentFixIdx = null;
 let MACH = { connected: false, mode: null };
 
 // refresh() fires after every save/move/delete — rebuilding every
@@ -2911,9 +2910,13 @@ function chipItems() {
 function renderChips() {
   const q = $("chipFind").value.trim().toUpperCase();
   const all = chipItems();
-  const chip = i =>
-    `<button class="chip${i.n === colSel ? " sel" : ""}" data-name="${i.n}">` +
-    `${i.n}<span class="cnt">${i.c}</span></button>`;
+  // counts wear the dataset tier tints — red under the training floor,
+  // amber once the novelty gate arms, green when well-fed
+  const chip = i => {
+    const t = classTier(i.c);
+    return `<button class="chip${i.n === colSel ? " sel" : ""}" data-name="${i.n}">`
+      + `${i.n}<span class="cnt"${t ? ` style="color:${t}"` : ""}>${i.c}</span></button>`;
+  };
   // top row: the biggest classes as instant selects (hidden while filtering)
   const top = [...all].sort((a, b) => b.c - a.c || a.n.localeCompare(b.n))
     .filter(i => i.c > 0).slice(0, TOP_CHIPS);
@@ -3167,74 +3170,21 @@ document.addEventListener("keydown", e => {
 });
 
 /* ------------------- recent saves: undo / relabel -------------------- */
+// a click opens the standard image detail modal (same as the Dataset
+// page) — full-size photo, Move/Delete, arrow-key walk from that image
 function renderRecent() {
   $("recentStrip").innerHTML = colRecent.length
     ? colRecent.map((r, i) =>
-        `<button class="rc${recentFixIdx === i ? " sel" : ""}" data-i="${i}">` +
+        `<button class="rc" data-i="${i}">` +
         `${r.thumb ? `<img src="${r.thumb}">` : ""}` +
         `<span class="lb">${r.stamp} #${r.index}</span></button>`).join("")
     : `<span class="muted">nothing saved yet this session</span>`;
   document.querySelectorAll("#recentStrip .rc").forEach(b =>
-    b.onclick = () => openRecentFix(+b.dataset.i));
+    b.onclick = () => {
+      const r = colRecent[+b.dataset.i];
+      dsDetail(r.stamp, r.index);
+    });
 }
-
-function openRecentFix(i) {
-  recentFixIdx = i;
-  const r = colRecent[i];
-  $("recentFix").style.display = "";
-  $("recentFixLbl").textContent = `${r.stamp} #${r.index} →`;
-  $("recentFixTo").value = "";
-  msg("recentMsg", "");
-  // expanded review image: the session thumb right away (it's the same
-  // crop, just small), the full-size crop swapped in once fetched
-  $("recentPreview").style.display = r.thumb ? "" : "none";
-  $("recentPrevCrop").src = r.thumb || "";
-  api(`/api/dataset/pair?label=${encodeURIComponent(r.stamp)}&index=${r.index}`)
-    .then(j => {
-      if (recentFixIdx !== i || !j.head_crop) return;   // closed or reselected meanwhile
-      $("recentPrevCrop").src = j.head_crop;
-      $("recentPreview").style.display = "";
-    }).catch(() => {});                        // thumb stays — good enough
-  renderRecent();
-}
-
-function closeRecentFix() {
-  recentFixIdx = null;
-  $("recentFix").style.display = "none";
-  $("recentPreview").style.display = "none";
-  renderRecent();
-}
-$("btnRecentCancel").onclick = closeRecentFix;
-
-$("btnRecentMove").onclick = async () => {
-  const r = colRecent[recentFixIdx];
-  if (!r) return;
-  try {
-    const to = await dsResolveTarget($("recentFixTo"));
-    if (!to) return;
-    const j = await postJson("/api/dataset/move",
-      { label: r.stamp, index: r.index, to });
-    const m = /^(.*) #(\d+)$/.exec(j.moved_to);
-    if (m) { r.stamp = m[1]; r.index = +m[2]; }
-    msg("recentMsg", `Moved to ${j.moved_to}`, true);
-    closeRecentFix();
-    refresh();
-  } catch (e) { msg("recentMsg", e.message, false); }
-};
-
-$("btnRecentDelete").onclick = async () => {
-  const r = colRecent[recentFixIdx];
-  if (!r) return;
-  try {
-    await postJson("/api/dataset/delete", { label: r.stamp, index: r.index });
-    colRecent.splice(recentFixIdx, 1);
-    colSession.saved = Math.max(colSession.saved - 1, 0);
-    msg("recentMsg", `Deleted ${r.stamp} #${r.index}`, true);
-    closeRecentFix();
-    renderSession();
-    refresh();
-  } catch (e) { msg("recentMsg", e.message, false); }
-};
 
 /* ---------------------- capture / setup toggle ----------------------- */
 function setColView(v) {
@@ -5197,7 +5147,16 @@ function renderBins() {
     if (!group.length) div.classList.add("emptybin");
     const cnt0 = binCountFor(i);
     const cap = (STATE.bin_sizes || [])[i] || 0;
-    div.innerHTML = `<div class="binHead"><span class="num">${i}</span>${lbl}</div>
+    // custom bin color rides the badge inline (um/of/empty keep their
+    // CSS colors — red and blue stay reserved, empty stays hollow).
+    // Eligible badges open the swatch picker on click.
+    const tint = !isUM && !isOF && group.length
+      && (STATE.bin_colors || [])[i];
+    const numHtml = !isUM && !isOF && group.length
+      ? `<span class="num binTint" data-slot="${i}" style="cursor:pointer${
+          tint ? `; background:${tint}` : ""}">${i}</span>`
+      : `<span class="num">${i}</span>`;
+    div.innerHTML = `<div class="binHead">${numHtml}${lbl}</div>
       <div class="binChips">${chips}<span class="addGhost"
         data-slot="${i}">+ add</span></div>
       <div class="sgCount" id="binCount${i}"
@@ -5225,6 +5184,10 @@ function renderBins() {
   list.querySelectorAll(".capIn").forEach(inp => {
     inp.onkeydown = e => { if (e.key === "Enter") inp.blur(); };
     inp.onblur = () => saveBinSize(inp);
+  });
+  list.querySelectorAll(".binTint").forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    binColorPop(+b.dataset.slot);
   });
   list.querySelectorAll(".addGhost").forEach(g => g.onclick = () => {
     const inp = g.closest(".binSlot").querySelector(".binAdd");
@@ -5434,6 +5397,44 @@ function renderSortBar(s) {
   }
 }
 
+// bin badge colors: six to pick from (red and blue stay reserved for
+// UNMATCHED and OVERFLOW), clicking the selected swatch clears back to
+// brass. Machine-scoped like bin sizes — the color names a tray on the
+// table. Mirrors the server's BIN_PALETTE.
+const BIN_PALETTE = ["#e8d44d", "#4cc46a", "#a78bfa",
+                     "#f08c3a", "#3fc8c8", "#e879b9"];
+
+function binColorPop(i) {
+  const was = document.querySelector(".colorPop");
+  const reopen = was && +was.dataset.slot === i;
+  if (was) was.remove();
+  if (reopen) return;                       // badge re-click = toggle shut
+  if ($("binList").classList.contains("locked")) return;
+  const cur = (STATE.bin_colors || [])[i] || null;
+  const pop = document.createElement("div");
+  pop.className = "colorPop";
+  pop.dataset.slot = i;
+  pop.innerHTML = `<div class="sw">${BIN_PALETTE.map(c =>
+    `<span class="s${c === cur ? " sel" : ""}" data-c="${c}"
+       style="background:${c}"></span>`).join("")}</div>`;
+  pop.onclick = e => e.stopPropagation();
+  pop.querySelectorAll(".s").forEach(s => s.onclick = () =>
+    saveBinColor(i, s.dataset.c === cur ? null : s.dataset.c));
+  document.querySelector(`.binSlot[data-bin="${i}"]`).appendChild(pop);
+  setTimeout(() => document.addEventListener("click",
+    () => pop.remove(), { once: true }));
+}
+
+async function saveBinColor(i, color) {
+  const colors = STATE.bins.map((_, k) =>
+    k === i ? color : (STATE.bin_colors || [])[k] || null);
+  try {
+    await postJson("/api/machine/settings", { bin_colors: colors });
+    STATE.bin_colors = colors;
+  } catch (e) { msg("clMsg", e.message, false); }
+  renderBins();
+}
+
 // bin size = physical capacity in cases. Machine-scoped (it describes the
 // tray on the table, not the model), so it survives model switches.
 async function saveBinSize(inp) {
@@ -5600,12 +5601,19 @@ async function pollRun() {
         </div>
       </div></div>`;
     $("runRecent").className = "";
-    $("runRecent").innerHTML = [...s.recent].reverse().map(r =>
-      `<div class="recentRow ${classified(r) ? "" : "rej"}">
+    $("runRecent").innerHTML = [...s.recent].reverse().map(r => {
+      const ok = classified(r);
+      const conf = ok && r.stamp_conf
+        ? `<span class="rcConf${r.stamp_conf >= 0.95 ? " hi" : ""}">${
+            Math.round(r.stamp_conf * 100)}%</span>`
+        : `<span class="rcConf"></span>`;
+      return `<div class="recentRow ${ok ? "" : "rej"}">
         ${r.thumb ? `<img src="${r.thumb}">` : ""}
         <span class="muted">#${r.n}</span>
-        <span class="cat">${caseLabel(r)}</span>
-        <span class="muted">bin ${r.bin}</span></div>`).join("");
+        <span class="cat">${caseLabel(r)}</span>${conf}
+        <span class="numB2" style="background:${binBadgeColor(r.bin)}">${
+          r.bin}</span></div>`;
+    }).join("");
   }
 
   if (s.slots && s.slots.length) {
