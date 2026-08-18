@@ -294,6 +294,10 @@
   #repZoom img { max-width: 92vw; max-height: 92vh; border-radius: 10px;
     box-shadow: 0 20px 80px rgba(0,0,0,.8); }
   .revCard img { cursor: zoom-in; }
+  #dsModal { display: none; position: fixed; inset: 0; z-index: 990;
+    background: rgba(10,12,16,.72); overflow-y: auto; }
+  #dsModal h3 { margin: 14px 0 6px; font-size: 13px; color: var(--dim);
+    text-transform: uppercase; letter-spacing: .05em; }
   .thumbGrid .cell { position: relative; }
   .thumbGrid img { width: 100%; border-radius: 6px; border: 1px solid var(--line);
                    display: block; }
@@ -1196,29 +1200,12 @@
       <div id="dupResults"></div>
     </div>
   </div>
-  <div class="card" id="dsExCard" style="display:none">
-    <div style="display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px">
-      <h2 style="margin:0">Exemplars <span class="muted" id="dsExCount"></span></h2>
-      <div style="display:flex; gap:12px; align-items:center">
-        <button class="ghost" style="padding:3px 10px" id="btnGalRebuild"
-          title="re-pick exemplars from the current photos + pins — takes a couple of minutes">rebuild gallery</button>
-        <span class="muted" id="galRebuildStatus" style="font-size:12px"></span>
-      </div>
-    </div>
-    <div class="muted" style="font-size:12px; margin-top:4px">
-      The images actually doing the matching for this class — ★ auto-picked
-      by coverage, 📌 pinned by you. Click a badge to pin or unpin; changes
-      take effect at the next gallery rebuild.
-    </div>
-    <div id="dsExThumbs" class="thumbGrid"></div>
-  </div>
-  <div class="card">
-    <h2>Images</h2>
-    <div id="dsHint" class="muted">Pick a class above — its images open here.</div>
+  <!-- the class modal: banner on top, exemplars, then every image
+       paginated — clicking a class card opens it (no more page-bottom
+       gallery) -->
+  <div id="dsModal" onclick="if(event.target===this) dsModalClose()">
+    <div class="repMBox">
     <div id="dsGallery" style="display:none">
-      <!-- the class's identity banner — same brass band as the run
-           report's bin sections; rename/delete live here, with the
-           images they affect, not on every row of the class grid -->
       <div style="display:flex; gap:14px; align-items:center; flex-wrap:wrap;
            background:var(--brass); color:var(--bg); border-radius:8px;
            padding:8px 16px">
@@ -1239,6 +1226,19 @@
           border-color:rgba(20,23,28,.45); background:none"
           id="dsGalleryClose">close</button>
       </div>
+      <div id="dsExCard" style="display:none; margin-top:12px">
+        <div style="display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px">
+          <h3 style="margin:0">Exemplars <span class="muted" id="dsExCount"
+            style="text-transform:none; letter-spacing:0"></span></h3>
+          <div style="display:flex; gap:12px; align-items:center">
+            <button class="ghost" style="padding:3px 10px" id="btnGalRebuild"
+              title="re-pick exemplars from the current photos + pins — ★ auto-picked, 📌 pinned; click a badge to pin or unpin">rebuild gallery</button>
+            <span class="muted" id="galRebuildStatus" style="font-size:12px"></span>
+          </div>
+        </div>
+        <div id="dsExThumbs" class="thumbGrid"></div>
+      </div>
+      <h3 style="margin-top:14px">All images</h3>
       <div id="dsBulkBar" style="display:none; margin-top:8px" class="ctlRow">
         <b id="dsSelCount" style="color:var(--brass)">0 selected</b>
         <input list="classList" id="dsBulkTo" autocomplete="off"
@@ -1247,9 +1247,10 @@
         <button class="ghost" id="btnBulkMove">Move selected</button>
         <button class="ghost danger" id="btnBulkDelete">Delete selected</button>
       </div>
-      <div class="muted" id="dsGalleryHint" style="margin-top:6px">Click a thumbnail to open it.</div>
+      <div class="muted" id="dsGalleryHint" style="display:none"></div>
       <div id="dsThumbs" class="thumbGrid"></div>
       <div id="dsPager" class="ctlRow" style="margin-top:10px; justify-content:center"></div>
+    </div>
     </div>
   </div>
   <div id="dsImgModal" style="display:none; position:fixed; inset:0; z-index:1000;
@@ -1964,7 +1965,7 @@ function renderDatasetMgr() {
   // where Rename/Delete now live (86 red Delete buttons was 85 too many)
   $("dsMgr").innerHTML = labels.length
     ? labels.map(l => `<div class="clsCard${dsCur.label === l
-          && $("dsGallery").style.display !== "none"
+          && $("dsModal").style.display === "block"
           ? '" style="border-color:var(--brass)' : ""}"
           onclick="dsView('${l.replace(/'/g, "\\'")}', 0, true)">
         <div class="top"><span class="name" title="${l}"
@@ -2408,9 +2409,7 @@ async function dsRename(label) {
   try {
     const j = await postJson("/api/dataset/rename", { from: label, to });
     msg("dsMsg", `Renamed ${label} → ${to} (${j.moved} images moved) — crops rebuilt`, true);
-    $("dsGallery").style.display = "none";
-    $("dsHint").style.display = "";
-    dsCloseDetail();
+    dsModalClose();
     refresh();
   } catch (e) { msg("dsMsg", e.message, false); }
 }
@@ -2485,7 +2484,6 @@ async function dsView(label, page = 0, scrollTo = false) {
     dsCur = { label, page, total: j.total };
     updateBulkBar();
     $("dsGallery").style.display = "";
-    $("dsHint").style.display = "none";
     // NOTE: no dsCloseDetail() here — the detail modal overlays the
     // page, so any dsView while it's open is the walk refreshing the
     // grid underneath (after a Move/Delete); closing it killed the walk
@@ -2516,10 +2514,11 @@ async function dsView(label, page = 0, scrollTo = false) {
       ${nums}
       <button class="ghost" ${page >= pages - 1 ? "disabled" : ""}
         onclick="dsView('${esc}', ${page + 1})">next ›</button>` : "";
-    // the View button's only visible effect used to happen below the
-    // fold — bring the gallery to the user on the initial click (page
-    // flips deliberately don't yank the scroll position)
-    if (scrollTo) $("dsGallery").scrollIntoView({ behavior: "smooth", block: "start" });
+    if (scrollTo) {                     // initial open: raise the modal
+      $("dsModal").style.display = "block";
+      $("dsModal").scrollTop = 0;
+      renderDatasetMgr();               // paint the open-class highlight
+    }
   } catch (e) { msg("dsMsg", e.message, false); }
 }
 
@@ -2621,9 +2620,6 @@ function dsThumbClick(index) {
 function updateBulkBar() {
   const on = $("dsMulti").checked;
   $("dsBulkBar").style.display = on ? "" : "none";
-  $("dsGalleryHint").textContent = on
-    ? "Click thumbnails to select them, then move or delete the whole selection."
-    : "Click a thumbnail to open it.";
   $("dsSelCount").textContent = `${dsSel.size} selected`;
 }
 $("dsMulti").onchange = () => {
@@ -2661,12 +2657,12 @@ document.querySelector('[data-tab="dataset"]').addEventListener(
 // rename/delete moved onto the class banner — they act on the open class
 $("dsBtnRename").onclick = () => dsCur.label && dsRename(dsCur.label);
 $("dsBtnDelete").onclick = () => dsCur.label && dsReset(dsCur.label);
-$("dsGalleryClose").onclick = () => {
-  $("dsGallery").style.display = "none";
-  $("dsExCard").style.display = "none";
-  $("dsHint").style.display = "";
+function dsModalClose() {
+  $("dsModal").style.display = "none";
   dsCloseDetail();
-};
+  renderDatasetMgr();          // drop the open-class highlight
+}
+$("dsGalleryClose").onclick = dsModalClose;
 
 // every class picker is an <input list="classList"> — type-to-filter
 // over one shared datalist (86 classes outgrew native selects, and a
@@ -2829,9 +2825,7 @@ async function dsReset(label) {
       body: JSON.stringify({ label }) });
     msg("dsMsg", `Deleted ${label} (${j.removed} files)` +
         (j.class_removed ? " — class and bin assignment removed as well" : ""), true);
-    $("dsGallery").style.display = "none";
-    $("dsHint").style.display = "";
-    dsCloseDetail();
+    dsModalClose();
     refresh();
   } catch (e) { msg("dsMsg", e.message, false); }
 }
