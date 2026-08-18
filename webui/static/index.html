@@ -298,6 +298,35 @@
     background: rgba(10,12,16,.72); overflow-y: auto; }
   #dsModal h3 { margin: 14px 0 6px; font-size: 13px; color: var(--dim);
     text-transform: uppercase; letter-spacing: .05em; }
+  #batchModal { display: none; position: fixed; inset: 0; z-index: 990;
+    background: rgba(10,12,16,.72); overflow-y: auto; }
+  /* hopper census pills */
+  .cenPill { background: var(--panel2); border: 1px solid #2c5e3c;
+    border-radius: 999px; padding: 4px 8px 4px 14px; display: flex;
+    gap: 9px; align-items: center; font-size: 13px; font-weight: 600; }
+  .cenPill b { background: var(--bg); border-radius: 999px;
+    padding: 1px 10px; font-size: 12.5px; color: var(--green); }
+  .cenPill.q { border-color: var(--line); color: var(--dim); }
+  .cenPill.q b { color: var(--dim); }
+  .bcCaseImg { width: 280px; height: 280px; border-radius: 10px;
+    border: 1px solid var(--line); display: block; object-fit: cover; }
+  .bcName { font-size: 24px; font-weight: 800; margin-top: 8px; }
+  /* batch group tiles */
+  .bgt { background: var(--panel2); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 14px; cursor: pointer;
+    display: flex; gap: 12px; align-items: center; }
+  .bgt:hover { border-color: var(--brass); }
+  .bgt .lbl { font-weight: 700; font-size: 14px; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+  .bgt .lbl small { display: block; color: var(--dim); font-weight: 400;
+    font-size: 11.5px; }
+  .bgt .cnt { margin-left: auto; font-size: 22px; font-weight: 800;
+    flex: none; }
+  .bgt.sug { border-color: #5a4a26; }
+  .bgt.sug .lbl { color: var(--amber); }
+  .bgt.clu .lbl { color: var(--dim); }
+  .bgt.done { opacity: .6; cursor: default; }
+  .bgt.done .lbl { color: var(--green); }
   .thumbGrid .cell { position: relative; }
   .thumbGrid img { width: 100%; border-radius: 6px; border: 1px solid var(--line);
                    display: block; }
@@ -359,15 +388,17 @@
   #binList.locked .binAdd, #binList.locked .binRm { display: none; }
   #sortBar { display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
     min-height: 44px; }
-  #sortBar .sgStat { display: flex; flex-direction: column; line-height: 1.15; }
-  #sortBar .sgStat b { font-size: 24px; }
-  #sortBar .sgStat span { font-size: 11px; color: var(--dim);
-    text-transform: uppercase; letter-spacing: .7px; }
+  #sortBar .sgStat, #batchRunBar .sgStat { display: flex;
+    flex-direction: column; line-height: 1.15; }
+  #sortBar .sgStat b, #batchRunBar .sgStat b { font-size: 24px; }
+  #sortBar .sgStat span, #batchRunBar .sgStat span { font-size: 11px;
+    color: var(--dim); text-transform: uppercase; letter-spacing: .7px; }
   #sortBar .sgRight { margin-left: auto; display: flex; gap: 10px;
     align-items: center; }
-  #sortBar .sgLive { display: flex; gap: 8px; align-items: center;
-    font-weight: 600; font-size: 13.5px; }
-  #sortBar .sgLive .dot { width: 9px; height: 9px; border-radius: 50%; }
+  #sortBar .sgLive, #batchRunBar .sgLive { display: flex; gap: 8px;
+    align-items: center; font-weight: 600; font-size: 13.5px; }
+  #sortBar .sgLive .dot, #batchRunBar .sgLive .dot { width: 9px;
+    height: 9px; border-radius: 50%; }
   .binSlot .binHead { display: flex; gap: 10px; align-items: baseline;
     font-weight: 600; }
   .binHead .num { font-size: 12.5px; font-weight: 800; color: var(--bg);
@@ -819,17 +850,33 @@
 
   <!-- ----------------------- batch capture view ---------------------- -->
   <div id="colBatch" style="display:none">
+    <!-- the capture bar: idle / capturing states share one card -->
     <div class="card">
-      <h2>Batch capture</h2>
-      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
-        <button id="btnBatchStart">Start batch capture</button>
-        <button id="btnBatchStop" class="ghost" style="display:none">Stop</button>
-        <select id="batchRunSel" style="display:none; max-width:230px"
-                title="review an earlier batch — capture runs stay on disk for the newest 5 runs"></select>
-        <span class="muted" id="batchStatus"></span>
+      <div id="batchIdle" style="display:flex; gap:14px; align-items:center; flex-wrap:wrap; min-height:44px">
+        <span style="font-weight:700; font-size:17px">Batch capture</span>
+        <span style="flex:1"></span>
+        <select id="batchRunSel" style="display:none; max-width:250px"></select>
+        <button class="ghost" id="btnBatchReview" style="display:none">Review</button>
+        <button id="btnBatchStart" style="background:var(--green);
+          border-color:var(--green); color:var(--bg); font-weight:700;
+          border-radius:7px; padding:8px 18px; border:1px solid;
+          font:inherit">▶ Start batch capture</button>
       </div>
+      <div id="batchRunBar" style="display:none; gap:22px; align-items:center; flex-wrap:wrap; min-height:44px">
+        <div class="sgStat"><b id="bcCount">0</b><span>captured</span></div>
+        <div class="sgStat"><b id="bcRate">—</b><span>rate</span></div>
+        <span style="flex:1"></span>
+        <div class="sgLive" style="color:var(--green)">
+          <span class="dot" style="background:var(--green); box-shadow:0 0 8px var(--green)"></span>
+          <span id="bcRunId">CAPTURING</span></div>
+        <button id="btnBatchStop" style="background:var(--red);
+          border-color:var(--red); color:#fff; font-weight:600;
+          border-radius:7px; padding:8px 18px; border:1px solid;
+          font:inherit">■ Stop</button>
+      </div>
+      <div class="muted" id="batchStatus" style="margin-top:6px"></div>
       <div id="batchExcBar" class="ctlRow" style="display:none; position:fixed;
-           bottom:18px; left:50%; transform:translateX(-50%); z-index:900;
+           bottom:18px; left:50%; transform:translateX(-50%); z-index:996;
            background:var(--panel); border:1px solid var(--brass);
            border-radius:10px; padding:10px 16px;
            box-shadow:0 8px 30px rgba(0,0,0,.55)">
@@ -843,7 +890,20 @@
         <button class="ghost danger" id="btnBatchExcDiscard">Discard</button>
       </div>
     </div>
-    <div id="batchGroups" style="margin-top:12px"></div>
+    <!-- capturing: the live card mirrors the Sort page — current case
+         big on the left, the hopper census where recent cases would be -->
+    <div class="card" id="batchLive" style="display:none">
+      <div style="display:flex; gap:30px; flex-wrap:wrap">
+        <div>
+          <h3 style="margin:0 0 10px">Current case</h3>
+          <div id="bcCase"></div>
+        </div>
+        <div style="flex:1; min-width:300px">
+          <h3 style="margin:0 0 10px">Hopper census</h3>
+          <div id="bcCensus" style="display:flex; flex-wrap:wrap; gap:8px"></div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- -------------------------- setup view --------------------------- -->
@@ -1620,6 +1680,15 @@
   </div>
 </div>
 <div id="repZoom" onclick="this.style.display='none'"><img id="repZoomImg"></div>
+
+<!-- batch review modal: the capture run's groups as tiles, one group's
+     cases on drill-in — the pull-out bar floats above it -->
+<div id="batchModal" onclick="if(event.target===this) batchMClose()">
+  <div class="repMBox">
+    <div id="batchMBody"></div>
+    <div class="msg" id="batchMMsg"></div>
+  </div>
+</div>
 
 <!-- ================================ DOCS ================================ -->
 <section id="docs">
@@ -3201,25 +3270,40 @@ function fmtRunId(id) {
 async function batchSync() {
   clearTimeout(batchTimer);
   try {
-    // brief=1: this poller only reads counters — the full status hauls
-    // ~200KB of recent-case thumbnails per tick, twice a second when
-    // the Sort page's poller is also alive
-    const s = await api("/api/run/status?brief=1");
+    const here = $("collect").classList.contains("active")
+                 && colView === "batch" && !document.hidden;
+    // full status only while the live card is on screen — it carries the
+    // recent-case thumbs the census view needs; off-tab the poller only
+    // watches for run-end, so brief=1 skips the ~200KB payload
+    const s = await api(here ? "/api/run/status"
+                             : "/api/run/status?brief=1");
+    if (s.running && !s.capture) {
+      // a SORT run owns the machine — that's the Sort page's story
+      $("batchIdle").style.display = "flex";
+      $("batchRunBar").style.display = "none";
+      $("batchLive").style.display = "none";
+      $("btnBatchStart").disabled = true;
+      $("batchStatus").textContent =
+        "a sort run is in progress — batch capture waits its turn";
+      batchTimer = setTimeout(batchSync, here ? 2500 : 5000);
+      return;
+    }
+    $("btnBatchStart").disabled = false;
     if (s.running) {
       batchRun = s.run_id;
-      $("btnBatchStart").style.display = "none";
-      $("btnBatchStop").style.display = "";
-      $("batchRunSel").style.display = "none";
-      $("batchStatus").textContent =
-        `capturing… ${s.sorted} cases so far`;
-      // keep watching for run-end even off-tab, just less eagerly
-      const here = $("collect").classList.contains("active")
-                   && colView === "batch" && !document.hidden;
+      $("batchIdle").style.display = "none";
+      $("batchRunBar").style.display = "flex";
+      $("batchLive").style.display = "";
+      $("bcCount").textContent = s.sorted;
+      $("bcRate").textContent = s.rate ? `${Math.round(s.rate * 60)}/min` : "—";
+      $("batchStatus").textContent = "";
+      if (here) renderBatchLive(s);
       batchTimer = setTimeout(batchSync, here ? 1500 : 5000);
       return;
     }
-    $("btnBatchStart").style.display = "";
-    $("btnBatchStop").style.display = "none";
+    $("batchIdle").style.display = "flex";
+    $("batchRunBar").style.display = "none";
+    $("batchLive").style.display = "none";
     // batch history picker: CAPTURE runs only — sorting runs report on
     // the Sort page, batch reviews live here. Older unreviewed batches
     // stay reachable until the runs/ retention window drops them.
@@ -3228,9 +3312,9 @@ async function batchSync() {
     const sel = $("batchRunSel");
     if (!caps.length) {
       sel.style.display = "none";
+      $("btnBatchReview").style.display = "none";
       batchRun = null;
       $("batchStatus").textContent = "no batch captures on disk yet";
-      $("batchGroups").innerHTML = "";
       return;
     }
     if (!batchRun || !caps.some(c => c.run === batchRun))
@@ -3240,23 +3324,60 @@ async function batchSync() {
          ${fmtRunId(c.run)}${c.run === caps[0].run ? " (latest)" : ""} —
          ${c.cases_left ? `${c.cases_left} to review` : "reviewed ✓"}</option>`).join("");
     sel.style.display = caps.length > 1 ? "" : "none";
-    $("batchStatus").textContent = "loading groups…";
-    await loadBatchGroups(batchRun);
+    $("btnBatchReview").style.display = "";
+    const cur = caps.find(c => c.run === batchRun);
+    $("batchStatus").textContent = cur.cases_left
+      ? `${cur.cases_left} case${cur.cases_left === 1 ? "" : "s"} waiting for review`
+      : "fully reviewed ✓";
   } catch (e) { $("batchStatus").textContent = e.message; }
+}
+
+// the live card mirrors the Sort page: the case in the nest big on the
+// left, the hopper census — what this batch is made of so far — beside it
+function renderBatchLive(s) {
+  const rec = s.recent || [];
+  const last = rec[rec.length - 1];
+  if (last) {
+    // "known" means the same thing here as in the census below — a
+    // CONFIDENT read. A below-the-bar guess shows as unrecognized with
+    // the guess as a footnote, so the card never disagrees with a pill.
+    const known = last.category !== "unmatched";
+    const sub = known && last.stamp_conf
+      ? ` · ${Math.round(last.stamp_conf * 100)}%`
+      : !known && last.stamp && last.stamp_conf
+      ? ` · looks like ${last.stamp} ${Math.round(last.stamp_conf * 100)}%`
+      : "";
+    $("bcCase").innerHTML =
+      `<img class="bcCaseImg" src="${last.thumb}">
+       <div class="bcName"${known ? "" : ' style="color:var(--dim)"'}>${
+         known ? last.category : "unrecognized"}</div>
+       <div class="muted">#${last.n}${sub}</div>`;
+  } else {
+    $("bcCase").innerHTML =
+      `<div class="muted" style="width:280px">waiting for the first case…</div>`;
+  }
+  const counts = Object.entries(s.counts || {});
+  const unk = counts.find(([k]) => k === "unmatched");
+  const pills = counts.filter(([k]) => k !== "unmatched")
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `<span class="cenPill">${k}<b>${v}</b></span>`);
+  if (unk) pills.push(
+    `<span class="cenPill q">unrecognized<b>${unk[1]}</b></span>`);
+  $("bcCensus").innerHTML = pills.join("")
+    || `<span class="muted">census builds as cases feed</span>`;
 }
 
 $("batchRunSel").onchange = () => {
   batchRun = $("batchRunSel").value;
+  window._batchGroups = null;        // groups belong to the old batch
   window._batchExc = new Set();      // pulled-out picks don't cross batches
-  $("batchStatus").textContent = "loading groups…";
-  loadBatchGroups(batchRun)
-    .catch(e => { $("batchStatus").textContent = e.message; });
+  batchSync();
 };
 
 $("btnBatchStart").onclick = async () => {
   try {
     await postJson("/api/run/start", { mode: "serial", capture: true });
-    $("batchGroups").innerHTML = "";
+    window._batchGroups = null;
     batchSync();
   } catch (e) { $("batchStatus").textContent = e.message; }
 };
@@ -3267,11 +3388,9 @@ $("btnBatchStop").onclick = async () => {
 
 async function loadBatchGroups(run) {
   const j = await api(`/api/runs/${run}/groups`);
-  $("batchStatus").textContent =
-    `${j.total} cases captured — confirm the groups below (click a case to pull it out of its group)`;
   window._batchGroups = j.groups;
   window._batchExc = window._batchExc || new Set();
-  renderBatchGroups();
+  renderBatchM();
 }
 
 // resolved cases leave by LOCAL re-render — the groups endpoint
@@ -3283,78 +3402,179 @@ function batchDropCases(ns) {
     .map(g => g.resolved ? g
          : Object.assign({}, g, { cases: g.cases.filter(c => !gone.has(c.n)) }))
     .filter(g => g.resolved || g.cases.length);
-  renderBatchGroups();
+  renderBatchM();
 }
 
-function renderBatchGroups() {
+/* ---- batch review modal: group tiles, one group's cases on drill-in */
+const batchM = { run: null, view: "summary", gi: 0, page: 0 };
+const BATCH_PER_PAGE = 50;
+
+async function batchMOpen() {
+  if (!batchRun) return;
+  $("batchModal").style.display = "block";
+  $("batchModal").scrollTop = 0;
+  $("batchMMsg").textContent = "";
+  batchM.view = "summary";
+  if (batchM.run !== batchRun || !window._batchGroups) {
+    $("batchMBody").innerHTML =
+      `<div class="muted" style="padding:30px 10px">grouping the captured
+       cases — the machine embeds and clusters every unknown, this can
+       take a moment on a big batch…</div>`;
+    try {
+      await loadBatchGroups(batchRun);
+      batchM.run = batchRun;
+    } catch (e) {
+      $("batchMBody").innerHTML =
+        `<div class="muted" style="padding:30px 10px">${e.message}</div>`;
+    }
+  } else renderBatchM();
+}
+$("btnBatchReview").onclick = batchMOpen;
+
+function batchMClose() {
+  $("batchModal").style.display = "none";
+  batchSync();          // the idle bar's cases-left count moved
+}
+
+function batchMGroup(i) {
+  batchM.view = "group";
+  batchM.page = 0;
+  // group indices SHIFT when pull-out resolves empty another group out
+  // of the list — anchor the open group by its member case numbers
+  // (those never change) and re-locate it on every render
+  batchM.members = new Set((window._batchGroups[i].cases || [])
+    .map(c => c.n));
+  batchM.keepVal = null;
+  renderBatchM();
+  $("batchModal").scrollTop = 0;
+}
+function batchMBack() {
+  batchM.view = "summary";
+  batchM.keepVal = null;
+  renderBatchM();
+}
+function batchMPage(p) { batchM.page = p; renderBatchM(); }
+
+// review actions report inside the modal when it's up, else on the bar
+function bMsg(text, ok) {
+  if ($("batchModal").style.display === "block") msg("batchMMsg", text, ok);
+  else $("batchStatus").textContent = text;
+}
+
+function batchGroupTitle(g) {
+  if (g.kind === "class") return g.label;
+  if (g.kind === "suggest") return `Looks like ${g.label}`;
+  return "Unrecognized cluster";
+}
+
+function renderBatchM() {
   const groups = window._batchGroups || [];
-  // a re-render must not eat half-made choices on OTHER cards: remember
-  // each group's dropdown pick and typed name, keyed by member case
-  // (indices shift when groups empty out, case numbers never do)
-  const kept = {};
-  document.querySelectorAll("#batchGroups input.revStamp").forEach(inp => {
-    const v = inp.value;
-    inp.closest(".card").querySelectorAll(".revCard").forEach(cc =>
-      kept[cc.id.slice(4)] = v);
-  });
-  $("batchGroups").innerHTML = groups.map((g, i) => {
-    if (g.resolved)          // filed/discarded groups keep their receipt
-      return `<div class="card" id="bg_${i}" style="margin-top:10px">
-        <div class="muted" style="padding:6px">${g.resolved}</div></div>`;
-    // who's crowding this pile: if one runner-up class dominates, name
-    // it in the header — "high % but R-P right behind" in one glance
-    const crowdCounts = {};
-    g.cases.forEach(c => { if (c.runner)
-      crowdCounts[c.runner] = (crowdCounts[c.runner] || 0) + 1; });
-    const crowdTop = Object.entries(crowdCounts).sort((a, b) => b[1] - a[1])[0];
-    const crowd = g.kind === "suggest" && crowdTop
-        && crowdTop[1] >= g.cases.length / 2
-      ? ` <span class="muted" style="font-weight:normal; font-size:11.5px">— crowded by ${crowdTop[0]} (margin too thin to auto-file)</span>`
-      : "";
-    const label = g.kind === "class"
-      ? `${g.label} — ${g.cases.length}${g.well_fed
-          ? ` <span class="muted" style="font-weight:normal; font-size:11.5px">— class well-fed (500+): File keeps only novel looks</span>` : ""}`
-      : g.kind === "suggest"
-      ? `Looks like ${g.label} — ${g.cases.length} below-the-bar case${
-          g.cases.length === 1 ? "" : "s"}${crowd}`
-      : `Unrecognized cluster — ${g.cases.length} same-looking case${
-          g.cases.length === 1 ? "" : "s"}`;
-    return `<div class="card" id="bg_${i}" style="margin-top:10px">
-      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
-        <h3 style="margin:0">${label}</h3>
-        <span style="flex:1"></span>
-        <input list="classList" class="revStamp" id="bgSel_${i}"
-          autocomplete="off" spellcheck="false"
-          value="${g.kind !== "cluster" && g.label ? g.label : ""}"
-          placeholder="class — type a new name to create it"
-          style="max-width:220px">
-        ${g.well_fed
-          ? `<button class="ghost" onclick="batchFile(${i})">File novel</button>
-             <button class="ghost" onclick="batchFile(${i}, false, true)">File all</button>`
-          : `<button class="ghost" onclick="batchFile(${i})">File all</button>`}
-        <button class="ghost danger" onclick="batchFile(${i}, true)">Discard all</button>
+  const open = groups.filter(g => !g.resolved);
+  const left = open.reduce((a, g) => a + g.cases.length, 0);
+  const head = `
+    <div class="repHead">
+      <div>
+        <h2 style="margin:0">Batch review</h2>
+        <div class="muted">${fmtRunId(batchRun)} — ${left
+          ? `${left} case${left === 1 ? "" : "s"} to review`
+          : "all reviewed ✓"}</div>
       </div>
-      <div class="revGrid" style="margin-top:8px">${g.cases.map(c => `
-        <div class="revCard${window._batchExc.has(c.n) ? " exc" : ""}" id="bgc_${c.n}"
-             onclick="batchToggleCase(${c.n})" style="cursor:pointer"
-             title="click to remove/restore this case — removed cases regroup for separate filing">
-          <img src="${c.thumb}">
-          <div class="why">#${c.n}${c.conf
-            ? ` · ${Math.round(c.conf * 100)}%` : ""}${
-            g.kind !== "class" && c.runner && c.conf
-            ? `<br><span style="color:var(--dim)">vs ${c.runner} ${
-                Math.round(c.runner_sim * 100)}%</span>` : ""}</div>
-        </div>`).join("")}</div>
+      <span style="flex:1"></span>
+      ${batchM.view === "group"
+        ? `<button class="ghost" onclick="batchMBack()">← All groups</button>`
+        : ""}
+      <button class="ghost" onclick="batchMClose()">Close</button>
     </div>`;
-  }).join("") || `<div class="muted">nothing captured yet</div>`;
+
+  if (batchM.view === "summary") {
+    const tiles = groups.map((g, i) => {
+      if (g.resolved)
+        return `<div class="bgt done"><div class="lbl">✓
+          <small>${g.resolved}</small></div></div>`;
+      const cls = g.kind === "suggest" ? " sug"
+                : g.kind === "cluster" ? " clu" : "";
+      const sub = g.kind === "class" ? "recognized"
+                : g.kind === "suggest" ? "below the bar"
+                : "same-looking unknowns";
+      return `<div class="bgt${cls}" onclick="batchMGroup(${i})">
+        <div class="lbl">${batchGroupTitle(g)}<small>${sub}</small></div>
+        <div class="cnt">${g.cases.length}</div></div>`;
+    }).join("");
+    $("batchMBody").innerHTML = head + `
+      <div style="display:grid; gap:10px; margin-top:14px;
+           grid-template-columns:repeat(auto-fill, minmax(230px, 1fr))">
+        ${tiles || `<div class="muted">nothing captured yet</div>`}</div>`;
+    updateBatchExcBar();
+    return;
+  }
+
+  // drill-in: one group's cases, the familiar review card
+  const i = groups.findIndex(g => !g.resolved
+    && g.cases.some(c => batchM.members.has(c.n)));
+  const g = groups[i];
+  if (!g) { batchMBack(); return; }
+  batchM.members = new Set(g.cases.map(c => c.n));
+  // a re-render must not eat a half-made choice: snapshot the typed
+  // class pick before the DOM is rebuilt — unless the caller just
+  // consumed it (a File that regrouped pull-outs into a fresh pile)
+  const keptInp = document.querySelector("#batchMBody input.revStamp");
+  if (keptInp && !batchM.skipSnap) batchM.keepVal = keptInp.value;
+  batchM.skipSnap = false;
+  // who's crowding this pile: if one runner-up class dominates, name
+  // it in the header — "high % but R-P right behind" in one glance
+  const crowdCounts = {};
+  g.cases.forEach(c => { if (c.runner)
+    crowdCounts[c.runner] = (crowdCounts[c.runner] || 0) + 1; });
+  const crowdTop = Object.entries(crowdCounts).sort((a, b) => b[1] - a[1])[0];
+  const note = g.kind === "class" && g.well_fed
+    ? "class well-fed (500+): File keeps only novel looks"
+    : g.kind === "suggest" && crowdTop && crowdTop[1] >= g.cases.length / 2
+    ? `crowded by ${crowdTop[0]} (margin too thin to auto-file)`
+    : "";
+  const pages = Math.ceil(g.cases.length / BATCH_PER_PAGE);
+  if (batchM.page >= pages) batchM.page = Math.max(0, pages - 1);
+  const slice = g.cases.slice(batchM.page * BATCH_PER_PAGE,
+                              (batchM.page + 1) * BATCH_PER_PAGE);
+  const pager = pages > 1 ? `<div class="repPager">
+      <button class="ghost" ${batchM.page ? "" : "disabled"}
+        onclick="batchMPage(${batchM.page - 1})">‹ Prev</button>
+      <span class="muted">page ${batchM.page + 1} of ${pages}</span>
+      <button class="ghost" ${batchM.page < pages - 1 ? "" : "disabled"}
+        onclick="batchMPage(${batchM.page + 1})">Next ›</button>
+    </div>` : "";
+  $("batchMBody").innerHTML = head + `
+    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+         margin-top:14px">
+      <h3 style="margin:0">${batchGroupTitle(g)} — ${g.cases.length}${note
+        ? ` <span class="muted" style="font-weight:normal; font-size:11.5px">— ${note}</span>` : ""}</h3>
+      <span style="flex:1"></span>
+      <input list="classList" class="revStamp" id="bgSel_${i}"
+        autocomplete="off" spellcheck="false"
+        value="${g.kind !== "cluster" && g.label ? g.label : ""}"
+        placeholder="class — type a new name to create it"
+        style="max-width:220px">
+      ${g.well_fed
+        ? `<button class="ghost" onclick="batchFile(${i})">File novel</button>
+           <button class="ghost" onclick="batchFile(${i}, false, true)">File all</button>`
+        : `<button class="ghost" onclick="batchFile(${i})">File all</button>`}
+      <button class="ghost danger" onclick="batchFile(${i}, true)">Discard all</button>
+    </div>
+    <div class="revGrid" style="margin-top:10px">${slice.map(c => `
+      <div class="revCard${window._batchExc.has(c.n) ? " exc" : ""}" id="bgc_${c.n}"
+           onclick="batchToggleCase(${c.n})" style="cursor:pointer"
+           title="click to remove/restore this case — removed cases regroup for separate filing">
+        <img src="${c.thumb}" loading="lazy">
+        <div class="why">#${c.n}${c.conf
+          ? ` · ${Math.round(c.conf * 100)}%` : ""}${
+          g.kind !== "class" && c.runner && c.conf
+          ? `<br><span style="color:var(--dim)">vs ${c.runner} ${
+              Math.round(c.runner_sim * 100)}%</span>` : ""}</div>
+      </div>`).join("")}</div>
+    ${pager}`;
   updateBatchExcBar();
-  groups.forEach((g, i) => {
-    const inp = $(`bgSel_${i}`);
-    if (!inp) return;
-    const k = g.cases.length ? kept[g.cases[0].n] : null;
-    if (k != null) inp.value = k;  // survivor choices win over defaults —
-                                   // including a deliberately CLEARED one
-  });
+  if (batchM.keepVal != null)
+    $(`bgSel_${i}`).value = batchM.keepVal;  // survivor choice wins over
+                                 // the default — including a CLEARED one
 }
 
 function batchToggleCase(n) {
@@ -3396,10 +3616,9 @@ async function batchExcResolve(discard) {
     const j = await postJson(`/api/runs/${batchRun}/cases/bulk_resolve`, body);
     window._batchExc.clear();
     batchDropCases(ns);
-    $("batchStatus").textContent = discard
-      ? `discarded ${j.discarded}` : bulkFiledMsg(j);
+    bMsg(discard ? `discarded ${j.discarded}` : bulkFiledMsg(j), true);
     refresh();
-  } catch (e) { $("batchStatus").textContent = e.message; }
+  } catch (e) { bMsg(e.message, false); }
 }
 $("btnBatchExcFile").onclick = () => batchExcResolve(false);
 $("btnBatchExcDiscard").onclick = () => batchExcResolve(true);
@@ -3409,7 +3628,7 @@ async function batchFile(i, discard, fileAll) {
   const exc = window._batchExc || new Set();
   const ns = g.cases.map(c => c.n).filter(n => !exc.has(n));
   if (!ns.length) {
-    $("batchStatus").textContent = "every case in that group is removed — restore some first";
+    bMsg("every case in that group is removed — restore some first", false);
     return;
   }
   const body = { ns, action: discard ? "discard" : "save" };
@@ -3421,8 +3640,7 @@ async function batchFile(i, discard, fileAll) {
     // name creates the class as it files, UNKNOWN sets aside
     const v = classVal($(`bgSel_${i}`));
     if (!v) {
-      $("batchStatus").textContent =
-        "pick a class or type a new name first (or Discard all)";
+      bMsg("pick a class or type a new name first (or Discard all)", false);
       return;
     }
     body.stamp = v;
@@ -3436,34 +3654,35 @@ async function batchFile(i, discard, fileAll) {
     const j = await postJson(`/api/runs/${batchRun}/cases/bulk_resolve`, body);
     // a pull-out resolve may have re-rendered (cloned groups, shifted
     // indices) while this request was in flight — re-locate the group
-    // by a member case before touching the DOM or the cache
+    // by a member case before touching the cache
     const probe = ns[0];   // a case IN this resolve can't be pulled out —
                            // g.cases[0] could be, and would mis-probe
     const ni = window._batchGroups.findIndex(
-      x => x.cases.some(c => c.n === probe));
+      x => !x.resolved && x.cases.some(c => c.n === probe));
     const gg = ni >= 0 ? window._batchGroups[ni] : g;
     gg.resolved = discard ? `discarded ${j.discarded}` : bulkFiledMsg(j);
-    const card = ni >= 0 && $(`bg_${ni}`);
-    if (card) card.innerHTML =
-      `<div class="muted" style="padding:6px">${gg.resolved}</div>`;
-    else renderBatchGroups();
+    bMsg(gg.resolved, true);
     refresh();          // dataset counts move on Collect/Train tabs
     // removed cases stay unresolved — regroup them into their own LOCAL
-    // card so each can be filed (or discarded) on its own terms (the
+    // group so each can be filed (or discarded) on its own terms (the
     // server round-trip here re-embedded and re-clustered the whole run)
     const left = gg.cases.filter(c => exc.has(c.n));
     if (left.length) {
       left.forEach(c => exc.delete(c.n));
-      $("batchStatus").textContent =
-        `${gg.resolved} — ${left.length} pulled-out case${
-          left.length === 1 ? "" : "s"} regrouped below`;
+      bMsg(`${gg.resolved} — ${left.length} pulled-out case${
+          left.length === 1 ? "" : "s"} regrouped as a new pile`, true);
       gg.cases = left;
-      delete gg.resolved;              // the receipt moved to the status line
+      delete gg.resolved;          // the receipt moved to the message line
       gg.kind = "cluster";
       gg.label = null;
-      renderBatchGroups();
+      batchM.keepVal = null;       // the typed pick was consumed by the file
+      batchM.skipSnap = true;      // …and must not be re-read off the old DOM
+      batchM.members = new Set(left.map(c => c.n));   // stay on the pile
+      renderBatchM();
+    } else {
+      batchMBack();                // group done — back to the tile wall
     }
-  } catch (e) { $("batchStatus").textContent = e.message; }
+  } catch (e) { bMsg(e.message, false); }
 }
 
 /* live crop previews follow whatever case is in the nest right now */
