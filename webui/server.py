@@ -5413,7 +5413,9 @@ def api_network_status():
         d["ip"] = (out2.split(":", 1)[1].split("/")[0]
                    if ok2 and ":" in out2 else None)
     _net_cache.update(t=time.time(),
-                      resp={"available": True, "devices": devices})
+                      resp={"available": True, "devices": devices,
+                            "hotspot": (_ap_ssid() if _ap["active"]
+                                        else None)})
     return jsonify(_net_cache["resp"])
 
 
@@ -5449,8 +5451,15 @@ def api_network_connect():
     args = ["device", "wifi", "connect", ssid]
     if password:
         args += ["password", password]
+    # one radio: an active fallback hotspot must stand down for the join —
+    # and stand back up if the join fails, or a bad password strands the box
+    was_ap = _ap["active"]
+    if was_ap:
+        _ap_down()
     ok, out = _nmcli(*args, timeout=60)    # DHCP can take a while
     if not ok:
+        if was_ap:
+            _ap_up()
         return jsonify({"error": out}), 400
     return jsonify({"ok": True, "detail": out})
 
@@ -5464,6 +5473,74 @@ def api_network_forget():
     if not ok:
         return jsonify({"error": out}), 400
     return jsonify({"ok": True})
+
+
+# ---- AP-mode fallback: a Pi that can't find any known network raises its
+# own. New garage, moved router, password mistyped at imaging time —
+# without this the headless box is unreachable and the fix is pulling the
+# SD card. A watchdog (machine only: Linux + nmcli) waits out the boot
+# autoconnect window, and if nothing has an IP it starts a WPA2 hotspot
+# named after the hostname; the operator joins it, browses to
+# http://10.42.0.1:5000, and uses the Wi-Fi panel to put the box on a
+# real network. The join tears the hotspot down first (one radio) and
+# raises it again if the join fails — a bad password must not strand the
+# box twice.
+AP_CON = "sortiq-ap"
+AP_PASSWORD = "sortbrass"       # WPA2 wants 8+; in the docs next to the SSID
+_ap = {"active": False}
+
+
+def _ap_ssid():
+    import socket
+    return f"SortIQ-{socket.gethostname()}"
+
+
+def _net_has_link():
+    """True if any ethernet/wifi device is connected to something that
+    isn't our own hotspot."""
+    ok, out = _nmcli("-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device")
+    if not ok:
+        return True          # can't tell — never raise an AP on a guess
+    for line in out.splitlines():
+        p = line.split(":")
+        if (len(p) >= 4 and p[1] in ("ethernet", "wifi")
+                and p[2] == "connected" and p[3] != AP_CON):
+            return True
+    return False
+
+
+def _ap_up():
+    ok, out = _nmcli("device", "wifi", "hotspot", "con-name", AP_CON,
+                     "ssid", _ap_ssid(), "password", AP_PASSWORD,
+                     timeout=30)
+    _ap["active"] = ok
+    _net_cache["resp"] = None            # header state changed right now
+    print(f"AP fallback: hotspot {_ap_ssid()} "
+          f"{'up' if ok else 'FAILED: ' + out}", flush=True)
+    return ok
+
+
+def _ap_down():
+    if not _ap["active"]:
+        return
+    _nmcli("connection", "down", AP_CON)
+    _nmcli("connection", "delete", AP_CON)   # or autoconnect resurrects it
+    _ap["active"] = False
+    _net_cache["resp"] = None
+
+
+def _ap_watchdog():
+    time.sleep(75)                   # NetworkManager's own autoconnect window
+    misses = 0
+    while True:
+        if _net_has_link():
+            misses = 0
+            _ap_down()               # a cable showed up: real network wins
+        elif not _ap["active"]:
+            misses += 1
+            if misses >= 2:          # two sightings 30s apart — not a blip
+                _ap_up()
+        time.sleep(30)
 
 
 # --------------------------------------------------------------- console ---
@@ -6104,6 +6181,11 @@ if __name__ == "__main__":
     if _gpu_supported():
         gpu_status["supported"] = True
         threading.Thread(target=_gpu_probe, daemon=True).start()
+    # AP-mode fallback watchdog (machine only — needs nmcli): a box that
+    # can't find any known network raises its own so it stays reachable
+    import shutil as _sh_main
+    if sys.platform.startswith("linux") and _sh_main.which("nmcli"):
+        threading.Thread(target=_ap_watchdog, daemon=True).start()
     # dataset location now follows the active caliber/model (see calibers/)
     # bind-retry: after a code-update self-restart the outgoing process can
     # hold the port for a beat — ride it out instead of dying silently

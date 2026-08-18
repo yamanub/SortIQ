@@ -6487,7 +6487,11 @@ async function loadNetwork() {
       return;
     }
     $("btnWifiScan").disabled = false;
-    box.innerHTML = j.devices.map(d =>
+    box.innerHTML = (j.hotspot
+      ? `<div style="font-size:13px; margin-bottom:6px; color:var(--amber)">
+           <b>Fallback hotspot ${j.hotspot} is up</b> — no known network was
+           found. Connect the box to a real network below.</div>` : "")
+      + j.devices.map(d =>
       `<div style="font-size:13px; margin-bottom:3px">
          ${d.type === "wifi" ? "Wi-Fi" : "Ethernet"} <span class="muted">${d.device}</span> —
          <b style="color:${d.connection ? "var(--green)" : "var(--dim)"}">${d.connection || "not connected"}</b>
