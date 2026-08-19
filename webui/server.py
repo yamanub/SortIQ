@@ -4861,8 +4861,19 @@ def api_runs():
                 capture = bool(rj.get("capture"))
             except (OSError, ValueError):
                 pass
+            # tally + duration off the log so the run list can describe
+            # each run without anyone opening its full report
+            total = dur = None
+            try:
+                lines = (d / "log.jsonl").read_text().splitlines()
+                total = len(lines)
+                if lines:
+                    dur = json.loads(lines[-1]).get("ts")
+            except (OSError, ValueError):
+                pass
             runs.append({"run": d.name, "rejects": n_rej, "mode": mode,
-                         "capture": capture, "cases_left": n_frames + n_rej})
+                         "capture": capture, "cases_left": n_frames + n_rej,
+                         "total": total, "dur_s": dur})
     return jsonify({"runs": runs[:20]})
 
 

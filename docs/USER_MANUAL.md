@@ -403,9 +403,10 @@ stats and **Stop** while sorting, the finished tally afterwards.
 7. **Rejects live in the report too** — every unmatched case was
    photographed, and the UNMATCHED bin's view leads with them, each
    one click from being filed into the training data so your next
-   model learns from exactly what confused this one. For **past
-   runs**, pick one in the review card's dropdown and **View report**
-   opens the same modal.
+   model learns from exactly what confused this one. **Past runs**
+   live in the **Run reports** card at the bottom of the page — a
+   tile per run (date, case count, duration, rejects still waiting
+   for review); click one and the same modal opens.
 
 ## Machine — connection, calibration, settings
 

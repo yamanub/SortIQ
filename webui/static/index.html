@@ -1482,16 +1482,13 @@
   </div>
 
   <div class="card">
-    <h2>Reject review — turn failures into training data</h2>
+    <h2>Run reports</h2>
     <div class="muted" style="margin-bottom:8px">
       Every rejected case's photos are saved. Label the good ones (they're the
       images the model finds hardest — the most valuable training data there is)
       or discard the junk.
     </div>
-    <div class="ctlRow">
-      <select id="revRun" style="max-width:320px"></select>
-      <button class="ghost" id="btnRepView">View report</button>
-    </div>
+    <div id="runReports" class="repBins" style="margin-top:6px"></div>
     <div class="msg" id="revMsg"></div>
   </div>
 </section>
@@ -5778,22 +5775,37 @@ async function pollRun() {
   }
 }
 
-/* ---- reject review ---- */
+/* ---- run reports ---- */
 async function loadRuns() {
   try {
     const j = await api("/api/runs");
     // SORTING runs only — batch-capture runs review as grouped cards on
     // the Collect page (its own picker), never as a sort report
     const runs = j.runs.filter(r => !r.capture);
-    $("revRun").innerHTML = runs.length
-      ? runs.map(r => `<option value="${r.run}">${r.run}${r.mode === "sim" ? " (SIM)" : ""} — ${r.rejects} unreviewed rejects</option>`).join("")
-      : `<option value="">no sorting runs yet</option>`;
+    $("runReports").innerHTML = runs.length ? runs.map(r => {
+      const ds = r.dur_s;
+      const dur = !ds ? null
+        : ds >= 3600 ? `${Math.floor(ds / 3600)}h ${Math.floor(ds % 3600 / 60)}m`
+        : ds >= 60 ? `${Math.floor(ds / 60)}m`
+        : `${Math.round(ds)}s`;
+      const bits = [r.total != null ? `${r.total} case${r.total === 1 ? "" : "s"}` : null,
+                    dur, r.mode === "sim" ? "SIM" : null]
+        .filter(Boolean).join(" · ");
+      const right = r.rejects
+        ? `<span class="cnt" style="color:var(--amber); line-height:1.05;
+             text-align:right">${r.rejects}<small style="display:block;
+             font-size:9px; font-weight:600; color:var(--dim);
+             letter-spacing:.07em">TO REVIEW</small></span>`
+        : `<span class="cnt" style="color:var(--green); font-size:17px">✓</span>`;
+      return `<div class="rbt" onclick="repOpen('${r.run}', 'summary')">
+        <span class="lbl">${fmtRunId(r.run)}<small>${bits || "—"}</small></span>
+        ${right}</div>`;
+    }).join("") : `<div class="muted">no sorting runs yet</div>`;
   } catch {}
 }
 let lastReportShown = null;
 
-async function loadReport(runId) {
-  const run = runId || $("revRun").value;
+async function loadReport(run) {
   if (!run) return;
   try {
     const j = await api(`/api/runs/${run}/report`);
@@ -5816,11 +5828,6 @@ async function loadReport(runId) {
     return true;
   } catch (e) { msg("revMsg", e.message, false); return false; }
 }
-
-$("btnRepView").onclick = () => {
-  const run = $("revRun").value;
-  if (run) repOpen(run, "summary");
-};
 
 /* ---------------------------- report modal --------------------------- */
 // one modal, two views: the run's summary (vitals + a tile per bin) and
