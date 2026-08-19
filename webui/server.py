@@ -3878,8 +3878,10 @@ def api_fleet():
 
     def fetch(url):
         try:
+            # generous budget: a freshly restarted peer's first status
+            # answer hashes its whole code tree (seconds on a Pi's SD)
             with urllib.request.urlopen(url + "/api/fleet/status",
-                                        timeout=2.5) as r:
+                                        timeout=6) as r:
                 j = json.loads(r.read())
             j.update(url=url, reachable=True, me=False,
                      same_build=j.get("digest") == me["digest"])
@@ -5362,16 +5364,30 @@ def api_run_bulk_resolve(run_id):
 # ethernet or the current Wi-Fi. On the dev box nmcli simply isn't there
 # and the UI says so.
 def _nmcli(*args, timeout=20):
-    """Run nmcli; returns (ok, text). Never raises."""
-    try:
-        r = subprocess.run(("nmcli", *args), capture_output=True,
-                           text=True, timeout=timeout)
-    except FileNotFoundError:
-        return False, "nmcli not found — Wi-Fi management runs on the Pi"
-    except subprocess.TimeoutExpired:
-        return False, "nmcli timed out"
-    out = r.stdout if r.returncode == 0 else (r.stderr or r.stdout)
-    return r.returncode == 0, out.strip()
+    """Run nmcli; returns (ok, text). Never raises. Polkit allows a
+    service-context user less than an interactive one — scans and joins
+    pass on netdev membership, but hotspot creation (wifi.share.*) came
+    back "Not authorized" from the live bench test. Denied calls retry
+    once under the passwordless sudo the Pi image grants; if the retry
+    fails too, the original polkit error is the one worth reporting."""
+    def run(cmd):
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True,
+                               timeout=timeout)
+        except FileNotFoundError:
+            return None, "nmcli not found — Wi-Fi management runs on the Pi"
+        except subprocess.TimeoutExpired:
+            return None, "nmcli timed out"
+        out = r.stdout if r.returncode == 0 else (r.stderr or r.stdout)
+        return r.returncode == 0, out.strip()
+    ok, out = run(("nmcli", *args))
+    if ok is None:
+        return False, out
+    if not ok and "not authorized" in out.lower():
+        ok2, out2 = run(("sudo", "-n", "nmcli", *args))
+        if ok2:
+            return True, out2
+    return ok, out
 
 
 @app.post("/api/system/restart")
@@ -6197,6 +6213,12 @@ if __name__ == "__main__":
     import shutil as _sh_main
     if sys.platform.startswith("linux") and _sh_main.which("nmcli"):
         threading.Thread(target=_ap_watchdog, daemon=True).start()
+    # warm the code-digest cache off the critical path: the first digest
+    # after a restart hashes the whole tree (seconds from a Pi's SD),
+    # and that cold hit used to land on whoever asked first — a fleet
+    # probe's timeout budget would blow and gray the card as unreachable
+    threading.Thread(target=lambda: codesync.digest(ROOT),
+                     daemon=True).start()
     # dataset location now follows the active caliber/model (see calibers/)
     # bind-retry: after a code-update self-restart the outgoing process can
     # hold the port for a beat — ride it out instead of dying silently
