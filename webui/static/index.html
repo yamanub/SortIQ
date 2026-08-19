@@ -267,8 +267,8 @@
     line-height: 1.05; }
   .repVitals .v span { font-size: 11px; color: var(--dim);
     text-transform: uppercase; letter-spacing: .05em; }
-  .repBins { display: grid; grid-template-columns: repeat(4, minmax(0,1fr));
-    gap: 10px; margin-top: 14px; }
+  .repBins { display: grid; gap: 10px; margin-top: 14px;
+    grid-template-columns: repeat(auto-fill, minmax(235px, 1fr)); }
   .rbt { background: var(--panel2); border: 1px solid var(--line);
     border-radius: 10px; padding: 10px 13px; cursor: pointer; display: flex;
     gap: 11px; align-items: center; }
@@ -294,6 +294,17 @@
   #repZoom img { max-width: 92vw; max-height: 92vh; border-radius: 10px;
     box-shadow: 0 20px 80px rgba(0,0,0,.8); }
   .revCard img { cursor: zoom-in; }
+  /* report-modal case grids: half-size thumbs, and the modal grows with
+     the window so the column count follows the space available */
+  #repModal .repMBox { width: min(1660px, 94vw); }
+  #repModal .revGrid { grid-template-columns:
+    repeat(auto-fill, minmax(105px, 1fr)); gap: 9px; }
+  #repModal .revCard { padding: 6px; }
+  #repModal .revCard .why { font-size: 10.5px; margin: 4px 0; }
+  #repModal .revCard .revStamp { min-width: 0; font-size: 11px;
+    padding: 2px 6px; margin-bottom: 4px; }
+  #repModal .revCard .ghost { font-size: 11px; padding: 2px 8px; }
+  #repModal .revCard .caseAct { flex-wrap: wrap; }
   #dsModal { display: none; position: fixed; inset: 0; z-index: 990;
     background: rgba(10,12,16,.72); overflow-y: auto; }
   #dsModal h3 { margin: 14px 0 6px; font-size: 13px; color: var(--dim);
@@ -6025,7 +6036,7 @@ function repRejCard(run, r) {
       <input list="classList" class="revStamp" autocomplete="off"
         spellcheck="false" value="${r.stamp || ""}"
         placeholder="class — or UNKNOWN to set aside">
-      <div style="display:flex; gap:6px">
+      <div class="caseAct" style="display:flex; gap:6px">
         <button class="ghost" style="flex:1" onclick="revResolve('${run}', ${r.n}, true)">Save</button>
         <button class="ghost danger" onclick="revResolve('${run}', ${r.n}, false)">Discard</button>
       </div>
