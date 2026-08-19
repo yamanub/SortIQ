@@ -312,6 +312,12 @@
     text-transform: uppercase; letter-spacing: .05em; }
   #batchModal { display: none; position: fixed; inset: 0; z-index: 990;
     background: rgba(10,12,16,.72); overflow-y: auto; }
+  /* batch review grid: 85%-size thumbs, box grows with the window —
+     the column count is set inline per render (see renderBatchM) */
+  #batchModal .repMBox { width: min(1660px, 94vw); }
+  #batchModal .revGrid { grid-template-columns:
+    repeat(auto-fill, minmax(178px, 1fr)); gap: 10px; }
+  #batchModal .revCard .why { font-size: 12px; }
   /* hopper census pills */
   .cenPill { background: var(--panel2); border: 1px solid #2c5e3c;
     border-radius: 999px; padding: 4px 8px 4px 14px; display: flex;
@@ -3531,10 +3537,17 @@ function renderBatchM() {
     : g.kind === "suggest" && crowdTop && crowdTop[1] >= g.cases.length / 2
     ? `crowded by ${crowdTop[0]} (margin too thin to auto-file)`
     : "";
-  const pages = Math.ceil(g.cases.length / BATCH_PER_PAGE);
+  // a page holds WHOLE rows (same treatment as the report modal):
+  // column count from the modal's real width, page size the nearest
+  // multiple of it — no ragged row with more cases waiting behind it
+  const GAP = 10, COL_MIN = 178;
+  const avail = $("batchMBody").clientWidth || 1000;
+  const cols = Math.max(1, Math.floor((avail + GAP) / (COL_MIN + GAP)));
+  const perPage = cols * Math.max(1, Math.round(BATCH_PER_PAGE / cols));
+  const pages = Math.ceil(g.cases.length / perPage);
   if (batchM.page >= pages) batchM.page = Math.max(0, pages - 1);
-  const slice = g.cases.slice(batchM.page * BATCH_PER_PAGE,
-                              (batchM.page + 1) * BATCH_PER_PAGE);
+  const slice = g.cases.slice(batchM.page * perPage,
+                              (batchM.page + 1) * perPage);
   const pager = pages > 1 ? `<div class="repPager">
       <button class="ghost" ${batchM.page ? "" : "disabled"}
         onclick="batchMPage(${batchM.page - 1})">‹ Prev</button>
@@ -3559,7 +3572,8 @@ function renderBatchM() {
         : `<button class="ghost" onclick="batchFile(${i})">File all</button>`}
       <button class="ghost danger" onclick="batchFile(${i}, true)">Discard all</button>
     </div>
-    <div class="revGrid" style="margin-top:10px">${slice.map(c => `
+    <div class="revGrid" style="margin-top:10px; grid-template-columns:
+         repeat(${cols}, minmax(0,1fr))">${slice.map(c => `
       <div class="revCard${window._batchExc.has(c.n) ? " exc" : ""}" id="bgc_${c.n}"
            onclick="batchToggleCase(${c.n})" style="cursor:pointer"
            title="click to remove/restore this case — removed cases regroup for separate filing">
@@ -5870,12 +5884,15 @@ function repClose() {
   $("repModal").style.display = "none";
 }
 
-// the bin grid's column count is measured at render time — follow a
+// the case grids' column counts are measured at render time — follow a
 // window resize with a re-render so rows stay whole
 window.addEventListener("resize", () => {
-  if (!repM.open || repM.view !== "bin") return;
   clearTimeout(repRender._rz);
-  repRender._rz = setTimeout(repRender, 200);
+  repRender._rz = setTimeout(() => {
+    if (repM.open && repM.view === "bin") repRender();
+    if ($("batchModal").style.display === "block" && batchM.view === "group")
+      renderBatchM();
+  }, 200);
 });
 
 function repGoto(view, bin, page) {
