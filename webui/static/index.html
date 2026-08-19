@@ -294,16 +294,17 @@
   #repZoom img { max-width: 92vw; max-height: 92vh; border-radius: 10px;
     box-shadow: 0 20px 80px rgba(0,0,0,.8); }
   .revCard img { cursor: zoom-in; }
-  /* report-modal case grids: half-size thumbs, and the modal grows with
-     the window so the column count follows the space available */
+  /* report-modal case grids: 75%-size thumbs, and the modal grows with
+     the window so the column count follows the space available (the
+     column count itself is set inline per render — see repRender) */
   #repModal .repMBox { width: min(1660px, 94vw); }
   #repModal .revGrid { grid-template-columns:
-    repeat(auto-fill, minmax(105px, 1fr)); gap: 9px; }
-  #repModal .revCard { padding: 6px; }
-  #repModal .revCard .why { font-size: 10.5px; margin: 4px 0; }
-  #repModal .revCard .revStamp { min-width: 0; font-size: 11px;
-    padding: 2px 6px; margin-bottom: 4px; }
-  #repModal .revCard .ghost { font-size: 11px; padding: 2px 8px; }
+    repeat(auto-fill, minmax(157px, 1fr)); gap: 9px; }
+  #repModal .revCard { padding: 7px; }
+  #repModal .revCard .why { font-size: 11.5px; margin: 4px 0; }
+  #repModal .revCard .revStamp { min-width: 0; font-size: 12px;
+    padding: 3px 7px; margin-bottom: 4px; }
+  #repModal .revCard .ghost { font-size: 12px; padding: 3px 10px; }
   #repModal .revCard .caseAct { flex-wrap: wrap; }
   #dsModal { display: none; position: fixed; inset: 0; z-index: 990;
     background: rgba(10,12,16,.72); overflow-y: auto; }
@@ -5862,6 +5863,14 @@ function repClose() {
   $("repModal").style.display = "none";
 }
 
+// the bin grid's column count is measured at render time — follow a
+// window resize with a re-render so rows stay whole
+window.addEventListener("resize", () => {
+  if (!repM.open || repM.view !== "bin") return;
+  clearTimeout(repRender._rz);
+  repRender._rz = setTimeout(repRender, 200);
+});
+
 function repGoto(view, bin, page) {
   repM.view = view;
   if (bin !== undefined) repM.bin = bin;
@@ -5950,15 +5959,24 @@ function repRender() {
   const items = isUM
     ? [...(repM.rejects || []).map(r => ({ rej: true, ...r })), ...ordered]
     : ordered;
-  const pages = Math.max(1, Math.ceil(items.length / REP_PER_PAGE));
+  // a page holds WHOLE rows: column count from the modal's real width
+  // (auto-fill's own formula), page size the nearest multiple of it —
+  // otherwise the page boundary leaves a ragged last row with more
+  // cases sitting right behind it on the next page
+  const GAP = 9, COL_MIN = 157;
+  const avail = $("repMBody").clientWidth || 1000;
+  const cols = Math.max(1, Math.floor((avail + GAP) / (COL_MIN + GAP)));
+  const perPage = cols * Math.max(1, Math.round(REP_PER_PAGE / cols));
+  const pages = Math.max(1, Math.ceil(items.length / perPage));
   const page = Math.min(repM.page, pages - 1);
-  const slice = items.slice(page * REP_PER_PAGE, (page + 1) * REP_PER_PAGE);
+  const slice = items.slice(page * perPage, (page + 1) * perPage);
   const run = repM.run;
   let lastSec = null;
   let body = "";
   let grid = [];
   const flush = () => {
-    if (grid.length) body += `<div class="revGrid">${grid.join("")}</div>`;
+    if (grid.length) body += `<div class="revGrid" style="grid-template-columns:
+      repeat(${cols}, minmax(0,1fr))">${grid.join("")}</div>`;
     grid = [];
   };
   for (const it of slice) {
