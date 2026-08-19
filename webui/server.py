@@ -5475,15 +5475,52 @@ def api_network_connect():
     password = body.get("password") or ""
     if not ssid:
         return jsonify({"error": "ssid is required"}), 400
-    args = ["device", "wifi", "connect", ssid]
-    if password:
-        args += ["password", password]
     # one radio: an active fallback hotspot must stand down for the join —
     # and stand back up if the join fails, or a bad password strands the box
     was_ap = _ap["active"]
     if was_ap:
         _ap_down()
-    ok, out = _nmcli(*args, timeout=60)    # DHCP can take a while
+        # the radio just left AP mode with an empty beacon cache — give a
+        # rescan a moment, or the connect below can't infer the target's
+        # security type (bench-test failure: "key-mgmt property is missing")
+        _nmcli("device", "wifi", "rescan")
+        time.sleep(4)
+
+    def join():
+        # a saved profile for this SSID (Imager/netplan-provisioned
+        # included) beats creating a duplicate: update its secret if a
+        # new one was typed, then bring it up by name
+        okc, outc = _nmcli("-t", "-f", "NAME,TYPE", "connection", "show")
+        for line in (outc.splitlines() if okc else []):
+            name = line.rsplit(":", 1)[0]
+            if not line.endswith(":802-11-wireless"):
+                continue
+            oks, outs = _nmcli("-g", "802-11-wireless.ssid",
+                               "connection", "show", name)
+            if not (oks and outs == ssid):
+                continue
+            if password:
+                _nmcli("connection", "modify", name,
+                       "wifi-sec.key-mgmt", "wpa-psk",
+                       "wifi-sec.psk", password)
+            return _nmcli("connection", "up", name, timeout=60)
+        args = ["device", "wifi", "connect", ssid]
+        if password:
+            args += ["password", password]
+        ok1, out1 = _nmcli(*args, timeout=60)   # DHCP can take a while
+        if not ok1 and "key-mgmt" in out1 and password:
+            # target still unseen (fresh out of AP mode): the half-made
+            # profile is broken — replace it with an explicit WPA-PSK one
+            _nmcli("connection", "delete", "id", ssid)
+            oka, outa = _nmcli("connection", "add", "type", "wifi",
+                               "con-name", ssid, "ssid", ssid,
+                               "wifi-sec.key-mgmt", "wpa-psk",
+                               "wifi-sec.psk", password)
+            if oka:
+                return _nmcli("connection", "up", ssid, timeout=60)
+        return ok1, out1
+
+    ok, out = join()
     if not ok:
         if was_ap:
             _ap_up()
@@ -5537,6 +5574,11 @@ def _net_has_link():
 
 
 def _ap_up():
+    # a stale profile from an earlier hotspot (interrupted teardown,
+    # reboot mid-AP) blocks creation under the same name — clear it
+    # first so bring-up is idempotent (bench-test failure: the AP never
+    # rose again after a reboot left sortiq-ap on disk)
+    _nmcli("connection", "delete", AP_CON)
     ok, out = _nmcli("device", "wifi", "hotspot", "con-name", AP_CON,
                      "ssid", _ap_ssid(), "password", AP_PASSWORD,
                      timeout=30)
