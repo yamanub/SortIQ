@@ -443,6 +443,18 @@ stats and **Stop** while sorting, the finished tally afterwards.
   terminal for hand-typed firmware commands. **Pop out** floats the
   log over any tab.
 
+## Updating SortIQ
+
+The gear icon's **System** dialog carries **Check for updates**: it
+compares your build against the newest SortIQ release on GitHub and,
+when a newer one exists, shows the release notes and an **Update &
+restart** button. One click downloads the release, verifies every
+file, and restarts into it (~30 s; refused while a run or training is
+active, and the page reconnects on its own). With several machines,
+update one and let the Fleet tab's **Update from here** carry the rest.
+Checking only happens when you click — the app never phones home on
+its own.
+
 ## Running more than one machine
 
 The **Fleet** tab (on every machine and trainer) is the collective

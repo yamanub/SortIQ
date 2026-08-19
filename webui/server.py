@@ -3319,6 +3319,170 @@ def api_code_update():
                     "restarting": True})
 
 
+# ------------------------------------------------ release self-update ---
+# "Check for updates" in the System dialog: compare the local VERSION
+# against the newest GitHub RELEASE (tagged versions only — users ride
+# stable points, never master), and on the user's click make this
+# install byte-identical to that release through the same plan/write/
+# verify/restart path a trainer pull uses. Click-driven by design: the
+# app never phones home on its own.
+GH_REPO = "yamanub/SortIQ"
+
+
+def _ver_tuple(s):
+    return tuple(int(x) for x in re.findall(r"\d+", str(s))[:3]) or (0,)
+
+
+def _local_version():
+    try:
+        return (ROOT / "VERSION").read_text().strip()
+    except OSError:
+        return "0"
+
+
+def _latest_release():
+    """Newest published version: the latest GitHub Release when one
+    exists, else the highest-versioned bare tag (a maintainer who only
+    tags still counts as releasing). Returns (tag, name, notes) or
+    raises."""
+    import urllib.request
+    import urllib.error
+    hdrs = {"Accept": "application/vnd.github+json"}
+    try:
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{GH_REPO}/releases/latest",
+            headers=hdrs)
+        with urllib.request.urlopen(req, timeout=15) as r:
+            rel = json.loads(r.read())
+        tag = rel.get("tag_name") or ""
+        if tag:
+            return tag, rel.get("name") or tag, (rel.get("body") or "")[:4000]
+    except urllib.error.HTTPError as e:
+        if e.code != 404:            # 404 = no Release objects, try tags
+            raise
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{GH_REPO}/tags?per_page=30",
+        headers=hdrs)
+    with urllib.request.urlopen(req, timeout=15) as r:
+        tags = [t.get("name") or "" for t in json.loads(r.read())]
+    tag = max((t for t in tags if _ver_tuple(t) > (0,)),
+              key=_ver_tuple, default="")
+    return tag, tag, ""
+
+
+@app.get("/api/update/check")
+def api_update_check():
+    try:
+        tag, name, notes = _latest_release()
+    except Exception as e:
+        return jsonify({"error": f"couldn't reach GitHub ({e})"}), 502
+    if not tag:
+        return jsonify({"error": "no releases or tags found"}), 502
+    cur = _local_version()
+    return jsonify({
+        "current": cur, "latest": tag, "name": name, "notes": notes,
+        "update_available": _ver_tuple(tag) > _ver_tuple(cur),
+        "git_checkout": codesync.is_git_checkout(ROOT)})
+
+
+@app.post("/api/update/apply")
+def api_update_apply():
+    """Update this install to the given release tag (default: latest).
+    Same rules as a trainer pull: refused while anything is running,
+    refused on git checkouts, every byte verified before restart."""
+    import hashlib
+    import io
+    import tarfile
+    import urllib.request
+    busy = ("a sorting run" if run_mgr.status().get("running")
+            else "training" if train_status.get("running")
+            else "a gallery rebuild" if _gal_build.get("running")
+            else "a mislabel scan" if _scan_status.get("running")
+            else "a duplicate scan" if _dup_status.get("running") else None)
+    if busy:
+        return jsonify({"error": f"{busy} is active — updating restarts "
+                                 "the app and would kill it; retry when "
+                                 "it finishes"}), 409
+    if codesync.is_git_checkout(ROOT):
+        return jsonify({"error": "this install is a git checkout — update "
+                                 "it with git"}), 400
+    body = request.get_json(silent=True) or {}
+    tag = (body.get("tag") or "").strip()
+    if not tag:
+        try:
+            tag, _, _ = _latest_release()
+        except Exception as e:
+            return jsonify({"error": f"couldn't reach GitHub ({e})"}), 502
+    if not tag:
+        return jsonify({"error": "no release found"}), 502
+    if (_ver_tuple(tag) <= _ver_tuple(_local_version())
+            and not body.get("force")):
+        return jsonify({"error": f"already on v{_local_version()} — "
+                                 f"{tag} isn't newer"}), 400
+    try:
+        url = f"https://github.com/{GH_REPO}/archive/refs/tags/{tag}.tar.gz"
+        with urllib.request.urlopen(url, timeout=300) as r:
+            blob = r.read()
+    except Exception as e:
+        return jsonify({"error": f"release download failed: {e}"}), 502
+    # the release tarball, filtered through the same rules the manifest
+    # lives by, IS a remote manifest — the rest is the proven pull path
+    skip_sfx = codesync._SKIP_SUFFIXES
+    skip_dirs = codesync._SKIP_DIRS
+    files, data = [], {}
+    try:
+        with tarfile.open(fileobj=io.BytesIO(blob), mode="r:*") as tar:
+            for m in tar.getmembers():
+                if not m.isfile():
+                    continue
+                parts = m.name.split("/")[1:]        # strip repo-tag prefix
+                if not parts:
+                    continue
+                rel = "/".join(parts)
+                tracked = (
+                    (len(parts) == 1 and parts[0] in codesync.CODE_FILES)
+                    or (parts[0] in codesync.CODE_DIRS
+                        and not any(p in skip_dirs for p in parts)
+                        and Path(parts[-1]).suffix.lower() not in skip_sfx))
+                if not tracked:
+                    continue
+                raw = tar.extractfile(m).read()
+                data[rel] = raw
+                files.append({"path": rel, "size": len(raw),
+                              "sha256": hashlib.sha256(raw).hexdigest()})
+    except tarfile.TarError as e:
+        return jsonify({"error": f"release tarball unreadable: {e}"}), 502
+    if not files:
+        return jsonify({"error": "release carries no tracked code files"}), 502
+    fetch, delete = codesync.plan(ROOT, files)
+    if not fetch and not delete:
+        return jsonify({"ok": True, "updated": 0, "deleted": 0, "tag": tag,
+                        "restarting": False})
+    for rel in fetch:
+        codesync.write_file(ROOT, rel, data[rel])
+    for rel in delete:
+        codesync.delete_file(ROOT, rel)
+    # verify with the freshly written codesync (its rules may have
+    # changed in this very release), comparing file-by-file against
+    # what the tarball carried
+    try:
+        import importlib
+        verifier = importlib.reload(codesync)
+    except Exception:
+        verifier = codesync
+    now = {f["path"]: f["sha256"] for f in verifier.manifest(ROOT)["files"]}
+    want = {f["path"]: f["sha256"] for f in files}
+    if now != want:
+        return jsonify({"error": "install doesn't match the release after "
+                                 "the update (files changed mid-write?) — "
+                                 "retry"}), 500
+    print(f"release update: {tag} — {len(fetch)} file(s) written, "
+          f"{len(delete)} deleted; restarting", flush=True)
+    threading.Thread(target=_relaunch_self, daemon=True).start()
+    return jsonify({"ok": True, "updated": len(fetch), "deleted": len(delete),
+                    "tag": tag, "restarting": True})
+
+
 def _relaunch_self():
     """Restart this server into freshly written code. The sleep lets the
     HTTP response flush.

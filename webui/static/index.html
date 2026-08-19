@@ -625,6 +625,18 @@
       Refused while a sorting run or training is active. The page
       reconnects by itself when the machine is back.
     </div>
+    <div style="border-top:1px solid var(--line); margin-top:12px; padding-top:12px">
+      <div class="ctlRow" style="flex-wrap:wrap">
+        <button class="ghost" id="btnUpdCheck">Check for updates</button>
+        <span id="updState" style="font-size:12.5px"></span>
+      </div>
+      <div id="updOffer" style="display:none; margin-top:8px">
+        <div id="updName" style="font-weight:700; color:var(--brass)"></div>
+        <div class="muted" id="updNotes" style="font-size:12px; margin:4px 0 8px;
+             white-space:pre-wrap; max-height:160px; overflow-y:auto"></div>
+        <button class="primary" id="btnUpdApply">Update &amp; restart</button>
+      </div>
+    </div>
     <div class="ctlRow" style="margin-top:12px; justify-content:flex-end">
       <button class="ghost" onclick="$('sysModal').style.display='none'">Close</button>
     </div>
@@ -6595,6 +6607,61 @@ async function sysRestart(what) {
 }
 $("btnRestartApp").onclick = () => sysRestart("app");
 $("btnRebootPi").onclick = () => sysRestart("pi");
+
+/* ---- release self-update: check on click, apply on the user's word ---- */
+$("btnUpdCheck").onclick = async () => {
+  $("updState").textContent = "checking…";
+  $("updOffer").style.display = "none";
+  try {
+    const j = await api("/api/update/check");
+    if (j.git_checkout) {
+      $("updState").textContent =
+        `dev checkout — update with git (latest release: ${j.latest})`;
+      return;
+    }
+    if (!j.update_available) {
+      $("updState").textContent = `up to date — v${j.current} is current`;
+      return;
+    }
+    $("updState").textContent = `running v${j.current}`;
+    $("updName").textContent = `${j.latest}${j.name && j.name !== j.latest
+      ? ` — ${j.name}` : ""} is available`;
+    $("updNotes").textContent = j.notes || "";
+    $("updOffer").style.display = "";
+    $("btnUpdApply").onclick = () => updApply(j.latest);
+  } catch (e) { $("updState").textContent = e.message; }
+};
+
+async function updApply(tag) {
+  if (!confirm(`Update to ${tag}? The app restarts when done (~30s) and `
+               + `the page reconnects on its own.`)) return;
+  $("btnUpdApply").disabled = true;
+  $("updState").textContent = `downloading ${tag}…`;
+  try {
+    const j = await postJson("/api/update/apply", { tag });
+    if (!j.restarting) {
+      $("updState").textContent = "already byte-identical to the release";
+      $("btnUpdApply").disabled = false;
+      return;
+    }
+    $("updState").textContent =
+      `updated ${j.updated} file(s) — restarting…`;
+    $("updOffer").style.display = "none";
+    // same reconnect dance as a restart: don't trust an early 200 (the
+    // OLD process answers for the first seconds)
+    let waited = 0;
+    const poll = setInterval(async () => {
+      waited += 3;
+      try {
+        const r = await fetch("/api/state", { cache: "no-store" });
+        if (r.ok && waited >= 8) { clearInterval(poll); location.reload(); }
+      } catch { /* down — keep waiting */ }
+    }, 3000);
+  } catch (e) {
+    $("updState").textContent = e.message;
+    $("btnUpdApply").disabled = false;
+  }
+}
 $("netModal").addEventListener("click", e => {
   if (e.target === $("netModal")) $("netClose").click();
 });
