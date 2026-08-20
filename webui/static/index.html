@@ -308,9 +308,20 @@
   #repModal .revCard .caseAct { flex-wrap: wrap; }
   #dsModal { display: none; position: fixed; inset: 0; z-index: 990;
     background: rgba(10,12,16,.72); overflow-y: auto; }
-  /* same width behavior as the report/batch modals — the image grid
-     and its rows-of-columns pager already follow the space they get */
-  #dsModal .repMBox { width: min(1660px, 94vw); }
+  /* same width behavior as the report/batch modals, but a FIXED frame:
+     banner and exemplar tile stay put, only the image grid scrolls, and
+     the pager is always in reach at the bottom — flipping pages never
+     yanks the view back up past the exemplars */
+  #dsModal .repMBox { width: min(1660px, 94vw); height: 92vh;
+    margin: 4vh auto; display: flex; flex-direction: column;
+    overflow: hidden; }
+  #dsGallery { display: flex; flex-direction: column; flex: 1;
+    min-height: 0; }
+  #dsExCard { background: var(--panel2); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 14px; flex: none; }
+  #dsExCard #dsExThumbs { max-height: 230px; overflow-y: auto; }
+  #dsScroll { flex: 1; min-height: 0; overflow-y: auto; }
+  #dsPager { flex: none; }
   #dsModal h3 { margin: 14px 0 6px; font-size: 13px; color: var(--dim);
     text-transform: uppercase; letter-spacing: .05em; }
   #batchModal { display: none; position: fixed; inset: 0; z-index: 990;
@@ -1349,7 +1360,7 @@
         <button class="ghost danger" id="btnBulkDelete">Delete selected</button>
       </div>
       <div class="muted" id="dsGalleryHint" style="display:none"></div>
-      <div id="dsThumbs" class="thumbGrid"></div>
+      <div id="dsScroll"><div id="dsThumbs" class="thumbGrid"></div></div>
       <div id="dsPager" class="ctlRow" style="margin-top:10px; justify-content:center"></div>
     </div>
     </div>
@@ -2622,6 +2633,9 @@ async function dsView(label, page = 0, scrollTo = false) {
     // selection survives page flips within a class — only switching to a
     // different class resets it (and stales the detail modal's nav list)
     if (dsCur.label !== label) { dsSel.clear(); dsNav.label = null; }
+    // a page FLIP starts the grid at its top; a detail-walk refresh of
+    // the same page keeps the operator's place
+    const pageMoved = dsCur.label !== label || dsCur.page !== page;
     dsCur = { label, page, total: j.total };
     updateBulkBar();
     $("dsGallery").style.display = "";
@@ -2657,9 +2671,9 @@ async function dsView(label, page = 0, scrollTo = false) {
         onclick="dsView('${esc}', ${page + 1})">next ›</button>` : "";
     if (scrollTo) {                     // initial open: raise the modal
       $("dsModal").style.display = "block";
-      $("dsModal").scrollTop = 0;
       renderDatasetMgr();               // paint the open-class highlight
     }
+    if (scrollTo || pageMoved) $("dsScroll").scrollTop = 0;
   } catch (e) { msg("dsMsg", e.message, false); }
 }
 
