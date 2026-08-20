@@ -2689,7 +2689,14 @@ def api_dataset_rebuild():
 @app.get("/api/dataset/manifest")
 def api_dataset_manifest():
     """Inventory for the trainer's incremental pull: the active model's
-    raw/ images (size+mtime) plus model.json (labels + imaging config)."""
+    raw/ images (size+mtime) plus model.json (labels + imaging config).
+    Refused while a run is live: thousands of SD-card reads under a
+    sorting loop stutter the machine, and the modal that "prevents"
+    this is only client-side — a page refresh walks straight past it.
+    The trainer surfaces this message in its sync status."""
+    if run_mgr.status().get("running"):
+        return jsonify({"error": "the machine is running — pull the "
+                        "dataset when the run ends"}), 409
     files = []
     raw_dir = DATA_DIR / "raw"
     if raw_dir.is_dir():
@@ -2719,6 +2726,11 @@ def api_dataset_files():
     so the in-memory tar stays small on the 2GB Pi; the trainer chunks."""
     import io
     import tarfile
+    # a pull that was mid-flight when a run started stops at the next
+    # chunk — same reason the manifest refuses
+    if run_mgr.status().get("running"):
+        return jsonify({"error": "the machine is running — pull the "
+                        "dataset when the run ends"}), 409
     paths = ((request.get_json() or {}).get("paths") or [])[:50]
     buf = io.BytesIO()
     root = str(DATA_DIR.resolve()) + os.sep
@@ -2781,6 +2793,13 @@ def api_models_install():
     (Legacy twins installs are retired — a trainer old enough to push
     stamp*.tflite can't exist behind the code-sync digest gate.)"""
     import shutil as _sh
+    # a model landing mid-run hot-reloads into the sorting loop — the
+    # brain (and every class's bar) would swap between two cases. The
+    # trainer's Install surfaces this message; retry when the run ends.
+    if run_mgr.status().get("running"):
+        return jsonify({"error": "the machine is running — installing "
+                        "would swap the model mid-run; install when "
+                        "it ends"}), 409
     got = {k: f for k, f in request.files.items()
            if k in ("shadow_embed.tflite", "shadow_gallery.npz",
                     "shadow_embed.json")}
@@ -2832,6 +2851,9 @@ def api_shadow_push():
     files = {"shadow_embed.tflite": model.read_bytes(),
              "shadow_gallery.npz": gal.read_bytes()}
     if body.get("target") == "local":
+        if run_mgr.status().get("running"):
+            return jsonify({"error": "a run is active — installing would "
+                            "swap the model mid-run"}), 409
         MODELS_DIR.mkdir(parents=True, exist_ok=True)
         for name, data in files.items():
             (MODELS_DIR / name).write_bytes(data)
@@ -2854,6 +2876,9 @@ def api_shadow_remove():
     import urllib.request
     body = request.get_json(silent=True) or {}
     if body.get("target") == "local":
+        if run_mgr.status().get("running"):
+            return jsonify({"error": "a run is active — removing the "
+                            "model would blind it mid-run"}), 409
         removed = []
         for n in ("shadow_embed.tflite", "shadow_gallery.npz"):
             p = MODELS_DIR / n
