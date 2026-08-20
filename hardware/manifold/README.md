@@ -1,6 +1,8 @@
 # Sorter manifold — printable replacement parts
 
-![The manifold assembled — numbered PEX ports, 1" hose and PEX runs into the bins](manifold-assembled.jpg)
+| PEX conversion | 1" hose |
+|---|---|
+| ![Assembled with numbered PEX adapters, mixed PEX and hose runs into the bins](manifold-assembled.jpg) | ![Assembled with 1" hose on every port](manifold-1in-hose.jpg) |
 
 Replacement output plumbing for the [CS7.2](https://github.com/sjseth/AI-Case-Sorter-CS7.2)
 sorter: a new sorter base, sort pipes, and drop-in funnels. The base
