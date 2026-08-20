@@ -15,7 +15,7 @@ browser — collection, training, calibration, and live sorting runs.
 | Piece | What it is |
 |---|---|
 | **The machine** | Seth's CS7.2: feed wheel, camera tube + light ring, 8-slot sorter — driven by its Arduino Uno board (2× TMC2209) over USB serial. Runs the stock firmware or the [SortIQ fork](firmware/README.md) (per-slot µstep calibration, true motion profiles, homing telemetry). |
-| **The brain** | A Raspberry Pi (4 or 5; tested on both) running the SortIQ app as a service (`sortiq.service`, port 5000). Inference-only by design — TFLite runtime, no TensorFlow. ~100 ms per verdict on a Pi 5, ~200 ms on a Pi 4. |
+| **The brain** | A Raspberry Pi (4 or 5; tested on both) running the SortIQ app as a service (`sortiq.service`, port 5000). Inference-only by design — TFLite runtime, no TensorFlow. ~100 ms per verdict on a Pi 5, ~200 ms on a Pi 4. A Pi 3B (1 GB) runs the full app and classifies just as accurately at ~740 ms per verdict — it can sort in a pinch at roughly a third of the pace, but isn't recommended as the machine's brain. |
 | **The camera** | The stock OV3660 USB module, with in-app controls for the light ring, digital zoom/pan, and crop geometry (primer mask, rim adjust). |
 | **The trainer** | Any Mac or Windows PC on the network, running this same app. It mirrors the machine's dataset over HTTP (incremental after the first sync) and trains new embedding generations that install back over the network — the Pi hot-reloads. See [docs/TRAINER_SETUP.md](docs/TRAINER_SETUP.md). |
 | **Printable parts** | [hardware/manifold](hardware/manifold/) — an experimental replacement sorter base (1" hose or 3/4" PEX per port), sort pipes, and 9mm drop-in funnels. |

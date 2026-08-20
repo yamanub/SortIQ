@@ -8,6 +8,8 @@ then one evening of collecting + one training run to your first real sort.
 a Raspberry Pi 4 or 5 (5 recommended — twice the inference speed) with a
 64 GB+ SD card, and a Mac or Windows PC on the same network for training.
 No screen or keyboard for the Pi — everything runs in your browser.
+(A Pi 3B does run everything — same accuracy, ~3× slower verdicts — and
+will sort in a pinch, but it's not recommended as the machine's brain.)
 
 ### Recommended hardware (cheap, field-proven)
 

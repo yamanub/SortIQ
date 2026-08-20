@@ -1,8 +1,11 @@
 # Raspberry Pi setup — from blank SD card to sorting
 
 Total time: ~5 minutes of flashing + ~5 minutes of automated install.
-Tested on a Pi 4 and a Pi 5 (the Pi only runs inference; training
-happens on a PC, see [TRAINER_SETUP.md](TRAINER_SETUP.md)).
+Tested on a Pi 3B, 4, and 5 (the Pi only runs inference; training
+happens on a PC, see [TRAINER_SETUP.md](TRAINER_SETUP.md)). A 3B runs
+the whole app with the same accuracy but ~740 ms verdicts — fine for
+collection, review, and fleet duty, workable for sorting in a pinch;
+use a 4 or 5 as the machine's brain.
 
 ## Part A — flash the card (on your PC/Mac, ~5 min)
 
