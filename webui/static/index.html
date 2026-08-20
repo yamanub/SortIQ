@@ -5154,7 +5154,8 @@ function renderTestBin(bin) {
 let lastRunStatus = null;
 
 function binCountFor(i) {
-  const bc = (lastRunStatus && lastRunStatus.bin_counts) || {};
+  const bc = (lastRunStatus && !lastRunStatus.capture
+              && lastRunStatus.bin_counts) || {};
   return bc[i] || bc[String(i)] || 0;
 }
 // one slot's bins entry -> list of stamps (tolerates legacy string/null)
@@ -5358,8 +5359,10 @@ $("flSharp").onchange = () => saveFloors();
 // the report's table of contents
 function renderBinStats() {
   const s = renderBins._live || lastRunStatus;
-  const bc = (s && s.bin_counts) || {};
-  const bsc = (s && s.bin_stamp_counts) || {};
+  // a batch capture's counts (everything riding the catch-all) never
+  // dress the bin cards — those cases review on the Collect page
+  const bc = (s && !s.capture && s.bin_counts) || {};
+  const bsc = (s && !s.capture && s.bin_stamp_counts) || {};
   const maxC = Math.max(1, ...Object.values(bc));
   // "finished" = a loaded report is on offer. It must survive a server
   // restart (run/status blank, report preloaded by the greet handler),
@@ -5431,10 +5434,28 @@ function renderBinStats() {
 function renderSortBar(s) {
   const bar = $("sortBar");
   if (!bar) return;
+  // batch captures belong to the Collect page — the Sort page never
+  // wears their tally (live OR finished). Running: say who has the
+  // machine; finished: plain idle, ready to sort.
+  if (s && s.capture) {
+    if (s.running) {
+      bar.innerHTML = `
+        <span style="font-weight:600; font-size:17px">Sort</span>
+        <span class="muted" style="font-size:12.5px">batch capture in
+          progress — the live view is on the Collect page</span>
+        <div class="sgRight">
+          <div class="sgLive" style="color:var(--green)">
+            <span class="dot" style="background:var(--green);
+              box-shadow:0 0 8px var(--green)"></span>
+            CAPTURING · ${s.run_id}</div>
+        </div>`;
+      return;
+    }
+    s = null;                      // finished capture = idle sort page
+  }
   // report-derived stats only decorate the bar when the cached report is
-  // THIS run's (and never a batch capture's tally)
-  const rs = (s && !s.capture
-              && (!s.run_id || pollRun._repRun === s.run_id))
+  // THIS run's
+  const rs = (s && (!s.run_id || pollRun._repRun === s.run_id))
     ? pollRun._repStats : null;
   if (s && s.running) {
     bar.innerHTML = `
@@ -5672,7 +5693,9 @@ async function pollRun() {
     pollRun._repRun = null;
   }
   const recentKey = last ? s.recent.map(r => r.n).join() : "";
-  if (last && recentKey !== pollRun._key) {
+  // capture-run cases never paint the Sort page's live panels — the
+  // Collect page's census card is their home
+  if (last && !s.capture && recentKey !== pollRun._key) {
     pollRun._key = recentKey;
     $("runLast").className = "";
     $("runLast").innerHTML = `<div class="runCase ${classified(last) ? "" : "rej"}">
@@ -5705,7 +5728,7 @@ async function pollRun() {
     }).join("");
   }
 
-  if (s.slots && s.slots.length) {
+  if (s.slots && s.slots.length && !s.capture) {
     // live counts on the bin cards (jumbo number appears with count)
     s.slots.forEach(sl => {
       const c = $("binCount" + sl.slot);
