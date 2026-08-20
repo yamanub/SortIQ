@@ -3323,10 +3323,11 @@ async function batchSync() {
     $("batchRunBar").style.display = "none";
     $("batchLive").style.display = "none";
     // batch history picker: CAPTURE runs only — sorting runs report on
-    // the Sort page, batch reviews live here. Older unreviewed batches
-    // stay reachable until the runs/ retention window drops them.
+    // the Sort page, batch reviews live here. Five newest, matching the
+    // per-kind retention window; older unreviewed batches stay
+    // reachable until it drops them.
     const r = await api("/api/runs");
-    const caps = (r.runs || []).filter(x => x.capture);
+    const caps = (r.runs || []).filter(x => x.capture).slice(0, 5);
     const sel = $("batchRunSel");
     if (!caps.length) {
       sel.style.display = "none";
@@ -5829,8 +5830,9 @@ async function loadRuns() {
   try {
     const j = await api("/api/runs");
     // SORTING runs only — batch-capture runs review as grouped cards on
-    // the Collect page (its own picker), never as a sort report
-    const runs = j.runs.filter(r => !r.capture);
+    // the Collect page (its own picker), never as a sort report. Five
+    // newest, matching the per-kind retention window.
+    const runs = j.runs.filter(r => !r.capture).slice(0, 5);
     $("runReports").innerHTML = runs.length ? runs.map(r => {
       const ds = r.dur_s;
       const dur = !ds ? null

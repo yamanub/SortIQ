@@ -4281,22 +4281,35 @@ class _ServerCamera:
         pass
 
 
-KEEP_RUNS = 5   # rolling window of run folders kept on disk. Runs now
-                # store a full frame for EVERY case (~80MB per 400-case
-                # run) so any card in the report can be filed into the
-                # dataset — the old use of deep run history as a capture
-                # substitute is superseded by the batch-capture workflow.
+KEEP_RUNS = 5   # rolling window of run folders kept on disk — PER KIND:
+                # the newest 5 sorting runs AND the newest 5 batch
+                # captures, on separate shelves, so a capture spree can't
+                # evict a sort report (or vice versa) before it's been
+                # reviewed. Runs store a full frame for EVERY case
+                # (~80MB per 400-case run) so any card in the report can
+                # be filed into the dataset.
+
+
+def _run_is_capture(d):
+    try:
+        return bool(json.loads((d / "run.json").read_text()).get("capture"))
+    except (OSError, ValueError):
+        return False              # unlabeled (pre-capture-flag) = sort run
 
 
 def _prune_runs(keep=KEEP_RUNS):
-    """Delete all but the newest `keep` run folders under runs/."""
+    """Delete all but the newest `keep` run folders OF EACH KIND."""
     import shutil
     runs_dir = ROOT / "runs"
     if not runs_dir.is_dir():
         return
     dirs = sorted((p for p in runs_dir.iterdir() if p.is_dir()), reverse=True)
-    for d in dirs[keep:]:
-        shutil.rmtree(d, ignore_errors=True)
+    seen = {True: 0, False: 0}
+    for d in dirs:
+        kind = _run_is_capture(d)
+        seen[kind] += 1
+        if seen[kind] > keep:
+            shutil.rmtree(d, ignore_errors=True)
 
 
 def _persist_bin(slot, stamp):
