@@ -18,6 +18,7 @@ browser — collection, training, calibration, and live sorting runs.
 | **The brain** | A Raspberry Pi (4 or 5; tested on both) running the SortIQ app as a service (`sortiq.service`, port 5000). Inference-only by design — TFLite runtime, no TensorFlow. ~100 ms per verdict on a Pi 5, ~200 ms on a Pi 4. |
 | **The camera** | The stock OV3660 USB module, with in-app controls for the light ring, digital zoom/pan, and crop geometry (primer mask, rim adjust). |
 | **The trainer** | Any Mac or Windows PC on the network, running this same app. It mirrors the machine's dataset over HTTP (incremental after the first sync) and trains new embedding generations that install back over the network — the Pi hot-reloads. See [docs/TRAINER_SETUP.md](docs/TRAINER_SETUP.md). |
+| **Printable parts** | [hardware/manifold](hardware/manifold/) — an experimental replacement sorter base (1" hose or 3/4" PEX per port), sort pipes, and 9mm drop-in funnels. |
 
 ## How a case gets sorted
 
