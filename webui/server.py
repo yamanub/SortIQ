@@ -1979,6 +1979,10 @@ def api_gallery_pin():
 
 
 _gal_build = {"running": False, "error": None, "done": None, "log": ""}
+# batch-review clustering in flight (api_run_groups embedding fresh
+# unknowns) — a run must not start under it, and it must not start
+# under a run: same interpreter, and on a Pi the same CPU budget
+_groups_busy = {"n": 0}
 
 
 @app.post("/api/gallery/rebuild")
@@ -1988,6 +1992,15 @@ def api_gallery_rebuild():
     the live gallery and canonical dataset already are: no pull/push)."""
     if _gal_build["running"]:
         return jsonify({"error": "rebuild already running"}), 409
+    # the finished rebuild swaps shadow_gallery.npz, which hot-reloads
+    # into whatever is using it — never under a live run, and not under
+    # a scan mid-read either
+    if run_mgr.status().get("running"):
+        return jsonify({"error": "a run is active — the rebuilt gallery "
+                        "would swap in mid-run; rebuild when it ends"}), 409
+    if _scan_status["running"] or _dup_status["running"]:
+        return jsonify({"error": "a dataset scan is running — let it "
+                        "finish, then rebuild"}), 409
 
     def work():
         try:
@@ -2211,6 +2224,9 @@ def api_dataset_scan():
         return jsonify({"error": "a sorting run is active — the scan "
                         "shares the recognizer; wait for the run to "
                         "end"}), 409
+    if _gal_build["running"]:
+        return jsonify({"error": "the gallery is rebuilding — the scan "
+                        "reads it; wait for the rebuild to finish"}), 409
     if get_shadow() is None:
         return jsonify({"error": "no embedding model installed — the scan "
                         "uses it to second-guess the labels"}), 400
@@ -2437,6 +2453,9 @@ def api_dataset_dupscan():
         return jsonify({"error": "a sorting run is active — the scan "
                         "shares the recognizer; wait for the run to "
                         "end"}), 409
+    if _gal_build["running"]:
+        return jsonify({"error": "the gallery is rebuilding — the scan "
+                        "reads it; wait for the rebuild to finish"}), 409
     if get_shadow() is None:
         return jsonify({"error": "no embedding model installed — the scan "
                         "uses it to compare images"}), 400
@@ -2644,6 +2663,14 @@ def api_dataset_rebuild():
     changed outside the app (rsync from another machine, sync-tool lock
     leftovers). Idempotent: raw is the source of truth. Synchronous; the
     UI shows a busy state (~20-30s for a 1,400-image dataset on the Pi)."""
+    # a full reshape is a CPU storm on a Pi and rewrites the crops the
+    # scans pixel-verify against — not under a run, not under a scan
+    if run_mgr.status().get("running"):
+        return jsonify({"error": "a run is active — rebuild crops when "
+                        "it ends"}), 409
+    if _scan_status["running"] or _dup_status["running"]:
+        return jsonify({"error": "a dataset scan is running — let it "
+                        "finish, then rebuild"}), 409
     # the escape hatch stays an escape hatch: outside changes (rsync
     # with preserved mtimes) can defeat the freshness check, so the
     # manual button does the full reshape unless asked not to
@@ -4977,9 +5004,11 @@ run_mgr = RunManager()
 
 @app.post("/api/run/start")
 def api_run_start():
-    # the run loop and the dataset scans share ONE TFLite interpreter —
-    # concurrent invokes trip its internal-reference safety check
-    # (field-hit: a sort started mid-mislabel-scan). Refuse with a reason.
+    # the run loop and the dataset jobs share ONE TFLite interpreter and
+    # one gallery — a run started under any of them either fights for
+    # the interpreter (field-hit: a sort started mid-mislabel-scan) or
+    # gets its gallery swapped mid-run. Refuse with a reason. (The
+    # interpreter itself is also lock-serialized as a backstop.)
     if _scan_status["running"]:
         return jsonify({"error": "the mislabel scan is re-reading the "
                         "dataset — let it finish (or cancel it on the "
@@ -4988,6 +5017,17 @@ def api_run_start():
         return jsonify({"error": "the duplicate scan is running — let it "
                         "finish (or cancel it on the Dataset tab), then "
                         "start the run"}), 409
+    if _gal_build["running"]:
+        return jsonify({"error": "the gallery is rebuilding — a run "
+                        "started now would have its matching gallery "
+                        "swapped mid-run; wait for it to finish"}), 409
+    if _groups_busy["n"] > 0:
+        return jsonify({"error": "a batch review is clustering its "
+                        "unknowns — give it a few seconds, then start "
+                        "the run"}), 409
+    if train_status.get("running"):
+        return jsonify({"error": "training is running on this install — "
+                        "wait for it to finish"}), 409
     err = run_mgr.start(request.get_json() or {})
     if err:
         return jsonify({"error": err}), 409
@@ -5415,15 +5455,27 @@ def api_run_groups(run_id):
                         vcache = dict(zip(z["ns"].tolist(), z["vecs"]))
             except Exception:      # torn/corrupt cache must never 500 the
                 vcache = {}        # review page — it just recomputes
+        # every uncached unknown costs an interpreter embed — behind the
+        # invoke lock that means STALLING a live run's think time, so a
+        # fresh clustering waits its turn instead
+        need = [e["n"] for e, _ in unknown if e["n"] not in vcache]
+        if need and run_mgr.status().get("running"):
+            return jsonify({"error": "the machine is running — this "
+                            "review needs to analyze new cases first; "
+                            "open it when the run ends"}), 409
         vecs, fresh = [], False
-        for e, p in unknown:
-            v = vcache.get(e["n"])
-            if v is None:
-                img = cv2.imread(str(p))
-                v = sh.embed(imaging.crop_head(img))
-                vcache[e["n"]] = v
-                fresh = True
-            vecs.append(v)
+        _groups_busy["n"] += 1
+        try:
+            for e, p in unknown:
+                v = vcache.get(e["n"])
+                if v is None:
+                    img = cv2.imread(str(p))
+                    v = sh.embed(imaging.crop_head(img))
+                    vcache[e["n"]] = v
+                    fresh = True
+                vecs.append(v)
+        finally:
+            _groups_busy["n"] -= 1
         if fresh:
             try:
                 tmp = vp.with_suffix(".tmp.npz")
