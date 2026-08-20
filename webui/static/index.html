@@ -308,6 +308,9 @@
   #repModal .revCard .caseAct { flex-wrap: wrap; }
   #dsModal { display: none; position: fixed; inset: 0; z-index: 990;
     background: rgba(10,12,16,.72); overflow-y: auto; }
+  /* same width behavior as the report/batch modals — the image grid
+     and its rows-of-columns pager already follow the space they get */
+  #dsModal .repMBox { width: min(1660px, 94vw); }
   #dsModal h3 { margin: 14px 0 6px; font-size: 13px; color: var(--dim);
     text-transform: uppercase; letter-spacing: .05em; }
   #batchModal { display: none; position: fixed; inset: 0; z-index: 990;
@@ -2559,8 +2562,10 @@ function dsPageSize() {
   const grid = $("dsThumbs");
   let w = grid.clientWidth;
   if (!w) {
-    const card = grid.closest(".card");
-    w = card ? card.clientWidth - 32 : 900;
+    // first open: the modal is still display:none while the page is
+    // fetched, so nothing inside measures — derive the width the box
+    // WILL have (min(1660px, 94vw) minus its padding)
+    w = Math.min(1660, window.innerWidth * 0.94) - 44;
   }
   return Math.max(Math.floor((w + 10) / 150), 1) * 4;
 }
