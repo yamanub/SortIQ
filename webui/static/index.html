@@ -5811,7 +5811,11 @@ async function pollRun() {
         margin-top:4px">feed homing: last ${s.feed_stats.LastHomingSteps}
         µsteps · worst ${s.feed_stats.MaxHomingSteps} ·
         ${s.feed_stats.FeedCycles} cycles</div>` : "";
-    if (s.end_reason === "out_of_brass") {
+    if (s.capture) {
+      // a finished BATCH capture never announces itself here — its
+      // story (census, review) lives on the Collect page
+      banner.style.display = "none";
+    } else if (s.end_reason === "out_of_brass") {
       banner.style.display = "";
       banner.innerHTML = (s.flushed
         ? `🔔 <b>Out of brass</b> — run ended automatically after
@@ -5899,7 +5903,7 @@ async function loadReport(run) {
 // one modal, two views: the run's summary (vitals + a tile per bin) and
 // one bin's cases. Rejects live here too — they're part of the run.
 const repM = { open: false, run: null, view: "summary", bin: 0, page: 0,
-               rejects: null };
+               rejects: null, rejectsRun: null };
 const REP_PER_PAGE = 50;
 
 function binBadgeColor(i) {
@@ -5918,15 +5922,22 @@ async function repOpen(run, view, bin) {
   $("repModal").style.display = "block";
   msg("repMMsg", "");
   if (pollRun._repRun !== run) {
-    repM.rejects = null;
     $("repMBody").innerHTML = `<div class="muted">loading ${run}…</div>`;
     if (!(await loadReport(run))) { repClose(); return; }
   }
-  if (repM.rejects === null) {
+  // rejects are keyed to THEIR run, not to whether the report cache
+  // moved: the poller preloads a just-finished run's report, so by the
+  // time the modal opens the cache already points at the new run — the
+  // old key (report-cache changed?) let the PREVIOUS run's rejects
+  // list survive into the new run's report. Field-hit: a 1-reject run
+  // showed no rejects anywhere because the prior run's empty list was
+  // still standing in for them.
+  if (repM.rejects === null || repM.rejectsRun !== run) {
     try {
       const rj = await api(`/api/runs/${run}/rejects`);
       repM.rejects = rj.rejects;
     } catch { repM.rejects = []; }
+    repM.rejectsRun = run;
   }
   repRender();
 }
