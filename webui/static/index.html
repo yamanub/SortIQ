@@ -915,8 +915,8 @@
         <div class="sgStat"><b id="bcCount">0</b><span>captured</span></div>
         <div class="sgStat"><b id="bcRate">—</b><span>rate</span></div>
         <span style="flex:1"></span>
-        <div class="sgLive" style="color:var(--green)">
-          <span class="dot" style="background:var(--green); box-shadow:0 0 8px var(--green)"></span>
+        <div class="sgLive" id="bcLive" style="color:var(--green)">
+          <span class="dot" id="bcDot" style="background:var(--green); box-shadow:0 0 8px var(--green)"></span>
           <span id="bcRunId">CAPTURING</span></div>
         <button id="btnBatchStop" style="background:var(--red);
           border-color:var(--red); color:#fff; font-weight:600;
@@ -3329,6 +3329,14 @@ async function batchSync() {
       $("batchLive").style.display = "";
       $("bcCount").textContent = s.sorted;
       $("bcRate").textContent = s.rate ? `${Math.round(s.rate * 60)}/min` : "—";
+      const col = s.stopping ? "var(--amber)" : "var(--green)";
+      $("bcLive").style.color = col;
+      $("bcDot").style.background = col;
+      $("bcDot").style.boxShadow = `0 0 8px ${col}`;
+      $("bcRunId").textContent = s.stopping
+        ? "STOPPING — capturing what's already in the wheel" : "CAPTURING";
+      $("btnBatchStop").disabled = !!s.stopping;
+      $("btnBatchStop").style.opacity = s.stopping ? ".35" : "";
       $("batchStatus").textContent = "";
       if (here) renderBatchLive(s);
       batchTimer = setTimeout(batchSync, here ? 1500 : 5000);
@@ -5474,18 +5482,27 @@ function renderSortBar(s) {
   const rs = (s && (!s.run_id || pollRun._repRun === s.run_id))
     ? pollRun._repStats : null;
   if (s && s.running) {
+    // a pending stop must LOOK taken the moment it's pressed — the loop
+    // finishes the case (or the whole end-of-brass flush) first, and
+    // that silence read as an ignored button in the field
+    const live = s.stopping
+      ? `<div class="sgLive" style="color:var(--amber)">
+          <span class="dot" style="background:var(--amber); box-shadow:0 0 8px var(--amber)"></span>
+          STOPPING — sorting what's already in the wheel</div>`
+      : `<div class="sgLive" style="color:var(--green)">
+          <span class="dot" style="background:var(--green); box-shadow:0 0 8px var(--green)"></span>
+          SORTING · ${s.run_id}</div>`;
     bar.innerHTML = `
       <div class="sgStat"><b>${s.sorted}</b><span>sorted</span></div>
       <div class="sgStat"><b style="color:var(--amber)">${s.rejected}</b><span>unmatched</span></div>
       <div class="sgStat"><b>${s.jams}</b><span>jams</span></div>
       <div class="sgStat"><b>${s.rate}<span style="font-size:13px; color:var(--dim)">/s</span></b><span>rate</span></div>
       <div class="sgRight">
-        <div class="sgLive" style="color:var(--green)">
-          <span class="dot" style="background:var(--green); box-shadow:0 0 8px var(--green)"></span>
-          SORTING · ${s.run_id}</div>
+        ${live}
         <button style="background:var(--red); border-color:var(--red);
           color:#fff; font:inherit; font-weight:600; border-radius:7px;
-          padding:8px 18px; border:1px solid"
+          padding:8px 18px; border:1px solid${s.stopping
+            ? "; opacity:.35" : ""}" ${s.stopping ? "disabled" : ""}
           onclick="$('btnRunStop').click()">■ Stop</button>
       </div>`;
   } else if (s && s.run_id) {

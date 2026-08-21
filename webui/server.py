@@ -4475,6 +4475,11 @@ class RunManager:
             if isinstance(s.get("bin_stamp_counts"), dict):
                 s["bin_stamp_counts"] = {k: dict(v) for k, v
                                          in s["bin_stamp_counts"].items()}
+            # a pending stop is user-visible state: the loop only reads
+            # the flag between case cycles (and finishes the end-of-brass
+            # flush regardless), so the UI must say "stopping" instead of
+            # letting the button look ignored — field-hit during a flush
+            s["stopping"] = bool(s.get("running") and self.stop_evt.is_set())
             return s
 
     def start(self, params):
