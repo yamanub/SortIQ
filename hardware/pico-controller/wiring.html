@@ -129,7 +129,7 @@
       <text x="595" y="470" text-anchor="middle" font-size="10" fill="var(--dim)">= driver DIAG via jumpers</text>
       <!-- right (outputs) -->
       <g font-size="11" fill="currentColor">
-        <rect x="598" y="230" width="52" height="26" rx="4" fill="var(--panel)" stroke="currentColor"/><text x="624" y="247" text-anchor="middle">FAN1</text>
+        <rect x="598" y="230" width="52" height="26" rx="4" fill="var(--panel)" stroke="var(--dim)" stroke-dasharray="3 3"/><text x="624" y="247" text-anchor="middle" fill="var(--dim)">FAN1</text>
         <rect x="598" y="290" width="52" height="26" rx="4" fill="var(--panel)" stroke="currentColor"/><text x="624" y="307" text-anchor="middle">FAN2</text>
         <rect x="598" y="350" width="52" height="26" rx="4" fill="var(--panel)" stroke="currentColor"/><text x="624" y="367" text-anchor="middle">HE0</text>
       </g>
@@ -137,7 +137,7 @@
       <g font-size="11" fill="currentColor">
         <rect x="360" y="150" width="60" height="24" rx="4" fill="var(--panel)" stroke="currentColor"/><text x="390" y="166" text-anchor="middle">VIN</text>
         <rect x="455" y="150" width="70" height="24" rx="4" fill="var(--panel)" stroke="currentColor"/><text x="490" y="166" text-anchor="middle">USB-C</text>
-        <rect x="560" y="150" width="70" height="24" rx="4" fill="var(--panel)" stroke="currentColor"/><text x="595" y="166" text-anchor="middle">5V pin</text>
+        <rect x="560" y="150" width="70" height="24" rx="4" fill="var(--panel)" stroke="currentColor"/><text x="595" y="166" text-anchor="middle">RGB</text>
       </g>
 
       <!-- PSU + Pi -->
@@ -191,11 +191,9 @@
       <!-- outputs -->
       <rect x="760" y="216" width="160" height="54" rx="8" fill="var(--panel)" stroke="currentColor"/>
       <text x="840" y="238" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">Camera LED ring</text>
-      <text x="840" y="256" text-anchor="middle" font-size="10" fill="var(--v5)">5 V · PWM dimmed</text>
-      <line x1="652" y1="243" x2="758" y2="243" stroke="var(--gnd)" style="color:var(--gnd)" stroke-width="2.5" marker-end="url(#ah)"/>
-      <text x="705" y="236" text-anchor="middle" font-size="10" fill="var(--gnd)">− (switched)</text>
+      <text x="840" y="256" text-anchor="middle" font-size="10" fill="var(--v5)">WS2812 ×12 · 5 V + data</text>
       <path d="M630,174 C700,174 760,180 790,214" fill="none" stroke="var(--v5)" style="color:var(--v5)" stroke-width="2.5" marker-end="url(#ah)"/>
-      <text x="740" y="190" text-anchor="middle" font-size="10" fill="var(--v5)">+5 V</text>
+      <text x="740" y="190" text-anchor="middle" font-size="10" fill="var(--v5)">RGB header: 5 V · data · GND</text>
 
       <rect x="760" y="286" width="160" height="48" rx="8" fill="var(--panel)" stroke="currentColor"/>
       <text x="840" y="306" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">Case fan</text>
@@ -270,7 +268,7 @@
   <h3>Outputs</h3>
   <div class="tblwrap"><table>
     <tr><th>Load</th><th>Header</th><th>GPIO</th><th>How</th></tr>
-    <tr><td>Camera LED ring (voltage TBD)</td><td><span class="pin">FAN1</span> − pin</td><td>17</td><td>Low-side switching covers either case: a <span class="v5">5 V ring</span> takes + from a 5 V pin, a <span class="v12">12 V ring</span> plugs straight across FAN1. Bare LEDs dim fine with PWM; a ring with its own driver board may not — then it runs full-on and brightness is a firmware level of 100. Meter the ring before deciding.</td></tr>
+    <tr><td>Camera LED ring — WS2812 ×12</td><td><span class="pin">RGB</span> header</td><td>24 (data)</td><td>Three wires: <span class="v5">5 V</span>, data, <span class="gnd">GND</span> — the header exists for this. Brightness and color are firmware values, not PWM; the RP2040 drives the ring in hardware, so updates never disturb step timing. If it ever flickers, a 74AHCT125 level shifter on the data line fixes the 3.3 V→WS2812 margin.</td></tr>
     <tr><td>Case fan (12 V)</td><td><span class="pin">FAN2</span></td><td>18</td><td>Direct; the fan header's + is 12 V.</td></tr>
     <tr><td>AirDrop solenoid (12 V, optional)</td><td><span class="pin">HE0</span></td><td>23</td><td>Not fitted on this build, but the firmware and this reserved output keep the mod available for anyone who runs it. Direct drive, no relay.</td></tr>
   </table></div>
@@ -292,14 +290,14 @@ prox black  (out) → opto IN+</span>
       use — note it from the meter and the firmware's sensor-type flag matches it.</p>
     </div>
     <div>
-      <h3>5 V ring on a 12 V fan output</h3>
-<pre><span class="v5">5 V pin           → ring +</span>
-<span class="gnd">ring −            → FAN1 "−" pin</span>
-                    (FAN1 "+" unused)</pre>
-      <p>Fan outputs are low-side switches: the MOSFET connects the load's ground, so the load
-      can run from any rail. The ring takes its + from the board's 5 V and its − from the switched
-      pin; PWM on GPIO 17 dims it exactly as the Uno did. Check the ring's current against the
-      board's 5 V regulator if it's a hungry one.</p>
+      <h3>WS2812 ring on the RGB header</h3>
+<pre><span class="v5">RGB header 5 V    → ring 5V / VCC</span>
+<span class="sig">RGB header data   → ring DIN  (data IN, not OUT)</span>
+<span class="gnd">RGB header GND    → ring GND</span></pre>
+      <p>Full white on 12 pixels is ~720 mA from the 5 V rail — fine for the board's regulator,
+      but give the <b>servos their own 5 V supply</b> through the PCA9685's V+ input so a dozen
+      twitching servos never share a rail with the camera light. Pick one color mix for
+      imaging and keep it fixed, the same rule as the stock ring.</p>
     </div>
   </div>
 
@@ -313,8 +311,8 @@ prox black  (out) → opto IN+</span>
     <li><b>DIAG at rest:</b> <span class="pin">X-STOP</span> and <span class="pin">Y-STOP</span> read
       low with the motors idle.</li>
     <li><b>No 5 V on any signal pin</b> — the only 5 V wire on the board goes to the ring.</li>
-    <li><b>Ring dims</b> when the firmware PWMs <span class="pin">FAN1</span>; fan spins on
-      <span class="pin">FAN2</span>.</li>
+    <li><b>Ring lights</b> at the firmware's level on the <span class="pin">RGB</span> header (no
+      flicker, correct color); fan spins on <span class="pin">FAN2</span>.</li>
   </ul>
 
   <h2>What the firmware port will assume</h2>
@@ -323,10 +321,10 @@ prox black  (out) → opto IN+</span>
     <tr><td>Feed step / dir / en</td><td>11 / 10 / 12</td><td>Feed DIAG</td><td>4</td></tr>
     <tr><td>Sort step / dir / en</td><td>6 / 5 / 7</td><td>Sort DIAG</td><td>3</td></tr>
     <tr><td>Driver UART tx / rx</td><td>8 / 9</td><td>Feed homing</td><td>16</td></tr>
-    <tr><td>LED ring PWM</td><td>17</td><td>Sort homing</td><td>25</td></tr>
+    <tr><td>LED ring (WS2812 data)</td><td>24</td><td>Sort homing</td><td>25</td></tr>
     <tr><td>Case fan</td><td>18</td><td>Prox (via opto)</td><td>22</td></tr>
     <tr><td>AirDrop</td><td>23</td><td>Spare inputs</td><td>26, 27 (TH), 29 (servo)</td></tr>
-    <tr><td>Spare outputs</td><td>20 (FAN3), 21 (HB), 24 (RGB)</td><td>Spare endstops</td><td>Z/E driver DIAGs</td></tr>
+    <tr><td>Spare outputs</td><td>17 (FAN1), 20 (FAN3), 21 (HB)</td><td>Spare endstops</td><td>Z/E driver DIAGs</td></tr>
   </table></div>
   <p>The spares are where the next sensors land: a drop-confirmation break-beam under the sort
   outlet and a nest-presence sensor, for jam detection the motors can't feel.</p>
