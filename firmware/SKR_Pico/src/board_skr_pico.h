@@ -41,19 +41,23 @@
 #define FEED_HOMING_SENSOR_TYPE 0    // 0 = NC (optical) reads LOW when homed
 #define SORT_HOMING_SENSOR 25        // Z-STOP
 #define SORT_HOMING_SENSOR_TYPE 0
-#define FEED_SENSOR 22               // PROBE — the 12V PNP prox THROUGH the opto module
+#define FEED_SENSOR 22               // WD-DET header: the 12/24V PNP prox, DIRECT. The board
+                                     // conditions the probe line itself: set the "Jumper for
+                                     // Proximity Switch" (Vcc = VIN), REMOVE the NPN jumper (/BY = PNP).
 #define FEEDSENSOR_ENABLED true
-#define FEEDSENSOR_TYPE 0            // opto module inverts: brass present reads LOW.
-                                     // Direct (non-opto) PNP wiring would be 1.
+#define FEEDSENSOR_TYPE 1            // direct PNP: brass present pulls the line HIGH.
+                                     // (runtime feedsensortype: flips it if the bench says otherwise)
 #define FEED_HOMING_ENABLED true
 #define SORT_HOMING_ENABLED true
 
 // ---- outputs ---------------------------------------------------------------
-#define CASEFAN_PWM 18               // FAN2 (12V, MOSFET)
+#define CASEFAN_PWM 18               // FAN2 (VIN, MOSFET) — the 60 mm case fan
+#define AUX_FAN 17                   // FAN1 (VIN, MOSFET) — the 40 mm board/Pi fan, on at boot
 #define CASEFAN_LEVEL 100            // 0-100
 #define CASEFAN_SW_CTRL false
 #define FEED_DONE_SIGNAL 23          // HE0 — AirDrop solenoid (optional mod)
-#define LED_RING_PIN 29              // SERVOS header — WS2812 data
+#define LED_RING_PIN 24              // RGB header — WS2812 data (5V + GND on the same plug)
+// phase-2 I2C0 for the PCA9685: SDA = GPIO20 (FAN3, spare), SCL = GPIO25 (Z-STOP, freed)
 #define LED_RING_COUNT 12
 #define CAMERA_LED_LEVEL 200         // 0-255 white level at boot
 

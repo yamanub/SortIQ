@@ -23,7 +23,7 @@ is a design in progress and not in this firmware yet.
   when power returns (and re-homes, positions being unknown), and refuses
   motion with `error:motor power off` while it's gone. `info:motor power
   on/off` lines announce the transitions; the app ignores `info:` lines.
-- **WS2812 camera ring** on the SERVOS header: `cameraledlevel:` sets the
+- **WS2812 camera ring** on the RGB header (GPIO 24): `cameraledlevel:` sets the
   level exactly as before, `ledcolor:r,g,b` sets the mix. Driven by the
   RP2040's PIO — updates never disturb step timing.
 - **Hardware UART to the drivers** — the Uno bit-banged it; the Pico asks

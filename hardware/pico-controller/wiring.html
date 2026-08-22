@@ -91,17 +91,17 @@
     <div class="tile"><small>Supply</small><b>12 V system</b></div>
     <div class="tile"><small>Motors</small><b>X = feed · Y = sort</b></div>
     <div class="tile"><small>This build</small><b>Pi 4 on its own PSU · UART link</b></div>
-    <div class="tile"><small>Extra parts</small><b>1 opto module, 2× 1 kΩ, leads</b></div>
+    <div class="tile"><small>Extra parts</small><b>2× 1 kΩ, leads (no opto module)</b></div>
   </div>
 
   <div class="warn"><b>The one rule of this board:</b> the RP2040's inputs take 3.3 V, never 5 V.
   Every signal that arrives at a GPIO must be 3.3 V logic — the optical sensors run from 3.3 V,
-  the prox comes through the opto module powered at 3.3 V, and nothing from the 5 V or 12 V
-  rails touches an input directly.</div>
+  the prox goes into the <span class="pin">WD-DET</span> header, whose own conditioning circuit brings
+  its 12/24 V output down to logic level — and nothing from the 5 V or 12 V rails touches an input directly.</div>
 
   <h2>Overview</h2>
   <figure>
-    <svg viewBox="0 0 980 600" role="img" aria-label="Wiring overview: the SKR Pico in the center with the feed and sort motors on its X and Y headers, the two optical homing sensors and the prox-via-optocoupler on the endstop and probe inputs, the LED ring, fan and solenoid on the MOSFET outputs, 12 V power in and USB-C to the Pi.">
+    <svg viewBox="0 0 980 600" role="img" aria-label="Wiring overview: the SKR Pico in the center with the feed and sort motors on its X and Y headers, the two optical homing sensors and the prox on the WD-DET header, and the LED ring, fan and optional solenoid on the MOSFET outputs.">
       <defs>
         <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
@@ -178,8 +178,8 @@
       <line x1="458" y1="520" x2="447" y2="452" stroke="var(--sig)" style="color:var(--sig)" stroke-width="2" marker-end="url(#ah)"/>
 
       <rect x="560" y="520" width="150" height="50" rx="8" fill="var(--panel)" stroke="currentColor"/>
-      <text x="635" y="540" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">Opto module</text>
-      <text x="635" y="556" text-anchor="middle" font-size="10" fill="var(--v33)">VCC 3.3 V · OUT → PROBE</text>
+      <text x="635" y="540" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">Prox (direct)</text>
+      <text x="635" y="556" text-anchor="middle" font-size="10" fill="var(--v33)">WD-DET · PNP jumper off</text>
       <line x1="580" y1="520" x2="522" y2="452" stroke="var(--sig)" style="color:var(--sig)" stroke-width="2" marker-end="url(#ah)"/>
 
       <rect x="790" y="520" width="150" height="50" rx="8" fill="var(--panel)" stroke="currentColor"/>
@@ -213,8 +213,8 @@
       <span style="--c: var(--gnd)">switched ground</span>
     </div>
     <figcaption>Everything the Uno did, on one board: motors on the left, sensors below, loads
-    on the right. The prox is the only thing that doesn't connect directly — it arrives through
-    the opto module so its 12 V never reaches the RP2040.</figcaption>
+    on the right. Even the prox connects directly: the <span class="pin">WD-DET</span> header carries its own
+    proximity-switch conditioning, so its 12 V never reaches the RP2040.</figcaption>
   </figure>
 
   <h2>Wire it in this order</h2>
@@ -227,8 +227,9 @@
       that's a firmware direction flag, not a rewire.</li>
     <li><b>Homing sensors</b> to the endstop headers, powered from <span class="v33">3.3 V</span>
       (see the meter check below before plugging in).</li>
-    <li><b>Prox</b> into the opto module; opto <span class="pin">OUT</span> to
-      <span class="pin">PROBE</span>.</li>
+    <li><b>Prox</b> straight into <span class="pin">WD-DET</span> (brown → VIN, blue → GND, black → P_S).
+      Two jumpers set it up: fit the <b>Proximity Switch</b> jumper (feeds the header VIN) and
+      <b>remove the NPN jumper</b> — the LJ8A3-…-Z/BY is PNP.</li>
     <li><b>LED ring, fan, solenoid</b> on the MOSFET outputs.</li>
     <li><b>Pi link:</b> three wires from the <span class="pin">Raspberry Pi</span> header to the
       Pi's GPIO header (TX→15, RX→14, GND→GND). Leave the header's 5 V pin off for a Pi 5.</li>
@@ -262,32 +263,32 @@
     <tr><th>Sensor</th><th>Header</th><th>GPIO</th><th>Power</th><th>Notes</th></tr>
     <tr><td>Feed homing (optical)</td><td><span class="pin">E0-STOP</span></td><td>16</td><td class="v33">3.3 V</td><td>Signal on <span class="pin">S</span>, ground on <span class="pin">GND</span>. NC optical module, as today.</td></tr>
     <tr><td>Sort homing (optical)</td><td><span class="pin">Z-STOP</span></td><td>25</td><td class="v33">3.3 V</td><td>Z has no motor, so its endstop is free.</td></tr>
-    <tr><td>Prox LJ8A3-1-Z/BY</td><td><span class="pin">PROBE</span></td><td>22</td><td class="v12">12 V (sensor) / <span class="v33">3.3 V</span> (opto VCC)</td><td>Through the opto module — wiring below.</td></tr>
+    <tr><td>Prox LJ8A3-…-Z/BY (PNP)</td><td><span class="pin">WD-DET</span></td><td>22</td><td class="v12">VIN (12/24 V) via the Proximity Switch jumper</td><td>Direct — the header conditions the PNP output to logic level. NPN jumper <b>removed</b>. Brass present reads HIGH (firmware sensor type 1).</td></tr>
   </table></div>
 
   <h3>Outputs</h3>
   <div class="tblwrap"><table>
     <tr><th>Load</th><th>Header</th><th>GPIO</th><th>How</th></tr>
-    <tr><td>Camera LED ring — WS2812 ×12</td><td><span class="pin">SERVOS</span> header</td><td>29 (data)</td><td>Three wires: <span class="v5">5 V</span>, signal → ring DIN, <span class="gnd">GND</span>. Brightness and color are firmware values, not PWM; the RP2040 drives the ring in hardware, so updates never disturb step timing. It lives here, not on the RGB header, so the RGB data pin stays free for phase 2's I²C bus. If it ever flickers, a 74AHCT125 level shifter on the data line fixes the 3.3 V→WS2812 margin.</td></tr>
-    <tr><td>Case fan (12 V)</td><td><span class="pin">FAN2</span></td><td>18</td><td>Direct; the fan header's + is 12 V.</td></tr>
+    <tr><td>Camera LED ring — WS2812 ×12</td><td><span class="pin">RGB</span> header</td><td>24 (data)</td><td>Three wires: <span class="v5">5 V</span>, signal → ring DIN, <span class="gnd">GND</span>. Brightness and color are firmware values, not PWM; the RP2040 drives the ring in hardware, so updates never disturb step timing. The RGB header already carries 5 V and GND on the same plug, so it is a straight three-wire fit. If it ever flickers, a 74AHCT125 level shifter on the data line fixes the 3.3 V→WS2812 margin.</td></tr>
+    <tr><td>Case fan 60 mm</td><td><span class="pin">FAN2</span></td><td>18</td><td>Direct; the fan header's + is VIN — the fan must match the supply voltage (12 V fan on 12 V, 24 V fan on 24 V).</td></tr>
+    <tr><td>Board / Pi fan 40 mm</td><td><span class="pin">FAN1</span></td><td>17</td><td>Switched on at boot, no control. Same VIN rule.</td></tr>
     <tr><td>AirDrop solenoid (12 V, optional)</td><td><span class="pin">HE0</span></td><td>23</td><td>Not fitted on this build, but the firmware and this reserved output keep the mod available for anyone who runs it. Direct drive, no relay.</td></tr>
   </table></div>
 
   <h2>The two small circuits</h2>
   <div class="circuit">
     <div>
-      <h3>Prox through the opto module</h3>
-<pre><span class="v12">prox brown  (+V)  → 12 V
-prox blue   (0 V) → 12 V GND
-prox black  (out) → opto IN+</span>
-<span class="gnd">12 V GND          → opto IN−</span>
+      <h3>Prox on WD-DET, no extra parts</h3>
+<pre><span class="v12">prox brown  (+V)  → WD-DET 12/24V
+prox blue   (0 V) → WD-DET GND
+prox black  (out) → WD-DET P_S</span>   ← conditioned on-board → GPIO 22
 
-<span class="v33">3.3 V             → opto VCC</span>   ← 3.3, never 5
-<span class="gnd">board GND         → opto GND</span>
-<span class="sig">opto OUT          → PROBE (GPIO 22)</span></pre>
-      <p>The module's own resistor sets the LED current; its output swings 0–3.3 V because you fed
-      it 3.3 V. Whether "brass present" reads high or low depends on which output terminal you
-      use — note it from the meter and the firmware's sensor-type flag matches it.</p>
+jumper "Proximity Switch"  FITTED   (header Vcc = VIN)
+jumper "NPN"               REMOVED  (LJ8A3-…-Z/BY is PNP)</pre>
+      <p>The board does what the opto module would have: the P_S line goes through a divider
+      to the RP2040, so the sensor's 12/24 V output never reaches a GPIO. A PNP sensor pulls the
+      line <b>high</b> on brass; the firmware ships with sensor type 1 for exactly that — if the
+      meter says otherwise, <code>feedsensortype:0</code> flips it, no rewire.</p>
     </div>
     <div>
       <h3>WS2812 ring on the SERVOS header</h3>
@@ -321,14 +322,15 @@ prox black  (out) → opto IN+</span>
     <tr><td>Feed step / dir / en</td><td>11 / 10 / 12</td><td>Feed DIAG</td><td>4</td></tr>
     <tr><td>Sort step / dir / en</td><td>6 / 5 / 7</td><td>Sort DIAG</td><td>3</td></tr>
     <tr><td>Driver UART tx / rx</td><td>8 / 9</td><td>Feed homing</td><td>16</td></tr>
-    <tr><td>LED ring (WS2812 data)</td><td>29</td><td>Sort homing</td><td>25</td></tr>
-    <tr><td>Case fan</td><td>18</td><td>Prox (via opto)</td><td>22</td></tr>
-    <tr><td>AirDrop</td><td>23</td><td>Spare inputs</td><td>26, 27 (TH), 29 (servo)</td></tr>
-    <tr><td>Spare outputs</td><td>17 (FAN1), 20 (FAN3), 21 (HB)</td><td>Reserved: phase-2 I²C</td><td>24 SDA (RGB data) + 25 SCL (Z-STOP, freed when the sort arm goes)</td></tr>
+    <tr><td>LED ring (WS2812 data)</td><td>24</td><td>Sort homing</td><td>25</td></tr>
+    <tr><td>Case fan</td><td>18</td><td>Prox (WD-DET, direct)</td><td>22</td></tr>
+    <tr><td>Board fan</td><td>17</td><td>Spare inputs</td><td>26, 27 (TH), 29 (SERVOS)</td></tr>
+    <tr><td>AirDrop</td><td>23</td><td></td><td></td></tr>
+    <tr><td>Spare outputs</td><td>20 (FAN3), 21 (HB), 29 (SERVOS)</td><td>Reserved: phase-2 I²C</td><td>20 SDA (FAN3) + 25 SCL (Z-STOP, freed when the sort arm goes)</td></tr>
   </table></div>
   <p>The spares are where phase 2 lands: the gated-wheel's <b>PCA9685 servo driver</b> on the
-  reserved I²C pair (GPIO 24 SDA / 25 SCL — the RGB data pin and <span class="pin">Z-STOP</span>,
-  which the sort arm gives up), with the servos powered from their own 5 V through the
+  reserved I²C pair (GPIO 20 SDA / 25 SCL — the spare <span class="pin">FAN3</span> pin and
+  <span class="pin">Z-STOP</span>, which the sort arm gives up), with the servos powered from their own 5 V through the
   PCA9685's <span class="pin">V+</span>; plus a pocket-empty sensor on a thermistor input.</p>
   <p><b>Motor power comes and goes while the board runs.</b> With the Pi always on and the 12 V
   switched at will, the firmware treats motor power as a state: it notices when the drivers
