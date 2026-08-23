@@ -938,6 +938,12 @@ def api_stream():
                 zp = _camera.get("zoom_preview")
                 if zp is not None and time.monotonic() - zp["t"] > 120:
                     _camera["zoom_preview"] = zp = None   # abandoned tune-up
+                elif zp is not None:
+                    # someone is WATCHING this tune-up: keep it alive. The
+                    # expiry now only fires when no stream has served the
+                    # preview for 2 min (the real abandoned case) — it used
+                    # to snap the view back mid-focus-session.
+                    zp["t"] = time.monotonic()
                 z = zp or _camera["zoom"]
                 if z:
                     frame = apply_zoom(frame, z)
@@ -1124,7 +1130,8 @@ def api_camera_model_post():
             "width": cam.get("width"), "height": cam.get("height"),
             "zoom": cam.get("zoom"), "controls": cam.get("controls", {}),
             "active_preset": cam.get("active_preset"),
-            "camera_led": machine_settings()["camera_led"]}
+            "camera_led": machine_settings()["camera_led"],
+            "led_color": machine_settings().get("led_color", "#ffffff")}
         cam["model"] = key
         s = (cams.get(key) or {}).get("saved") or {}
         for k2 in ("width", "height", "zoom", "controls"):
@@ -1137,6 +1144,11 @@ def api_camera_model_post():
     with _camera["lock"]:
         open_camera_locked()
     led_pushed = False
+    if s.get("led_color"):
+        save_machine_settings({"led_color": s["led_color"]})
+        if _console["transport"] is not None:
+            _apply_machine_settings({"led_color":
+                                     machine_settings()["led_color"]})
     if s.get("camera_led") is not None:
         m = save_machine_settings({"camera_led": s["camera_led"]})
         if _console["transport"] is not None:
@@ -1273,7 +1285,8 @@ def _preset_snapshot():
     return {"width": c.get("width"), "height": c.get("height"),
             "zoom": c.get("zoom") or {"factor": 1.0, "x": 0, "y": 0},
             "controls": c.get("controls", {}),
-            "camera_led": machine_settings()["camera_led"]}
+            "camera_led": machine_settings()["camera_led"],
+            "led_color": machine_settings().get("led_color", "#ffffff")}
 
 
 @app.get("/api/camera/presets")
@@ -1319,6 +1332,11 @@ def api_camera_presets_apply():
     with _camera["lock"]:
         open_camera_locked()   # reopen applies resolution + saved controls
     led_pushed = False
+    if p.get("led_color"):
+        save_machine_settings({"led_color": p["led_color"]})
+        if _console["transport"] is not None:
+            _apply_machine_settings({"led_color":
+                                     machine_settings()["led_color"]})
     if p.get("camera_led") is not None:
         m = save_machine_settings({"camera_led": p["camera_led"]})
         if _console["transport"] is not None:
@@ -6078,6 +6096,7 @@ MACHINE_DEFAULTS = {"feed_speed": 94, "feed_steps": 60, "sort_speed": 94,
                     "air_drop": False, "air_drop_pre_delay": 30,
                     "air_drop_signal_ms": 100, "air_drop_post_delay": 100,
                     "motor_standby": 0, "camera_led": 200,
+                    "led_color": "#ffffff",   # WS2812 ring mix (SKR Pico only)
                     "slots_total": 8, "slots_enabled": None,   # None = all
                     # per-slot physical capacity in cases; None/0 entries =
                     # uncalibrated (fill bars fall back to relative widths)
@@ -6225,6 +6244,10 @@ def save_machine_settings(update):
                 m[k] = update[k] if update[k] in ("stock", "ss2") else "stock"
             elif k == "board":
                 m[k] = str(update[k] or "")[:40]
+            elif k == "led_color":
+                c = str(update[k] or "").strip().lstrip("#").lower()
+                m[k] = "#" + c if len(c) == 6 and all(
+                    ch in "0123456789abcdef" for ch in c) else "#ffffff"
             elif k in _MACHINE_BOOLS:
                 m[k] = bool(update[k])
             elif k == "slots_enabled":
@@ -6291,6 +6314,16 @@ def _apply_machine_settings(settings):
         if key in settings and settings[key] is not None and _console_request(
                 f"{cmd}:{int(settings[key])}", lambda l: l.strip() == "ok", timeout=2.0):
             applied += 1
+    # the ring color is a Pico-only command; the fork board has no RGB
+    if settings.get("led_color") and             machine_settings().get("board") == "SKR Pico":
+        c = str(settings["led_color"]).lstrip("#")
+        try:
+            r, g, b = (int(c[i:i + 2], 16) for i in (0, 2, 4))
+        except ValueError:
+            r = g = b = 255
+        if _console_request(f"ledcolor:{r},{g},{b}",
+                            lambda l: l.strip() == "ok", timeout=2.0):
+            applied += 1
     # the per-slot table goes LAST: the firmware's sortsteps setter (pushed
     # above) refills the whole table, clobbering any earlier slotpos
     if settings.get("slot_positions") and not on_stock:
@@ -6350,10 +6383,15 @@ def api_machine_settings_post():
     if body.get("preview"):
         # push to the board WITHOUT persisting — the camera page's live
         # LED tuning; the saved value comes back on Save/Revert/reconnect
-        if body.get("camera_led") is None:
-            return jsonify({"error": "preview supports camera_led only"}), 400
-        led = min(max(int(body["camera_led"]), 0), 255)
-        applied = (_apply_machine_settings({"camera_led": led})
+        push = {}
+        if body.get("camera_led") is not None:
+            push["camera_led"] = min(max(int(body["camera_led"]), 0), 255)
+        if body.get("led_color") is not None:
+            push["led_color"] = str(body["led_color"])
+        if not push:
+            return jsonify({"error":
+                            "preview supports camera_led / led_color"}), 400
+        applied = (_apply_machine_settings(push)
                    if _console["transport"] is not None else 0)
         return jsonify({"ok": True, "preview": True, "applied": applied})
     m = save_machine_settings(body)
@@ -6362,6 +6400,8 @@ def api_machine_settings_post():
         cleared, moved = _sanitize_bins_for_slots(m["slots_enabled"])
     # push only what changed — a slider drag shouldn't re-send every setter
     push = {k: m[k] for k in body if k in _SETTER_CMD}
+    if "led_color" in body:
+        push["led_color"] = m["led_color"]
     if "air_drop" in body:
         # the mod needs ~30ms of notification delay (brass starts falling
         # before the blast); without the mod that delay is pure dead time

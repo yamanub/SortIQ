@@ -998,6 +998,15 @@
             <input type="range" id="ledLevel" min="0" max="255" step="5">
             <div class="muted" id="ledHint" style="font-size:11.5px"></div>
           </div>
+          <div class="ctl" id="ledColorRow" style="display:none">
+            <label>Color <b id="vLedColor"></b></label>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+              <input type="color" id="ledColor" value="#ffffff"
+                     style="width:56px; height:30px; padding:2px; border:1px solid var(--line); border-radius:6px; background:var(--panel)">
+              <span id="ledSwatches"></span>
+            </div>
+            <div class="muted" style="font-size:11.5px">tint the ring — some headstamps read better under a warm or red cast</div>
+          </div>
           <h3>Digital zoom <span class="muted">(applies to saved training images too)</span></h3>
           <div class="ctl"><label>Zoom <b id="vZoomF"></b></label>
             <input type="range" id="zoomF" min="1" max="8" step="0.1"></div>
@@ -3772,14 +3781,16 @@ const livePreviewNow = debounce(livePreviewTick, 200);
 let camBase = null;                    // last saved values
 
 function camCurrent() {
-  return { led: +$("ledLevel").value, zf: +$("zoomF").value,
+  return { led: +$("ledLevel").value, color: $("ledColor").value,
+           zf: +$("zoomF").value,
            zx: +$("zoomX").value, zy: +$("zoomY").value,
            frac: +$("pocketFrac").value, rim: +$("rimScale").value };
 }
 function camIsDirty() {
   if (!camBase) return false;
   const c = camCurrent();
-  return Object.keys(camBase).some(k => Math.abs(c[k] - camBase[k]) > 1e-9);
+  return Object.keys(camBase).some(k => typeof c[k] === "string"
+    ? c[k] !== camBase[k] : Math.abs(c[k] - camBase[k]) > 1e-9);
 }
 function camDirtyUi() {
   const d = camIsDirty();
@@ -3796,6 +3807,8 @@ $("btnCamSave").onclick = async () => {
   try {
     if (c.led !== b.led)
       await postJson("/api/machine/settings", { camera_led: c.led });
+    if (c.color !== b.color)
+      await postJson("/api/machine/settings", { led_color: c.color });
     if (c.zf !== b.zf || c.zx !== b.zx || c.zy !== b.zy)
       await api("/api/camera/settings", { method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -3818,6 +3831,7 @@ $("btnCamSave").onclick = async () => {
 $("btnCamRevert").onclick = () => {
   if (!camBase) return;
   $("ledLevel").value = camBase.led; $("vLedLevel").textContent = camBase.led;
+  $("ledColor").value = camBase.color; $("vLedColor").textContent = camBase.color;
   $("zoomF").value = camBase.zf; $("zoomX").value = camBase.zx;
   $("zoomY").value = camBase.zy; showZoomVals();
   $("pocketFrac").value = camBase.frac;
@@ -3857,7 +3871,8 @@ async function camPreviewReset() {     // view + board back to saved values
   if (camBase) {
     try {
       await postJson("/api/machine/settings",
-                     { preview: true, camera_led: camBase.led });
+                     { preview: true, camera_led: camBase.led,
+                       led_color: camBase.color });
     } catch {}
   }
 }
@@ -3983,8 +3998,28 @@ async function loadCamSettings() {
   } catch (e) { camMsg(e.message); }
   try {                       // the light ring is a firmware setting
     const m = await api("/api/machine/settings");
-    $("ledLevel").value = m.settings.camera_led;
-    $("vLedLevel").textContent = m.settings.camera_led;
+    const pico = (m.settings.board || "") === "SKR Pico";
+    if (pico) {                     // the Pico ring is ~3x the old one:
+      $("ledLevel").max = 100;      // full range is blinding — 100 is the
+      $("ledLevel").step = 1;       // practical ceiling, and step 1 gives
+    }                               // real control at the dim end
+    $("ledLevel").value = Math.min(m.settings.camera_led, +$("ledLevel").max);
+    $("vLedLevel").textContent = $("ledLevel").value;
+    $("ledColorRow").style.display = pico ? "" : "none";
+    $("ledColor").value = m.settings.led_color || "#ffffff";
+    $("vLedColor").textContent = $("ledColor").value;
+    if (pico && !$("ledSwatches").childElementCount) {
+      const SW = [["#ffffff","white"], ["#ffd9a0","warm"], ["#ff3b30","red"],
+                  ["#34c759","green"], ["#0a84ff","blue"], ["#ffcc00","amber"]];
+      $("ledSwatches").append(...SW.map(([hex, name]) => {
+        const b = document.createElement("button");
+        b.className = "ghost"; b.title = name;
+        b.style.cssText = "width:24px; height:24px; padding:0; border-radius:50%; " +
+                          "border:1px solid var(--line); background:" + hex;
+        b.onclick = () => { $("ledColor").value = hex; $("ledColor").oninput(); };
+        return b;
+      }));
+    }
     $("ledHint").textContent = m.connected
       ? "applies to the board when you press Save"
       : "Save stores it — applies when the machine connects";
@@ -4021,6 +4056,17 @@ $("ledLevel").oninput = () => {
   $("vLedLevel").textContent = $("ledLevel").value;
   camDirtyUi();
   pushLedPreview();
+};
+const pushLedColorPreview = debounce(async () => {
+  try {
+    await postJson("/api/machine/settings",
+                   { preview: true, led_color: $("ledColor").value });
+  } catch {}
+}, 200);
+$("ledColor").oninput = () => {
+  $("vLedColor").textContent = $("ledColor").value;
+  camDirtyUi();
+  pushLedColorPreview();
 };
 
 function showZoomVals() {
