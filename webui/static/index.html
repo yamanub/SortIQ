@@ -6836,7 +6836,7 @@ async function pollConsole() {
   $("machConnForm").style.display = connected ? "none" : "flex";
   $("machMeta").textContent = !connected ? ""
     : j.mode === "serial"
-    ? `CS7.2 board · ${$("conPort").value.trim() || "/dev/ttyUSB0"} · 9600`
+    ? `${j.board || "CS7.2"} board · ${j.port || $("conPort").value.trim() || "/dev/ttyUSB0"} · 9600`
     : "Simulator (virtual CS7.2)";
   const html = connected
     ? j.log.map(l =>

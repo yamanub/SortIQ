@@ -5924,7 +5924,8 @@ def _console_connect(mode, port=None):
             transport = RawCs72Console(SerialCs72Link(port, FW_BAUD))
         else:
             transport = RawCs72Console(FakeCs72Link())
-        _console.update(transport=transport, mode=mode, hold=False)
+        _console.update(transport=transport, mode=mode, hold=False,
+                        port=(port if mode == "serial" else None))
         stop = threading.Event()
         _console["stop"] = stop
 
@@ -6045,7 +6046,9 @@ def api_console_send():
 @app.get("/api/console/log")
 def api_console_log():
     return jsonify({"connected": _console["transport"] is not None,
-                    "mode": _console["mode"], "log": _console["log"][-200:]})
+                    "mode": _console["mode"], "log": _console["log"][-200:],
+                    "port": _console.get("port"),
+                    "board": machine_settings().get("board") or ""})
 
 
 @app.post("/api/console/disconnect")
