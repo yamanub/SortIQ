@@ -94,8 +94,8 @@
 #define FEED_SGTHRS 40               // 0-255, higher = more sensitive; tune with sgprobe
 #define SORT_SGTHRS 40
 #define SG_TCOOLTHRS 0xFFFFF
-#define SG_TRIP_HITS 32               // DIAG must stay high for 2 full steps (16 usteps/step)
-#define SG_ARM_STEPS 64               // 4 full steps of cruise before SG_RESULT means anything
+#define SG_TRIP_HITS 64               // DIAG must stay high for 4 full steps (~10 ms at cruise)
+#define SG_ARM_STEPS 128              // 8 full steps of cruise: SG_RESULT reads ~0 that long after a standstill
 
 // ---- motor power as a state ------------------------------------------------
 // The Pi stays on while the 12V is switched: the drivers come and go under
