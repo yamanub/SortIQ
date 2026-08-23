@@ -33,6 +33,7 @@
 #include <TMCStepper.h>
 #include <Adafruit_NeoPixel.h>
 #include "board_skr_pico.h"
+#include <EEPROM.h>                   // [PICO] flash-backed: remembers sortaxis
 
 ///END OF USER CONFIGURATIONS ///
 ///DO NOT EDIT BELOW THIS LINE ///
@@ -111,6 +112,8 @@ unsigned long sgProbeSum = 0;
 
 //motor power state [PICO]
 bool motorPower = false;
+bool sortAxis = true;                 // [PICO] false = no sort assembly fitted (feeder-only bench):
+                                      // sort homing/moves/StallGuard are skipped silently, persisted
 unsigned long lastPowerPoll = 0;
 
 int feedOverTravelSteps = feedMicroSteps - (FEED_OVERSTEP_THRESHOLD * FEED_MICROSTEPS);
@@ -218,6 +221,8 @@ void setup() {
   Serial.begin(HOST_BAUD);               // USB-C mirror
   Serial2.begin(DRIVER_BAUD);            // TMC2209 bus (GPIO8/9)
   delay(200);
+  EEPROM.begin(64);                      // [PICO] persisted flags
+  if (EEPROM.read(0) == 0xA5) sortAxis = EEPROM.read(1) != 0;
 
   //enable motor controllers
   pinMode(FEED_ENABLE, OUTPUT);
@@ -260,10 +265,11 @@ void setup() {
   digitalWrite(FEED_DIRPIN, feedDirection);
 
   lastTrigger = millis();
-  if (motorPower) jogSorter();
+  if (motorPower && sortAxis) jogSorter();
 
-  IsFeedHoming=true;
-  IsSortHoming=true;
+  // [PICO] home only if the 12V is already there; otherwise the power-return
+  // path homes when it arrives (no overtravel/homing errors on a cold boot)
+  if (motorPower) { IsFeedHoming=true; IsSortHoming=true; }
   msgResetTimer = millis();
 
   host.print(F("Ready\n"));
@@ -350,7 +356,7 @@ void checkSerial(){
       if (input.startsWith("homesorter")) {
         if (!requireMotorPower()) { resetCommand(); return; }
         sortDelayMS=400;
-           jogSorter();
+           if(sortAxis) jogSorter();
         qPos1 = 0;
         qPos2 = 0;
         slotQueued = true;   //SS2: the queue is rebuilt to a known state
@@ -488,6 +494,7 @@ void checkSerial(){
         host.print(sortSgThrs);
         host.print(F(",\"MotorPower\":"));
         host.print(motorPower);
+        host.print(F(",\"SortAxis\":")); host.print(sortAxis ? 1 : 0);
         host.print(F(",\"Board\":\"SKR_PICO\""));
         host.print(F("}\n"));
         resetCommand();
@@ -677,6 +684,13 @@ void checkSerial(){
       if (input.startsWith("sgprobe:")) {
         input.replace("sgprobe:", "");
         sgProbe = stringToBool(input);
+        host.print(F("ok\n")); resetCommand(); return;
+      }
+      if (input.startsWith("sortaxis:")) {   // [PICO] sortaxis:0 = no sort assembly
+        input.replace("sortaxis:", "");
+        sortAxis = stringToBool(input);
+        EEPROM.write(0, 0xA5); EEPROM.write(1, sortAxis ? 1 : 0); EEPROM.commit();
+        if(!sortAxis){ IsSortHoming=false; IsSorting=false; SortInProgress=false; SortComplete=true; }
         host.print(F("ok\n")); resetCommand(); return;
       }
       if (input.startsWith("sensors")) {   // [PICO] bench: raw input levels
@@ -931,6 +945,10 @@ void sortTrapInit(){
 }
 
 void moveSorterToNextPosition(int position){
+    if(!sortAxis){                         // [PICO] feeder-only: queue bookkeeping, no motion
+      sortToSlot=position; qPos1=qPos2; qPos2=position; slotQueued=true;
+      SortInProgress=false; SortComplete=true; IsSorting=false; return;
+    }
     sgSortHits = 0; sgSortCruise = 0; sgProbeReset();   //stallguard: fresh move
     sortToSlot=position;
     sortStepsToNextPosition = slotPos(qPos1) - slotPos(qPos2);
@@ -960,6 +978,10 @@ void moveSorterToNextPosition(int position){
 }
 
 void moveSorterToPosition(int position){
+    if(!sortAxis){
+      sortToSlot=position; qPos1=position; qPos2=position; slotQueued=true;
+      SortInProgress=false; SortComplete=true; IsSorting=false; return;
+    }
     sgSortHits = 0; sgSortCruise = 0; sgProbeReset();
     sortToSlot=position;
     sortStepsToNextPosition = slotPos(qPos1) - slotPos(position);
@@ -1255,7 +1277,7 @@ void sortHomingFailed(){
 //it, then re-approach slowly - the trigger edge is taken at a low, constant
 //speed every time, which is what makes slot positions repeatable.
 void homeSortMotor(){
-  if(IsSortHoming==true && SORT_HOMING_ENABLED == false){
+  if(IsSortHoming==true && (SORT_HOMING_ENABLED == false || !sortAxis)){
      IsSorting=false;
          SortComplete = true;
          IsSortHoming =false;
@@ -1533,7 +1555,7 @@ bool sgCheckFeed(bool cruising){
   return false;
 }
 bool sgCheckSort(bool cruising){
-  if(!sgEnabled || !cruising){ sgSortHits = 0; return false; }
+  if(!sgEnabled || !cruising || !sortAxis){ sgSortHits = 0; return false; }
   sgSortCruise++;
   if(sgSortCruise <= SG_ARM_STEPS){ return false; }
   if(sgProbe && (sgSortCruise % 32) == 0){ sgProbeSample(sortmotorUART); }
