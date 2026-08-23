@@ -193,13 +193,20 @@ def find_head(img):
     if best:
         return best
 
-    g2 = cv2.medianBlur(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), 5)
-    circles = cv2.HoughCircles(g2, cv2.HOUGH_GRADIENT, dp=2, minDist=h,
+    # Hough fallback on a small copy: at full 1080p this search costs ~26 s
+    # on a Pi 4 (the whole live preview stalls whenever the pocket is empty);
+    # at 360 px tall it is well under a second and the rim is still found
+    # to within a couple of pixels once scaled back.
+    scale = min(1.0, 360.0 / h)
+    small = cv2.resize(img, (int(w * scale), int(h * scale))) if scale < 1.0 else img
+    sh = small.shape[0]
+    g2 = cv2.medianBlur(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY), 5)
+    circles = cv2.HoughCircles(g2, cv2.HOUGH_GRADIENT, dp=2, minDist=sh,
                                param1=120, param2=40,
-                               minRadius=h // 6, maxRadius=h // 2)
+                               minRadius=sh // 6, maxRadius=sh // 2)
     if circles is not None:
         x, y, r = circles[0][0]
-        return int(x), int(y), int(r)
+        return int(x / scale), int(y / scale), int(r / scale)
     return w // 2, h // 2, min(h, w) // 2 - 4
 
 
