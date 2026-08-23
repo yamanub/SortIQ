@@ -99,6 +99,9 @@ uint8_t sortSgThrs = SORT_SGTHRS;
 uint32_t sgTcoolThrs = SG_TCOOLTHRS;
 uint8_t sgFeedHits = 0;               //consecutive DIAG-high cruise steps
 uint8_t sgSortHits = 0;
+// [PICO] stale-DIAG gate: at standstill SG_RESULT sits near 0 and DIAG is HIGH,
+// so a trip may only count after DIAG has been seen LOW during THIS move
+bool sgFeedSeenLow = false, sgSortSeenLow = false;
 unsigned int sgFeedCruise = 0;        //cruise steps so far this move (arming)
 unsigned int sgSortCruise = 0;
 unsigned long feedStalls = 0;         //lifetime trip counters (feedstats)
@@ -295,19 +298,29 @@ void loop() {
 bool commandReady = false;
 char endMarker = '\n';
 
-void recvWithEndMarker() {
-    while (host.available() > 0 ) {
-        int rc = host.read();
-        if (rc < 0) return;
-        if (rc == '\r') continue;          // [PICO] tolerate CRLF hosts
-        if (rc != endMarker) {
-            input += (char)rc;
-        }
+// [PICO] one line buffer PER HOST: the Pi header UART and the USB console can
+// both be typing at once (bench), and a shared buffer interleaved their bytes
+// into garbage. A completed line from either becomes `input`, and that port
+// becomes the reply target for it.
+String inputPi = "", inputUsb = "";
+static bool recvFrom(Stream &port, String &buf) {
+    while (port.available() > 0) {
+        int rc = port.read();
+        if (rc < 0) return false;
+        if (rc == '\r') continue;          // tolerate CRLF hosts
+        if (rc != endMarker) { buf += (char)rc; }
         else {
-            commandReady=true;
-            return;
+            input = buf; buf = "";
+            host.active = &port;
+            commandReady = true;
+            return true;
         }
     }
+    return false;
+}
+void recvWithEndMarker() {
+    if (recvFrom(Serial1, inputPi)) return;
+    recvFrom(Serial, inputUsb);
  }
 void resetCommand(){
   input="";
@@ -949,7 +962,7 @@ void moveSorterToNextPosition(int position){
       sortToSlot=position; qPos1=qPos2; qPos2=position; slotQueued=true;
       SortInProgress=false; SortComplete=true; IsSorting=false; return;
     }
-    sgSortHits = 0; sgSortCruise = 0; sgProbeReset();   //stallguard: fresh move
+    sgSortHits = 0; sgSortCruise = 0; sgProbeReset(); sgSortSeenLow = false;   //stallguard: fresh move
     sortToSlot=position;
     sortStepsToNextPosition = slotPos(qPos1) - slotPos(qPos2);
     sortStepsToNextPositionTracker = sortStepsToNextPosition;
@@ -982,7 +995,7 @@ void moveSorterToPosition(int position){
       sortToSlot=position; qPos1=position; qPos2=position; slotQueued=true;
       SortInProgress=false; SortComplete=true; IsSorting=false; return;
     }
-    sgSortHits = 0; sgSortCruise = 0; sgProbeReset();
+    sgSortHits = 0; sgSortCruise = 0; sgProbeReset(); sgSortSeenLow = false;
     sortToSlot=position;
     sortStepsToNextPosition = slotPos(qPos1) - slotPos(position);
     sortStepsToNextPositionTracker = sortStepsToNextPosition;
@@ -1121,7 +1134,7 @@ void scheduleRun(){
       if(readyToFeed()){
       //set run variables
       IsFeedError=false;
-      sgFeedHits = 0; sgFeedCruise = 0; sgProbeReset();   //stallguard: fresh feed
+      sgFeedHits = 0; sgFeedCruise = 0; sgProbeReset(); sgFeedSeenLow = false;   //stallguard: fresh feed
       FeedSteps = feedMicroSteps;
       FeedScheduled=false;
       FeedCycleInProgress = true;
@@ -1548,9 +1561,9 @@ bool sgCheckFeed(bool cruising){
   if(sgFeedCruise <= SG_ARM_STEPS){ return false; }     //let SG settle
   if(sgProbe && (sgFeedCruise % 32) == 0){ sgProbeSample(feedmotorUART); }
   if(digitalRead(FEED_DIAG_PIN) == HIGH){
-    if(++sgFeedHits >= SG_TRIP_HITS){ feedStallDetected(); return true; }
+    if(sgFeedSeenLow && ++sgFeedHits >= SG_TRIP_HITS){ feedStallDetected(); return true; }
   }else{
-    sgFeedHits = 0;
+    sgFeedHits = 0; sgFeedSeenLow = true;
   }
   return false;
 }
@@ -1560,9 +1573,9 @@ bool sgCheckSort(bool cruising){
   if(sgSortCruise <= SG_ARM_STEPS){ return false; }
   if(sgProbe && (sgSortCruise % 32) == 0){ sgProbeSample(sortmotorUART); }
   if(digitalRead(SORT_DIAG_PIN) == HIGH){
-    if(++sgSortHits >= SG_TRIP_HITS){ sortStallDetected(); return true; }
+    if(sgSortSeenLow && ++sgSortHits >= SG_TRIP_HITS){ sortStallDetected(); return true; }
   }else{
-    sgSortHits = 0;
+    sgSortHits = 0; sgSortSeenLow = true;
   }
   return false;
 }
