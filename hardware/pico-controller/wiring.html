@@ -261,9 +261,9 @@
   <h3>Inputs</h3>
   <div class="tblwrap"><table>
     <tr><th>Sensor</th><th>Header</th><th>GPIO</th><th>Power</th><th>Notes</th></tr>
-    <tr><td>Feed homing (optical)</td><td><span class="pin">E0-STOP</span></td><td>16</td><td class="v33">3.3 V</td><td>Signal on <span class="pin">S</span>, ground on <span class="pin">GND</span>. NC optical module, as today.</td></tr>
-    <tr><td>Sort homing (optical)</td><td><span class="pin">Z-STOP</span></td><td>25</td><td class="v33">3.3 V</td><td>Z has no motor, so its endstop is free.</td></tr>
-    <tr><td>Prox LJ8A3-…-Z/BY (PNP)</td><td><span class="pin">WD-DET</span></td><td>22</td><td class="v12">VIN (12/24 V) via the Proximity Switch jumper</td><td>Direct — the header conditions the PNP output to logic level. NPN jumper <b>removed</b>. Brass present reads HIGH (firmware sensor type 1).</td></tr>
+    <tr><td>Feed homing (optical)</td><td><span class="pin">E0-STOP</span></td><td>16</td><td class="v5">5 V (header)</td><td>Straight in — the board conditions the endstop inputs, so the 5 V-powered opto is fine. Reads 0 blocked / 1 clear (bench-verified). <b>Not X-STOP/Y-STOP</b>: those two pins are the StallGuard DIAG inputs.</td></tr>
+    <tr><td>Sort homing (optical)</td><td><span class="pin">Z-STOP</span></td><td>25</td><td class="v5">5 V (header)</td><td>Same. Z has no motor, so its endstop is free.</td></tr>
+    <tr><td>Prox LJ8A3-…-Z/BY (PNP)</td><td><span class="pin">WD-DET</span></td><td>22</td><td class="v12">VIN (12/24 V)</td><td>Direct — the header conditions the PNP output to logic level; the <b>Proximity Switch jumper</b> (the 2-pin <code>P_S | IO22</code> block) routes it to GPIO 22. NPN jumper <b>removed</b>. Brass present reads HIGH (firmware sensor type 1). <b>Count headers from the USB-C end: Laser, then WD-DET</b> — the Laser header is the same 3-pin plug one position up and shares FAN3's pin; a prox plugged there lights the FAN3 LED and never reaches GPIO 22 (bench-verified mistake).</td></tr>
   </table></div>
 
   <h3>Outputs</h3>
