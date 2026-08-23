@@ -679,6 +679,16 @@ void checkSerial(){
         sgProbe = stringToBool(input);
         host.print(F("ok\n")); resetCommand(); return;
       }
+      if (input.startsWith("sensors")) {   // [PICO] bench: raw input levels
+        host.print(F("{\"feedHoming\":")); host.print(digitalRead(FEED_HOMING_SENSOR));
+        host.print(F(",\"sortHoming\":")); host.print(digitalRead(SORT_HOMING_SENSOR));
+        host.print(F(",\"prox\":")); host.print(digitalRead(FEED_SENSOR));
+        host.print(F(",\"feedDiag\":")); host.print(digitalRead(FEED_DIAG_PIN));
+        host.print(F(",\"sortDiag\":")); host.print(digitalRead(SORT_DIAG_PIN));
+        host.print(F(",\"motorPower\":")); host.print(motorPower ? 1 : 0);
+        host.println(F("}"));
+        resetCommand(); return;
+      }
       if (input.startsWith("sgstats")) {
         host.print(F("{\"enabled\":")); host.print(sgEnabled ? 1 : 0);
         host.print(F(",\"feedThrs\":")); host.print(feedSgThrs);
