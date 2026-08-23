@@ -5966,7 +5966,9 @@ def _console_connect(mode, port=None):
         # version is treated as stock — its extra knobs stay hidden, and
         # stock handling is safe on it (setters answer "ok", no pf/ps).
         save_machine_settings({"firmware": "ss2" if "-SS2" in ver
-                               else "stock"})
+                               else "stock",
+                               "board": "SKR Pico" if "-PICO" in ver
+                               else "CS7.2"})
     # push the saved motor settings on connect, if the user asked to
     if machine_settings().get("init_on_startup"):
         _apply_machine_settings(machine_settings())
@@ -6086,6 +6088,7 @@ MACHINE_DEFAULTS = {"feed_speed": 94, "feed_steps": 60, "sort_speed": 94,
                     # Stock firmware answers "ok" to the setters and ignores
                     # them, so pushing these is harmless on either firmware.
                     # Defaults mirror the fork's baked-in boot values.
+                    "board": "",           # "CS7.2" | "SKR Pico" — from the version line on connect
                     "firmware": "stock",   # "stock" | "ss2" (SS1 retired);
                                            # auto-detected from the version
                                            # reply on connect
@@ -6217,6 +6220,8 @@ def save_machine_settings(update):
                 continue
             if k == "firmware":
                 m[k] = update[k] if update[k] in ("stock", "ss2") else "stock"
+            elif k == "board":
+                m[k] = str(update[k] or "")[:40]
             elif k in _MACHINE_BOOLS:
                 m[k] = bool(update[k])
             elif k == "slots_enabled":

@@ -1607,6 +1607,7 @@
     <div class="card">
       <div class="ctlRow" style="margin-bottom:6px; flex-wrap:wrap">
         <h2 style="margin:0">Machine settings</h2>
+        <span id="msBoard" class="pill" style="display:none; font-weight:700"></span>
         <select id="msFirmware" style="max-width:220px">
           <option value="stock">Stock CS7.2</option>
           <option value="ss2">SortIQ fork (SS2 — pipelined feed)</option>
@@ -6412,6 +6413,10 @@ async function loadMachineSettings() {
     renderSlotChecks(j.settings.slots_total, j.settings.slots_enabled);
     $("msFirmware").value = j.settings.firmware || "stock";
     applyFirmwareUI($("msFirmware").value);
+    // which board answered on the last connect — CS7.2 or the SKR Pico port
+    const bd = j.settings.board || "";
+    $("msBoard").textContent = bd ? "Board: " + bd : "";
+    $("msBoard").style.display = bd ? "" : "none";
     renderSortBtns(j.settings.slots_total);
     renderSlotCal(j.settings);
   } catch {}
