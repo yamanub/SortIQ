@@ -5935,6 +5935,8 @@ def _console_connect(mode, port=None):
     # retries on its own a few seconds after the handback.
     if run_mgr.state.get("running"):
         raise RuntimeError("a run owns the board — stop the run first")
+    if mode == "serial" and _power_get() is False:
+        raise RuntimeError("board power is off — press the Power button first")
     with _console["lock"]:
         _console_disconnect_locked()
         _console["log"] = []
@@ -6019,6 +6021,10 @@ def _auto_connect_loop():
                 continue
             port = serial_cfg.get("port") or ""
             if not port.startswith("/dev/") or not os.path.exists(port):
+                continue
+            # the Pi-header UART exists whether or not the board has power:
+            # with the relay pin readable, a known-off board is not a target
+            if _power_get() is False:
                 continue
             _console_connect("serial", port)
         except Exception:
