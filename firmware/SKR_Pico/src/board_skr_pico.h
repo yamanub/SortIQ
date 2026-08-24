@@ -30,7 +30,7 @@
 #define SORT_DIAG_PIN 3              // Y-STOP (DIAG jumper set)
 
 #define FEED_CURRENT 900             // mA RMS
-#define SORT_CURRENT 900
+#define SORT_CURRENT 1400            // the arm needs the torque at true speed 94 (thermal margin incl.)
 #define FEED_MICROSTEPS 16
 #define SORT_MICROSTEPS 16
 #define FEED_IN_REVERSE false
