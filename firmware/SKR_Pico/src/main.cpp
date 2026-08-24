@@ -1322,7 +1322,7 @@ void homeSortMotor(){
          if(sortHomeStage == 3){                 //drift seek to the flag
            if(digitalRead(SORT_HOMING_SENSOR)!=SORT_HOMING_SENSOR_TYPE){
             if(homingSteps < (200*SORT_MICROSTEPS)){
-                sortDelayMS = sortMotorSpeed;
+                sortDelayMS = SORT_HOME_SEEK_US;  // [PICO] no ramp here: cruise from standstill stalls
                 if(sgCheckSort(true)){ return; }  //arm met something on the seek
                 stepSortMotor(true);
                 homingSteps++;
@@ -1378,7 +1378,7 @@ void homeSortMotor(){
       if(sortHomeStage == 0){                    //fast seek
         if(digitalRead(SORT_HOMING_SENSOR)!=SORT_HOMING_SENSOR_TYPE){
             if(homingSteps < (210*SORT_MICROSTEPS)){
-                sortDelayMS = sortMotorSpeed;
+                sortDelayMS = SORT_HOME_SEEK_US;  // [PICO] no ramp here: cruise from standstill stalls
                 stepSortMotor(true);
                 homingSteps++;
             }else{

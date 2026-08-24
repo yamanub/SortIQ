@@ -34,7 +34,7 @@
 #define FEED_MICROSTEPS 16
 #define SORT_MICROSTEPS 16
 #define FEED_IN_REVERSE false
-#define SORT_IN_REVERSE false
+#define SORT_IN_REVERSE true
 
 // ---- sensors ---------------------------------------------------------------
 #define FEED_HOMING_SENSOR 16        // E0-STOP — slotted optical, powered 3.3V
@@ -103,4 +103,7 @@
 // The Pi stays on while the 12V is switched: the drivers come and go under
 // a running board. Poll their UART presence when idle and re-apply config
 // when power returns.
+#define SORT_HOME_SEEK_US 400        // us/ustep on homing seeks: the Uno's loop
+                                     // overhead used to ramp this implicitly; at real
+                                     // cruise speed from standstill the arm stalls
 #define POWER_POLL_MS 1000
