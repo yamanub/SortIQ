@@ -6655,6 +6655,7 @@ if __name__ == "__main__":
     import shutil as _sh_main
     if sys.platform.startswith("linux") and _sh_main.which("nmcli"):
         threading.Thread(target=_ap_watchdog, daemon=True).start()
+    _power_init()   # relay pin: firmly low on first boot, untouched after
     # warm the code-digest cache off the critical path: the first digest
     # after a restart hashes the whole tree (seconds from a Pi's SD),
     # and that cold hit used to land on whoever asked first — a fleet
