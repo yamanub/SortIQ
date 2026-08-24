@@ -6744,9 +6744,7 @@ async function sysRestart(what) {
 $("btnRestartApp").onclick = () => sysRestart("app");
 $("btnRebootPi").onclick = () => sysRestart("pi");
 $("btnShutdownPi").onclick = async () => {
-  if (!confirm("Shut the Pi down?
-
-Wait ~10 s for the green activity LED to stop blinking, then it's safe to cut power. Power-cycle to start it again.")) return;
+  if (!confirm("Shut the Pi down?\n\nWait ~10 s for the green activity LED to stop blinking, then it's safe to cut power. Power-cycle to start it again.")) return;
   try {
     await postJson("/api/system/restart", { what: "off" });
     $("sysMsg").textContent = "shutting down — safe to cut power once the activity LED stops";
