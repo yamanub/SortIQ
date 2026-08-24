@@ -97,8 +97,9 @@ bool sgEnabled = STALLGUARD_ENABLED;
 uint8_t feedSgThrs = FEED_SGTHRS;
 uint8_t sortSgThrs = SORT_SGTHRS;
 uint32_t sgTcoolThrs = SG_TCOOLTHRS;
-uint8_t sgFeedHits = 0;               //consecutive DIAG-high cruise steps
-uint8_t sgSortHits = 0;
+uint32_t sgDiagHi = 0, sgDiagN = 0;   //bench probe: DIAG duty across the cruise
+int16_t sgFeedHits = 0;               //leaky DIAG-high integrator (see SG_TRIP_HITS)
+int16_t sgSortHits = 0;
 // [PICO] stale-DIAG gate: at standstill SG_RESULT sits near 0 and DIAG is HIGH,
 // so a trip may only count after DIAG has been seen LOW during THIS move
 bool sgFeedSeenLow = false, sgSortSeenLow = false;
@@ -726,6 +727,9 @@ void checkSerial(){
         host.print(F(",\"sortSG\":")); host.print(motorPower ? sortmotorUART.SG_RESULT() : 0);
         host.print(F(",\"feedDiag\":")); host.print(digitalRead(FEED_DIAG_PIN));
         host.print(F(",\"sortDiag\":")); host.print(digitalRead(SORT_DIAG_PIN));
+        host.print(F(",\"feedCruise\":")); host.print(sgFeedCruise);
+        host.print(F(",\"sortCruise\":")); host.print(sgSortCruise);
+        host.print(F(",\"probeN\":")); host.print(sgProbeN);
         host.print(F(",\"feedStalls\":")); host.print(feedStalls);
         host.print(F(",\"sortStalls\":")); host.print(sortStalls);
         host.print(F(",\"motorPower\":")); host.print(motorPower ? 1 : 0);
@@ -1540,6 +1544,7 @@ void sgApply(){
 }
 void sgProbeReset(){
   sgProbeMin = 1023; sgProbeSum = 0; sgProbeN = 0;
+  sgDiagHi = 0; sgDiagN = 0;
 }
 void sgProbeSample(TMC2209Stepper &drv){
   unsigned int r = drv.SG_RESULT();
@@ -1549,7 +1554,9 @@ void sgProbeSample(TMC2209Stepper &drv){
 void sgProbeReport(const char *which){
   if(!sgProbe || sgProbeN == 0){ return; }
   host.print(F("sg:")); host.print(which);
-  host.print(F(":min=")); host.print(sgProbeMin);
+  host.print(F(":hi=")); host.print(sgDiagHi);
+  host.print(F("/")); host.print(sgDiagN);
+  host.print(F(",min=")); host.print(sgProbeMin);
   host.print(F(",avg=")); host.print(sgProbeSum / sgProbeN);
   host.print(F(",n=")); host.print(sgProbeN);
   host.print(F("\n"));
@@ -1561,11 +1568,24 @@ bool sgCheckFeed(bool cruising){
   if(!sgEnabled || !cruising){ sgFeedHits = 0; return false; }
   sgFeedCruise++;
   if(sgFeedCruise <= SG_ARM_STEPS){ return false; }     //let SG settle
-  if(sgProbe && (sgFeedCruise % 32) == 0){ sgProbeSample(feedmotorUART); }
-  if(digitalRead(FEED_DIAG_PIN) == HIGH){
-    if(sgFeedSeenLow && ++sgFeedHits >= SG_TRIP_HITS){ feedStallDetected(); return true; }
-  }else{
-    sgFeedHits = 0; sgFeedSeenLow = true;
+  if(sgProbe){
+    sgDiagN++; if(digitalRead(FEED_DIAG_PIN) == HIGH) sgDiagHi++;
+    if((sgFeedCruise % 32) == 0){ sgProbeSample(feedmotorUART); }
+    return false;                       //probe mode: measure, never trip
+  }
+  // Bench-measured on this hardware: the DIAG pin is unusable (stale highs
+  // pollute clean moves, ratcheting stalls read as intermittent). The load
+  // register itself separates perfectly: free cruise never reads below 300,
+  // a blocked wheel reads 50-80. Sample it every 2 full steps at cruise;
+  // three consecutive low samples is a jam. The read stretches one step by
+  // a few ms — measured harmless to the motion.
+  if((sgFeedCruise % 32) == 0){
+    if(feedmotorUART.SG_RESULT() < (uint16_t)feedSgThrs * 2){
+      // NOT consecutive: a ratcheting stall re-locks between samples and
+      // reads healthy on alternate reads. A clean move reads 300+ on every
+      // sample, so ANY three lows inside one move is a jam.
+      if(++sgFeedHits >= 3){ feedStallDetected(); return true; }
+    }
   }
   return false;
 }
@@ -1573,11 +1593,15 @@ bool sgCheckSort(bool cruising){
   if(!sgEnabled || !cruising || !sortAxis){ sgSortHits = 0; return false; }
   sgSortCruise++;
   if(sgSortCruise <= SG_ARM_STEPS){ return false; }
-  if(sgProbe && (sgSortCruise % 32) == 0){ sgProbeSample(sortmotorUART); }
-  if(digitalRead(SORT_DIAG_PIN) == HIGH){
-    if(sgSortSeenLow && ++sgSortHits >= SG_TRIP_HITS){ sortStallDetected(); return true; }
-  }else{
-    sgSortHits = 0; sgSortSeenLow = true;
+  if(sgProbe){
+    sgDiagN++; if(digitalRead(SORT_DIAG_PIN) == HIGH) sgDiagHi++;
+    if((sgSortCruise % 32) == 0){ sgProbeSample(sortmotorUART); }
+    return false;
+  }
+  if((sgSortCruise % 32) == 0){
+    if(sortmotorUART.SG_RESULT() < (uint16_t)sortSgThrs * 2){
+      if(++sgSortHits >= 3){ sortStallDetected(); return true; }
+    }
   }
   return false;
 }

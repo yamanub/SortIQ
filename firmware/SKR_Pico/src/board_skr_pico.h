@@ -94,9 +94,13 @@
 // ---- StallGuard jam detection ---------------------------------------------
 #define STALLGUARD_ENABLED true
 #define FEED_SGTHRS 40               // 0-255, higher = more sensitive; tune with sgprobe
-#define SORT_SGTHRS 40
+#define SORT_SGTHRS 0                // OFF: at sort-arm speeds SG separates blocked vs free by ~15%
+                                     // (bench-measured 149 vs 190) — unusable. Sort jams are caught
+                                     // by the arrival-at-slot-0 flag check instead. Phase 2 revisits.
 #define SG_TCOOLTHRS 0xFFFFF
-#define SG_TRIP_HITS 64               // DIAG must stay high for 4 full steps (~10 ms at cruise)
+#define SG_TRIP_HITS 48               // leaky DIAG integrator: high +1, low -2 (floor 0).
+                                     // A hard stall RATCHETS (pole slips), so DIAG oscillates
+                                     // ~80% high and climbs; heavy-but-moving drains away
 #define SG_ARM_STEPS 128              // 8 full steps of cruise: SG_RESULT reads ~0 that long after a standstill
 
 // ---- motor power as a state ------------------------------------------------
