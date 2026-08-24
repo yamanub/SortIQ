@@ -259,8 +259,10 @@ void setup() {
   pinMode(FEED_SENSOR, INPUT_PULLUP);
 
   pinMode(CASEFAN_PWM, OUTPUT);
-  pinMode(AUX_FAN, OUTPUT);            // [PICO] board/Pi fan: plain on, no control
+  pinMode(AUX_FAN, OUTPUT);            // [PICO] Pi/Pico cooling fans: plain on, no control
   digitalWrite(AUX_FAN, HIGH);
+  pinMode(AUX_FAN2, OUTPUT);
+  digitalWrite(AUX_FAN2, HIGH);
   ring.begin();
   adjustCameraLED(cameraLEDLevel);
   adjustFanLevel(caseFanLevel);

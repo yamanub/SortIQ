@@ -52,12 +52,14 @@
 
 // ---- outputs ---------------------------------------------------------------
 #define CASEFAN_PWM 18               // FAN2 (VIN, MOSFET) — the 60 mm case fan
-#define AUX_FAN 17                   // FAN1 (VIN, MOSFET) — the 40 mm board/Pi fan, on at boot
+#define AUX_FAN 17                   // FAN1 (VIN, MOSFET) — Pi/Pico cooling fan 1, on at boot
+#define AUX_FAN2 20                  // FAN3 (VIN, MOSFET) — Pi/Pico cooling fan 2, on at boot
 #define CASEFAN_LEVEL 100            // 0-100
 #define CASEFAN_SW_CTRL false
 #define FEED_DONE_SIGNAL 23          // HE0 — AirDrop solenoid (optional mod)
 #define LED_RING_PIN 24              // RGB header — WS2812 data (5V + GND on the same plug)
-// phase-2 I2C0 for the PCA9685: SDA = GPIO20 (FAN3, spare), SCL = GPIO25 (Z-STOP, freed)
+// phase-2 I2C1 for the PCA9685: SDA = GPIO26 (TH0), SCL = GPIO27 (THB) — both exposed
+// analog headers, unused here, with on-board pull-ups to 3.3V (made for this)
 #define LED_RING_COUNT 12
 #define CAMERA_LED_LEVEL 200         // 0-255 white level at boot
 
