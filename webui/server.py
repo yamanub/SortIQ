@@ -6063,10 +6063,10 @@ def api_console_send():
 
 
 # ---- sorter board power: a GPIO drives an IoT Relay (normally-off outlet
-# feeding the 24V PSU). GPIO 24 = physical pin 18, its neighbor pin 20 is
+# feeding the 24V PSU). GPIO 23 = physical pin 16, its neighbor pin 14 is
 # ground — the control pair the relay wants. State is read back from the
 # pin itself, so the button can never lie about what the relay sees.
-POWER_GPIO = 24
+POWER_GPIO = 23
 _power_cache = {"t": 0.0, "on": None}
 
 
