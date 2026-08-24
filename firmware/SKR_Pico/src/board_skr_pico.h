@@ -34,7 +34,7 @@
 #define FEED_MICROSTEPS 16
 #define SORT_MICROSTEPS 16
 #define FEED_IN_REVERSE false
-#define SORT_IN_REVERSE true
+#define SORT_IN_REVERSE false
 
 // ---- sensors ---------------------------------------------------------------
 #define FEED_HOMING_SENSOR 16        // E0-STOP — slotted optical, powered 3.3V
