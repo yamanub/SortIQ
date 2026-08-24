@@ -1343,7 +1343,9 @@ void homeSortMotor(){
            if(digitalRead(SORT_HOMING_SENSOR)!=SORT_HOMING_SENSOR_TYPE){
             if(homingSteps < (200*SORT_MICROSTEPS)){
                 sortDelayMS = SORT_HOME_SEEK_US;  // [PICO] no ramp here: cruise from standstill stalls
-                if(sgCheckSort(true)){ return; }  //arm met something on the seek
+                // no SG check at creep speed: slow stepping legitimately reads
+                // low load and false-trips; the homing step budget guards this
+                // path (overtravel -> sort homing failed)
                 stepSortMotor(true);
                 homingSteps++;
                 return;
@@ -1626,7 +1628,9 @@ bool sgCheckSort(bool cruising){
     uint16_t r = sortmotorUART.SG_RESULT();
     if(r == 0){ r = sortmotorUART.SG_RESULT(); }
     if(r < (uint16_t)sortSgThrs * 2){
-      if(++sgSortHits >= 3){ sortStallDetected(); return true; }
+      // 5 confirms (feed uses 3): the arm's free band has rare deep dips
+      // in its tail; a real brass jam reads low on EVERY sample
+      if(++sgSortHits >= 5){ sortStallDetected(); return true; }
     }
   }
   return false;
