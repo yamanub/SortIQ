@@ -6070,6 +6070,28 @@ POWER_GPIO = 24
 _power_cache = {"t": 0.0, "on": None}
 
 
+def _power_init():
+    """At app start: if the pin has never been driven (still an input),
+    pull it firmly low so the relay can't float on. If it's already an
+    output, leave it ALONE — an app restart mid-session must never cut
+    board power."""
+    if not sys.platform.startswith("linux"):
+        return
+    tool = _power_tool()
+    if tool is None:
+        return
+    try:
+        r = subprocess.run((tool, "get", str(POWER_GPIO)),
+                           capture_output=True, text=True, timeout=3)
+        out = r.stdout.lower()
+        if ("op" in out) or ("func=output" in out):
+            return                      # someone (us, earlier) owns it — hands off
+        subprocess.run((tool, "set", str(POWER_GPIO), "ip", "pd"),
+                       capture_output=True, timeout=3)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
 def _power_tool():
     import shutil
     for t in ("pinctrl", "raspi-gpio"):
