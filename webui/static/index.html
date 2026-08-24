@@ -630,6 +630,8 @@
               title="restarts the SortIQ service (~10s) — first fix for a wedged app or camera">Restart app</button>
       <button class="ghost danger" id="btnRebootPi"
               title="full reboot (~1 min) — for USB or system-level weirdness the app restart doesn't cure">Reboot Pi</button>
+      <button class="ghost danger" id="btnShutdownPi"
+              title="clean shutdown — wait for the green activity LED to stop (~10s), then it's safe to cut power">Shut down Pi</button>
       <span class="muted" id="sysMsg" style="font-size:12px"></span>
     </div>
     <div class="muted" style="font-size:11.5px; margin-top:6px">
@@ -6741,6 +6743,15 @@ async function sysRestart(what) {
 }
 $("btnRestartApp").onclick = () => sysRestart("app");
 $("btnRebootPi").onclick = () => sysRestart("pi");
+$("btnShutdownPi").onclick = async () => {
+  if (!confirm("Shut the Pi down?
+
+Wait ~10 s for the green activity LED to stop blinking, then it's safe to cut power. Power-cycle to start it again.")) return;
+  try {
+    await postJson("/api/system/restart", { what: "off" });
+    $("sysMsg").textContent = "shutting down — safe to cut power once the activity LED stops";
+  } catch (e) { $("sysMsg").textContent = e.message; }
+};
 
 /* ---- release self-update: check on click, apply on the user's word ---- */
 $("btnUpdCheck").onclick = async () => {

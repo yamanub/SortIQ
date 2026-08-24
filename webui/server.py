@@ -5675,8 +5675,8 @@ def api_system_restart():
     mid-run and mid-training so a restart can't eat a hopper run."""
     import shutil
     what = (request.get_json() or {}).get("what")
-    if what not in ("app", "pi"):
-        return jsonify({"error": "what must be 'app' or 'pi'"}), 400
+    if what not in ("app", "pi", "off"):
+        return jsonify({"error": "what must be 'app', 'pi' or 'off'"}), 400
     if not (sys.platform.startswith("linux") and shutil.which("systemctl")):
         return jsonify({"error": "restart only works on the machine itself"}), 400
     if run_mgr.state.get("running"):
@@ -5684,12 +5684,13 @@ def api_system_restart():
     if train_status.get("running"):
         return jsonify({"error": "training is running — wait for it to finish"}), 409
     cmd = (("sudo", "-n", "systemctl", "restart", "sortiq") if what == "app"
-           else ("sudo", "-n", "reboot"))
+           else ("sudo", "-n", "reboot") if what == "pi"
+           else ("sudo", "-n", "poweroff"))
     # reply first, act a beat later — the browser needs the 200 to start
     # its reconnect countdown before this process dies
     threading.Timer(0.8, lambda: subprocess.Popen(cmd)).start()
     return jsonify({"ok": True, "restarting": what,
-                    "eta_s": 12 if what == "app" else 55})
+                    "eta_s": 12 if what == "app" else 55 if what == "pi" else 0})
 
 
 _net_cache = {"t": 0.0, "resp": None}
