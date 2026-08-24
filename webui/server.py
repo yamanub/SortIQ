@@ -6062,12 +6062,82 @@ def api_console_send():
     return jsonify({"ok": True})
 
 
+# ---- sorter board power: a GPIO drives an IoT Relay (normally-off outlet
+# feeding the 24V PSU). GPIO 24 = physical pin 18, its neighbor pin 20 is
+# ground — the control pair the relay wants. State is read back from the
+# pin itself, so the button can never lie about what the relay sees.
+POWER_GPIO = 24
+_power_cache = {"t": 0.0, "on": None}
+
+
+def _power_tool():
+    import shutil
+    for t in ("pinctrl", "raspi-gpio"):
+        if shutil.which(t):
+            return t
+    return None
+
+
+def _power_get(fresh=False):
+    if not sys.platform.startswith("linux"):
+        return None
+    now = time.monotonic()
+    if not fresh and now - _power_cache["t"] < 2.0:
+        return _power_cache["on"]
+    tool = _power_tool()
+    if tool is None:
+        return None
+    try:
+        r = subprocess.run((tool, "get", str(POWER_GPIO)),
+                           capture_output=True, text=True, timeout=3)
+        out = r.stdout.lower()
+        on = ("hi" in out) or ("level=1" in out)
+    except (OSError, subprocess.TimeoutExpired):
+        on = None
+    _power_cache.update(t=now, on=on)
+    return on
+
+
+@app.get("/api/power")
+def api_power_get():
+    return jsonify({"on": _power_get(fresh=True), "gpio": POWER_GPIO})
+
+
+@app.post("/api/power")
+def api_power_post():
+    on = bool((request.get_json() or {}).get("on"))
+    tool = _power_tool()
+    if not (sys.platform.startswith("linux") and tool):
+        return jsonify({"error": "power control only works on the machine"}), 400
+    if not on:
+        if run_mgr.state.get("running"):
+            return jsonify({"error": "a sorting run is active — stop it first"}), 409
+        if train_status.get("running"):
+            return jsonify({"error": "training is running — wait for it"}), 409
+        # drop the serial link cleanly; auto-connect resumes when power returns
+        try:
+            with _console["lock"]:
+                _console_disconnect_locked()
+        except Exception:
+            pass
+    args = ((tool, "set", str(POWER_GPIO), "op", "dh" if on else "dl")
+            if tool == "pinctrl"
+            else (tool, "set", str(POWER_GPIO), "op", "dh" if on else "dl"))
+    try:
+        subprocess.run(args, capture_output=True, timeout=3)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return jsonify({"error": f"gpio set failed: {e}"}), 500
+    _power_cache.update(t=0.0, on=None)      # next poll reads the real pin
+    return jsonify({"ok": True, "on": _power_get(fresh=True)})
+
+
 @app.get("/api/console/log")
 def api_console_log():
     return jsonify({"connected": _console["transport"] is not None,
                     "mode": _console["mode"], "log": _console["log"][-200:],
                     "port": _console.get("port"),
-                    "board": machine_settings().get("board") or ""})
+                    "board": machine_settings().get("board") or "",
+                    "power": _power_get()})
 
 
 @app.post("/api/console/disconnect")

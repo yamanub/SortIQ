@@ -1541,6 +1541,8 @@
        form lives inline; connected, it folds into a summary line. -->
   <div class="card">
     <div class="machBar">
+      <button class="ghost" id="btnPower" style="display:none; font-weight:700"
+              title="switches the sorter board's 24V through the IoT Relay (GPIO 24)">&#x23FB; Power</button>
       <span class="mst" id="machState" style="color:var(--dim)">
         <span class="dot" id="machDot" style="background:var(--dim)"></span>
         OFFLINE</span>
@@ -6741,6 +6743,15 @@ async function sysRestart(what) {
     }, 3000);
   } catch (e) { $("sysMsg").textContent = e.message; }
 }
+$("btnPower").onclick = async () => {
+  const on = $("btnPower").dataset.on === "1";
+  if (on && !confirm("Turn the sorter board power OFF? The machine link drops until you power it back on.")) return;
+  try {
+    const j = await postJson("/api/power", { on: !on });
+    $("btnPower").dataset.on = j.on ? "1" : "0";
+    pollConsole();
+  } catch (e) { alert(e.message); }
+};
 $("btnRestartApp").onclick = () => sysRestart("app");
 $("btnRebootPi").onclick = () => sysRestart("pi");
 $("btnShutdownPi").onclick = async () => {
@@ -6879,6 +6890,15 @@ async function pollConsole() {
   let j = null;
   try { j = await api("/api/console/log"); } catch {}
   const connected = !!(j && j.connected);
+  // board power switch (IoT Relay via GPIO): shown only where the pin exists
+  const pw = j ? j.power : null;
+  if (pw === null || pw === undefined) { $("btnPower").style.display = "none"; }
+  else {
+    $("btnPower").style.display = "";
+    $("btnPower").dataset.on = pw ? "1" : "0";
+    $("btnPower").style.color = pw ? "var(--green)" : "var(--dim)";
+    $("btnPower").innerHTML = pw ? "&#x23FB; Board ON" : "&#x23FB; Power on";
+  }
   $("btnConConnect").classList.toggle("faded", connected);
   $("btnConDisc").classList.toggle("faded", !connected);
   if (connected) syncConMode(j.mode);
