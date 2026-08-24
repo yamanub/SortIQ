@@ -98,6 +98,7 @@ uint8_t feedSgThrs = FEED_SGTHRS;
 uint8_t sortSgThrs = SORT_SGTHRS;
 uint32_t sgTcoolThrs = SG_TCOOLTHRS;
 uint32_t sgDiagHi = 0, sgDiagN = 0;   //bench probe: DIAG duty across the cruise
+uint32_t dbgUp = 0, dbgCruise = 0, dbgDown = 0;   //bench: trapezoid branch census
 int16_t sgFeedHits = 0;               //low-load confirms this move (3 = jam)
 int16_t sgFeedGate = 0, sgSortGate = 0; //leaky DIAG tripwire, gates the UART confirm
 int16_t sgSortHits = 0;
@@ -728,6 +729,12 @@ void checkSerial(){
         host.print(F(",\"sortSG\":")); host.print(motorPower ? sortmotorUART.SG_RESULT() : 0);
         host.print(F(",\"feedDiag\":")); host.print(digitalRead(FEED_DIAG_PIN));
         host.print(F(",\"sortDiag\":")); host.print(digitalRead(SORT_DIAG_PIN));
+        host.print(F(",\"up\":")); host.print(dbgUp);
+        host.print(F(",\"cruise\":")); host.print(dbgCruise);
+        host.print(F(",\"down\":")); host.print(dbgDown);
+        host.print(F(",\"sortDelay\":")); host.print(sortDelayMS);
+        host.print(F(",\"sortSpeedT\":")); host.print(sortMotorSpeed);
+        host.print(F(",\"trapDelay\":")); host.print(trapDelay);
         host.print(F(",\"feedCruise\":")); host.print(sgFeedCruise);
         host.print(F(",\"sortCruise\":")); host.print(sgSortCruise);
         host.print(F(",\"probeN\":")); host.print(sgProbeN);
@@ -1060,6 +1067,7 @@ void setAccSortDelay(){
     int done = total - remaining;
 
     if(remaining <= rampSteps){                          //down ramp (mirror)
+      dbgDown++;
       if(trapN > 1){
         trapDelay += (2UL * trapDelay) / (4UL * trapN + 1);
         trapN--;
@@ -1073,17 +1081,24 @@ void setAccSortDelay(){
 
     if(trapDelay > (unsigned int)sortMotorSpeed && done < (total + 1) / 2){
       trapN++;                                           //up ramp
-      trapDelay -= (2UL * trapDelay) / (4UL * trapN + 1);
+      // integer AVR446 flaw: the decrement floors to 0 near ~2*trapN and the
+      // ramp FREEZES just above cruise, so "cruise reached" never fires
+      // (and StallGuard's cruise gate with it). Never decrement by less
+      // than 1 — the ramp always completes to the clamp.
+      unsigned long dec = (2UL * trapDelay) / (4UL * trapN + 1);
+      trapDelay -= (dec > 0 ? dec : 1);
       if(trapDelay < (unsigned int)sortMotorSpeed){
         trapDelay = sortMotorSpeed;
       }
       rampSteps = trapN;
       sortDelayMS = trapDelay;
+      dbgUp++;
       return;
     }
 
     trapDelay = sortMotorSpeed;                          //cruise
     sortDelayMS = sortMotorSpeed;
+    dbgCruise++;
 }
 bool sortDirection = false;
 void stepSortMotor(bool forward){
@@ -1586,7 +1601,9 @@ bool sgCheckFeed(bool cruising){
   else if(sgFeedGate > 0){ sgFeedGate--; }
   if(sgFeedGate >= 24){
     sgFeedGate = 0;
-    if(feedmotorUART.SG_RESULT() < (uint16_t)feedSgThrs * 2){
+    uint16_t r = feedmotorUART.SG_RESULT();
+    if(r == 0){ r = feedmotorUART.SG_RESULT(); }  //a CRC-failed read returns 0; a real stall repeats
+    if(r < (uint16_t)feedSgThrs * 2){
       if(++sgFeedHits >= 3){ feedStallDetected(); return true; }
     }
   }
@@ -1606,7 +1623,9 @@ bool sgCheckSort(bool cruising){
   else if(sgSortGate > 0){ sgSortGate--; }
   if(sgSortGate >= 24){
     sgSortGate = 0;
-    if(sortmotorUART.SG_RESULT() < (uint16_t)sortSgThrs * 2){
+    uint16_t r = sortmotorUART.SG_RESULT();
+    if(r == 0){ r = sortmotorUART.SG_RESULT(); }
+    if(r < (uint16_t)sortSgThrs * 2){
       if(++sgSortHits >= 3){ sortStallDetected(); return true; }
     }
   }
@@ -1670,6 +1689,9 @@ void applyDriverConfig(){
   sortmotorUART.rms_current(sortCurrent);
   sortmotorUART.microsteps(SORT_MICROSTEPS);
   sortmotorUART.pwm_autoscale(true);
+  // StealthChop stays: StallGuard on the SORT arm is the board's whole
+  // mission (arm-pipe wedges are the #1 field jam). Torque headroom comes
+  // from current, and the speed is tuned to StealthChop's reliable range.
   sortmotorUART.en_spreadCycle(false);
   sortmotorUART.intpol(true);
   sortmotorUART.ihold(2);
