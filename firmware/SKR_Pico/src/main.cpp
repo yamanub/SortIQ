@@ -98,7 +98,8 @@ uint8_t feedSgThrs = FEED_SGTHRS;
 uint8_t sortSgThrs = SORT_SGTHRS;
 uint32_t sgTcoolThrs = SG_TCOOLTHRS;
 uint32_t sgDiagHi = 0, sgDiagN = 0;   //bench probe: DIAG duty across the cruise
-int16_t sgFeedHits = 0;               //leaky DIAG-high integrator (see SG_TRIP_HITS)
+int16_t sgFeedHits = 0;               //low-load confirms this move (3 = jam)
+int16_t sgFeedGate = 0, sgSortGate = 0; //leaky DIAG tripwire, gates the UART confirm
 int16_t sgSortHits = 0;
 // [PICO] stale-DIAG gate: at standstill SG_RESULT sits near 0 and DIAG is HIGH,
 // so a trip may only count after DIAG has been seen LOW during THIS move
@@ -1573,17 +1574,19 @@ bool sgCheckFeed(bool cruising){
     if((sgFeedCruise % 32) == 0){ sgProbeSample(feedmotorUART); }
     return false;                       //probe mode: measure, never trip
   }
-  // Bench-measured on this hardware: the DIAG pin is unusable (stale highs
-  // pollute clean moves, ratcheting stalls read as intermittent). The load
-  // register itself separates perfectly: free cruise never reads below 300,
-  // a blocked wheel reads 50-80. Sample it every 2 full steps at cruise;
-  // three consecutive low samples is a jam. The read stretches one step by
-  // a few ms — measured harmless to the motion.
-  if((sgFeedCruise % 32) == 0){
+  // Two-stage detector (bench-derived): the DIAG pin alone is unusable
+  // (stale highs on clean moves, intermittent on ratcheting stalls) and a
+  // UART load read every 2 full steps makes the motion audibly rough (each
+  // read freezes the step train ~4 ms). So DIAG is only a free tripwire:
+  // when it accumulates, pay for ONE load read to confirm. Clean moves do
+  // almost no reads; a blocked wheel (free cruise reads 300+, blocked
+  // 50-80) collects three low confirms inside a move and trips.
+  if(feedSgThrs == 0){ return false; }
+  if(digitalRead(FEED_DIAG_PIN) == HIGH){ sgFeedGate++; }
+  else if(sgFeedGate > 0){ sgFeedGate--; }
+  if(sgFeedGate >= 24){
+    sgFeedGate = 0;
     if(feedmotorUART.SG_RESULT() < (uint16_t)feedSgThrs * 2){
-      // NOT consecutive: a ratcheting stall re-locks between samples and
-      // reads healthy on alternate reads. A clean move reads 300+ on every
-      // sample, so ANY three lows inside one move is a jam.
       if(++sgFeedHits >= 3){ feedStallDetected(); return true; }
     }
   }
@@ -1598,7 +1601,11 @@ bool sgCheckSort(bool cruising){
     if((sgSortCruise % 32) == 0){ sgProbeSample(sortmotorUART); }
     return false;
   }
-  if((sgSortCruise % 32) == 0){
+  if(sortSgThrs == 0){ return false; }
+  if(digitalRead(SORT_DIAG_PIN) == HIGH){ sgSortGate++; }
+  else if(sgSortGate > 0){ sgSortGate--; }
+  if(sgSortGate >= 24){
+    sgSortGate = 0;
     if(sortmotorUART.SG_RESULT() < (uint16_t)sortSgThrs * 2){
       if(++sgSortHits >= 3){ sortStallDetected(); return true; }
     }
