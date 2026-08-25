@@ -708,6 +708,26 @@ void checkSerial(){
         sgProbe = stringToBool(input);
         host.print(F("ok\n")); resetCommand(); return;
       }
+      if (input.startsWith("chop:")) {       // [PICO] bench: live chopper voicing for
+        input.replace("chop:", "");          // the SORT driver — chop:toff,tbl,pwmfreq
+        int c1 = input.indexOf(',');         // toff 2-15, tbl 0-3, pwmfreq 0-3
+        int c2 = input.indexOf(',', c1 + 1);
+        if (c1 > 0 && c2 > c1) {
+          int vToff = input.substring(0, c1).toInt();
+          int vTbl  = input.substring(c1 + 1, c2).toInt();
+          int vPwmF = input.substring(c2 + 1).toInt();
+          if (vToff < 2) vToff = 2;  if (vToff > 15) vToff = 15;
+          if (vTbl  < 0) vTbl  = 0;  if (vTbl  > 3)  vTbl  = 3;
+          if (vPwmF < 0) vPwmF = 0;  if (vPwmF > 3)  vPwmF = 3;
+          sortmotorUART.toff(vToff);
+          sortmotorUART.blank_time(vTbl == 0 ? 16 : vTbl == 1 ? 24 : vTbl == 2 ? 36 : 54);
+          sortmotorUART.pwm_freq(vPwmF);
+          host.println(F("ok"));
+        } else {
+          host.println(F("error:chop wants toff,tbl,pwmfreq"));
+        }
+        resetCommand(); return;
+      }
       if (input.startsWith("sortaxis:")) {   // [PICO] sortaxis:0 = no sort assembly
         input.replace("sortaxis:", "");
         sortAxis = stringToBool(input);
@@ -1706,6 +1726,9 @@ void applyDriverConfig(){
   feedmotorUART.ihold(2);
   sortmotorUART.rms_current(sortCurrent);
   sortmotorUART.microsteps(SORT_MICROSTEPS);
+  sortmotorUART.toff(3);                 // [PICO] ear-tuned voicing (bench,
+  sortmotorUART.blank_time(24);          // candidate B): smoothest of the
+  sortmotorUART.pwm_freq(2);             // toff/tbl/pwmfreq ladder
   sortmotorUART.pwm_autoscale(true);
   // StealthChop stays: StallGuard on the SORT arm is the board's whole
   // mission (arm-pipe wedges are the #1 field jam). Torque headroom comes
