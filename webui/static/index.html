@@ -1696,7 +1696,7 @@
             <div><label>Notification delay (ms) <span class="muted">— raise by 20s if images blur</span></label>
               <input type="number" id="msNotifDelay" min="0" max="1000" step="10"></div>
             <div><label>Motor standby (s) <span class="muted">— idle time before power-down</span></label>
-              <input type="number" id="msStandby" min="0" max="600"></div>
+              <input type="number" id="msStandby" min="0" max="3600"></div>
           </div>
         </div>
 
@@ -6385,6 +6385,19 @@ const MS_FIELDS = { feed_speed: "msFeedSpeed", feed_steps: "msFeedSteps",
   arm_dwell: "msArmDwell",
   air_drop_pre_delay: "msAirPre", air_drop_signal_ms: "msAirSignal",
   air_drop_post_delay: "msAirPost" };
+
+/* typed values must respect the caps the labels promise — snap into the
+   input's min/max the moment the field is left (the server clamps again
+   on save, board-aware, so nothing out of range can ever reach the board) */
+for (const id of [...Object.values(MS_FIELDS), "msSgFeed"]) {
+  const el = $(id);
+  if (!el) continue;
+  el.addEventListener("change", () => {
+    const lo = +el.min, hi = +el.max, v = +el.value;
+    if (Number.isFinite(v)) el.value = Math.min(hi, Math.max(lo, v));
+    else el.value = lo;
+  });
+}
 
 /* AirDrop timing fields only mean something while the mod is on —
    gray + disable them otherwise (values persist; save still sends them) */
