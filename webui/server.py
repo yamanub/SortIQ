@@ -6078,6 +6078,8 @@ _power_cache = {"t": 0.0, "on": None}
 
 
 def _power_init():
+    if not machine_settings().get("power_relay"):
+        return
     """At app start: if the pin has never been driven (still an input),
     pull it firmly low so the relay can't float on. If it's already an
     output, leave it ALONE — an app restart mid-session must never cut
@@ -6108,6 +6110,8 @@ def _power_tool():
 
 
 def _power_get(fresh=False):
+    if not machine_settings().get("power_relay"):
+        return None
     if not sys.platform.startswith("linux"):
         return None
     now = time.monotonic()
@@ -6135,6 +6139,8 @@ def api_power_get():
 @app.post("/api/power")
 def api_power_post():
     on = bool((request.get_json() or {}).get("on"))
+    if not machine_settings().get("power_relay"):
+        return jsonify({"error": "no power relay configured on this machine"}), 400
     tool = _power_tool()
     if not (sys.platform.startswith("linux") and tool):
         return jsonify({"error": "power control only works on the machine"}), 400
@@ -6211,6 +6217,8 @@ MACHINE_DEFAULTS = {"feed_speed": 94, "feed_steps": 60, "sort_speed": 94,
                     # them, so pushing these is harmless on either firmware.
                     # Defaults mirror the fork's baked-in boot values.
                     "board": "",           # "CS7.2" | "SKR Pico" — from the version line on connect
+                    "power_relay": False,  # an IoT Relay on POWER_GPIO switches the board's
+                                           # mains — dev/Pico builds only; hides the UI when off
                     "firmware": "stock",   # "stock" | "ss2" (SS1 retired);
                                            # auto-detected from the version
                                            # reply on connect
@@ -6229,7 +6237,7 @@ MACHINE_DEFAULTS = {"feed_speed": 94, "feed_steps": 60, "sort_speed": 94,
                     "arm_dwell": 0,
                     "slot_positions": None}   # None = the firmware's default
                                               # grid (i * sort_steps * 16)
-_MACHINE_BOOLS = ("init_on_startup", "feed_decel", "air_drop", "stall_guard")
+_MACHINE_BOOLS = ("init_on_startup", "feed_decel", "air_drop", "stall_guard", "power_relay")
 MAX_SLOTS = 12                # matches the fork's slot table size
 
 # the six user-pickable bin-badge colors. Fixed on purpose: every entry
