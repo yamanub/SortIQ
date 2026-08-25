@@ -5987,7 +5987,8 @@ def _console_connect(mode, port=None):
         # SS1 is retired (every fork board runs SS2 now): a pre-SS2 fork
         # version is treated as stock — its extra knobs stay hidden, and
         # stock handling is safe on it (setters answer "ok", no pf/ps).
-        save_machine_settings({"firmware": "ss2" if "-SS2" in ver
+        save_machine_settings({"firmware": "pico" if "-PICO" in ver
+                               else "ss2" if "-SS2" in ver
                                else "stock",
                                "board": "SKR Pico" if "-PICO" in ver
                                else "CS7.2"})
@@ -6214,6 +6215,9 @@ MACHINE_DEFAULTS = {"feed_speed": 94, "feed_steps": 60, "sort_speed": 94,
                                            # auto-detected from the version
                                            # reply on connect
                     "sort_accel": 1200, "sort_home_backoff": 160,
+                    "sort_decel": 1200, "feed_accel": 1200,
+                    "feed_decel_rate": 1200,
+                    "stall_guard": True, "feed_stall_threshold": 40,
                     "sort_home_slow": 1400, "feed_launch": 48,
                     "feed_decel": True,
                     # extra hold before every arm move (fork v6.2+): brass-
@@ -6225,7 +6229,7 @@ MACHINE_DEFAULTS = {"feed_speed": 94, "feed_steps": 60, "sort_speed": 94,
                     "arm_dwell": 0,
                     "slot_positions": None}   # None = the firmware's default
                                               # grid (i * sort_steps * 16)
-_MACHINE_BOOLS = ("init_on_startup", "feed_decel", "air_drop")
+_MACHINE_BOOLS = ("init_on_startup", "feed_decel", "air_drop", "stall_guard")
 MAX_SLOTS = 12                # matches the fork's slot table size
 
 # the six user-pickable bin-badge colors. Fixed on purpose: every entry
@@ -6256,6 +6260,10 @@ MACHINE_BOUNDS = {
     "camera_led": (0, 255),
     "slots_total": (1, MAX_SLOTS),   # the firmware slot table's size
     "sort_accel": (100, 5000),       # µs start/stop delay
+    "sort_decel": (100, 5000),       # µs landing-end delay (Pico)
+    "feed_accel": (100, 5000),       # µs launch start delay (Pico)
+    "feed_decel_rate": (100, 5000),  # µs stop-shaping slow end (Pico)
+    "feed_stall_threshold": (0, 255),
     "sort_home_backoff": (0, 200),   # µsteps
     "sort_home_slow": (100, 5000),   # µs/µstep
     "feed_launch": (0, 200),         # µsteps
@@ -6284,6 +6292,11 @@ _SETTER_CMD = {"feed_speed": "feedspeed", "feed_steps": "feedsteps",
                "motor_standby": "automotorstandbytimeout",
                "camera_led": "cameraledlevel",
                "sort_accel": "sortaccel",
+               "sort_decel": "sortdecel",
+               "feed_accel": "feedaccel",
+               "feed_decel_rate": "feeddec",
+               "stall_guard": "sg",
+               "feed_stall_threshold": "sgfeed",
                "sort_home_backoff": "sorthomebackoff",
                "sort_home_slow": "sorthomeslow",
                "feed_launch": "feedlaunch",
@@ -6304,6 +6317,11 @@ _GETCONFIG_KEY = {"feed_speed": "FeedMotorSpeed", "feed_steps": "FeedCycleSteps"
                   "motor_standby": "AutoMotorStandbyTimeout",
                   "camera_led": "CameraLEDLevel",
                   "sort_accel": "SortAccelFactor",
+                  "sort_decel": "SortDecelFactor",
+                  "feed_accel": "FeedAccelFactor",
+                  "feed_decel_rate": "FeedDecelFactor",
+                  "stall_guard": "StallGuardEnabled",
+                  "feed_stall_threshold": "FeedStallThreshold",
                   "sort_home_backoff": "SortHomeBackoff",
                   "sort_home_slow": "SortHomeSlowDelay",
                   "feed_launch": "FeedLaunchSteps",
@@ -6340,7 +6358,8 @@ def save_machine_settings(update):
             if k not in update:
                 continue
             if k == "firmware":
-                m[k] = update[k] if update[k] in ("stock", "ss2") else "stock"
+                m[k] = (update[k] if update[k] in ("stock", "ss2", "pico")
+                        else "stock")
             elif k == "board":
                 m[k] = str(update[k] or "")[:40]
             elif k == "led_color":
@@ -6404,11 +6423,16 @@ def _console_request(line, predicate, timeout=3.0):
 
 def _apply_machine_settings(settings):
     applied = 0
+    fw = str(machine_settings().get("firmware", "stock"))
+    pico_only = {"sort_decel", "feed_accel", "feed_decel_rate",
+                 "stall_guard", "feed_stall_threshold"}
     fork_only = {"sort_accel", "sort_home_backoff", "sort_home_slow",
                  "feed_launch", "feed_decel", "arm_dwell", "slot_positions"}
-    on_stock = not str(machine_settings().get("firmware", "stock")).startswith("ss")
+    on_stock = not (fw.startswith("ss") or fw == "pico")
     for key, cmd in _SETTER_CMD.items():
         if on_stock and key in fork_only:
+            continue
+        if fw != "pico" and key in pico_only:
             continue
         if key in settings and settings[key] is not None and _console_request(
                 f"{cmd}:{int(settings[key])}", lambda l: l.strip() == "ok", timeout=2.0):
