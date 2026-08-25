@@ -67,7 +67,11 @@ int feedMicroSteps = feedSteps * FEED_MICROSTEPS;
 
 //SHELLSORTER FORK STATE
 int slotPositions[MAX_SLOTS];     //absolute usteps from home, per slot
-int accFactor = ACC_FACTOR;       //trapezoid start/stop delay (sortaccel:)
+int accFactor = ACC_FACTOR;       //sort ACCEL: launch-side start delay (sortaccel:)
+int sortDecFactor = ACC_FACTOR;   //sort DECEL: landing-side end delay (sortdecel:)
+int feedAccFactor = ACC_FACTOR;   //feed launch ramp start delay (feedaccel:)
+int feedDecFactor = ACC_FACTOR;   //feed stop-shaping slow end (feeddec:)
+bool decSplit = false;            //true once sortdecel: was set explicitly
 int sortHomeBackoff = SORT_HOME_BACKOFF;
 int sortHomeSlowDelay = SORT_HOME_SLOW_DELAY;
 int feedLaunchSteps = FEED_LAUNCH_STEPS;
@@ -489,6 +493,12 @@ void checkSerial(){
         //// SHELLSORTER FORK KEYS ////
         host.print(F(",\"SortAccelFactor\":"));
         host.print(accFactor);
+        host.print(F(",\"SortDecelFactor\":"));
+        host.print(sortDecFactor);
+        host.print(F(",\"FeedAccelFactor\":"));
+        host.print(feedAccFactor);
+        host.print(F(",\"FeedDecelFactor\":"));
+        host.print(feedDecFactor);
         host.print(F(",\"SortHomeBackoff\":"));
         host.print(sortHomeBackoff);
         host.print(F(",\"SortHomeSlowDelay\":"));
@@ -591,7 +601,36 @@ void checkSerial(){
         accFactor = input.toInt();
         if (accFactor < 100) { accFactor = 100; }
         if (accFactor > 5000) { accFactor = 5000; }
+        if (!decSplit) { sortDecFactor = accFactor; }  //fork app: one knob moves both
         host.print(F("ok\n"));
+        resetCommand();
+        return;
+      }
+      if (input.startsWith("sortdecel:")) {
+        input.replace("sortdecel:", "");
+        sortDecFactor = input.toInt();
+        if (sortDecFactor < 100) { sortDecFactor = 100; }
+        if (sortDecFactor > 5000) { sortDecFactor = 5000; }
+        decSplit = true;
+        host.println(F("ok"));
+        resetCommand();
+        return;
+      }
+      if (input.startsWith("feedaccel:")) {
+        input.replace("feedaccel:", "");
+        feedAccFactor = input.toInt();
+        if (feedAccFactor < 100) { feedAccFactor = 100; }
+        if (feedAccFactor > 5000) { feedAccFactor = 5000; }
+        host.println(F("ok"));
+        resetCommand();
+        return;
+      }
+      if (input.startsWith("feeddec:")) {
+        input.replace("feeddec:", "");
+        feedDecFactor = input.toInt();
+        if (feedDecFactor < 100) { feedDecFactor = 100; }
+        if (feedDecFactor > 5000) { feedDecFactor = 5000; }
+        host.println(F("ok"));
         resetCommand();
         return;
       }
@@ -716,9 +755,12 @@ void checkSerial(){
           int vToff = input.substring(0, c1).toInt();
           int vTbl  = input.substring(c1 + 1, c2).toInt();
           int vPwmF = input.substring(c2 + 1).toInt();
-          if (vToff < 2) vToff = 2;  if (vToff > 15) vToff = 15;
-          if (vTbl  < 0) vTbl  = 0;  if (vTbl  > 3)  vTbl  = 3;
-          if (vPwmF < 0) vPwmF = 0;  if (vPwmF > 3)  vPwmF = 3;
+          if (vToff < 2) vToff = 2;
+          if (vToff > 15) vToff = 15;
+          if (vTbl  < 0) vTbl  = 0;
+          if (vTbl  > 3)  vTbl  = 3;
+          if (vPwmF < 0) vPwmF = 0;
+          if (vPwmF > 3)  vPwmF = 3;
           sortmotorUART.toff(vToff);
           sortmotorUART.blank_time(vTbl == 0 ? 16 : vTbl == 1 ? 24 : vTbl == 2 ? 36 : 54);
           sortmotorUART.pwm_freq(vPwmF);
@@ -1112,8 +1154,8 @@ void setAccSortDelay(){
         trapDelay += (inc > 0 ? inc : 1);
         trapN--;
       }
-      if(trapDelay > (unsigned int)accFactor){
-        trapDelay = accFactor;
+      if(trapDelay > (unsigned int)sortDecFactor){
+        trapDelay = sortDecFactor;
       }
       sortDelayMS = trapDelay;
       return;
@@ -1202,7 +1244,7 @@ void scheduleRun(){
       FeedCycleInProgress = true;
       FeedCycleComplete=false;
       IsFeeding=true;
-      feedTrapDelay = accFactor;        //arm the launch ramp (fork)
+      feedTrapDelay = feedAccFactor;    //arm the launch ramp (fork)
       feedTrapN = 0;
       homingStepsThisCycle = 0;         //feedstats telemetry
     }else{
@@ -1310,7 +1352,7 @@ void homeFeedMotor(){
       if(feedDecelOverOffset && feedHomingOffset > 0){
         long doneOff = (long)feedHomingOffset - FeedHomingOffsetSteps;
         feedDelayMS = feedMotorSpeed +
-          (int)(((long)(accFactor - feedMotorSpeed) * doneOff) / feedHomingOffset);
+          (int)(((long)(feedDecFactor - feedMotorSpeed) * doneOff) / feedHomingOffset);
       }else{
         feedDelayMS = feedMotorSpeed;
       }
@@ -1523,7 +1565,8 @@ void setAccFeedDelay(){
     int done = feedMicroSteps - FeedSteps;
     if(done < feedLaunchSteps && feedTrapDelay > (unsigned int)feedMotorSpeed){
       feedTrapN++;
-      feedTrapDelay -= (2UL * feedTrapDelay) / (4UL * feedTrapN + 1);
+      unsigned long fdec = (2UL * feedTrapDelay) / (4UL * feedTrapN + 1);
+      feedTrapDelay -= (fdec > 0 ? fdec : 1);   //same integer-freeze fix as the sort ramps
       if(feedTrapDelay < (unsigned int)feedMotorSpeed){
         feedTrapDelay = feedMotorSpeed;
       }
