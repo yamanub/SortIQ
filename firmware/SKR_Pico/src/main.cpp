@@ -1735,7 +1735,9 @@ void applyDriverConfig(){
   // from current, and the speed is tuned to StealthChop's reliable range.
   sortmotorUART.en_spreadCycle(false);
   sortmotorUART.intpol(true);
-  sortmotorUART.ihold(2);
+  sortmotorUART.ihold(16);               // [PICO] 50% idle hold (was 6%): the arm's first
+                                         // steps launched while current was still ramping
+                                         // from near-zero — the start-of-move clunk
   sgApply();
   digitalWrite(FEED_ENABLE, LOW);
   digitalWrite(SORT_ENABLE, LOW);
