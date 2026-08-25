@@ -229,6 +229,12 @@
   .machBar .mst { display: flex; gap: 9px; align-items: center;
     font-weight: 700; }
   .numRow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .msTile { border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 14px; background: var(--card, transparent); }
+  .msTile h4 { margin: 0 0 6px; font-size: 11.5px; text-transform: uppercase;
+    letter-spacing: .07em; color: var(--brass); }
+  .msTileRow { display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(185px, 1fr)); gap: 2px 20px; }
   .numB { font-size: 16px; font-weight: 800; min-width: 44px; height: 44px;
     display: flex; align-items: center; justify-content: center;
     border-radius: 9px; cursor: pointer; border: 1px solid var(--line);
@@ -1631,82 +1637,93 @@
         the Pi and pushed to the board — saving while connected applies
         immediately</span>
       </div>
-      <h3>Motion tuning <span class="muted" style="font-weight:normal; font-size:11.5px">— the knobs you tune with brass running</span></h3>
-      <div class="msGrid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:2px 24px">
-        <div><label>Feed motor speed (1–100) <span class="muted">— cruise across the camera port</span></label>
-          <input type="number" id="msFeedSpeed" min="1" max="100"></div>
-        <div><label>Sort motor speed (1–100) <span class="muted">— arm cruise between slots</span></label>
-          <input type="number" id="msSortSpeed" min="1" max="100"></div>
-        <div class="forkOnly"><label>Sort accel (µs start delay) <span class="muted">— bigger = gentler arm launch</span></label>
-          <input type="number" id="msSortAccel" min="100" max="5000" step="50"></div>
-        <div class="picoOnly"><label>Sort decel (µs landing delay) <span class="muted">— bigger = softer arrival at the slot</span></label>
-          <input type="number" id="msSortDecel" min="100" max="5000" step="50"></div>
-        <div class="picoOnly"><label>Feed accel (µs start delay) <span class="muted">— bigger = gentler wheel launch</span></label>
-          <input type="number" id="msFeedAccel" min="100" max="5000" step="50"></div>
-        <div class="picoOnly"><label>Feed decel (µs stop delay) <span class="muted">— bigger = softer wheel stop into the offset</span></label>
-          <input type="number" id="msFeedDecRate" min="100" max="5000" step="50"></div>
-        <div class="forkOnly"><label>Homing backoff (µsteps) <span class="muted">— arm retreat past the sensor; 16 = 1 full step</span></label>
-          <input type="number" id="msHomeBackoff" min="0" max="200"></div>
-        <div class="forkOnly"><label>Homing creep delay (µs/µstep) <span class="muted">— slower = more repeatable edge</span></label>
-          <input type="number" id="msHomeSlow" min="100" max="5000" step="50"></div>
-        <div class="forkOnly"><label>Feed launch ramp (µsteps) <span class="muted">— must finish before the camera port</span></label>
-          <input type="number" id="msFeedLaunch" min="0" max="200"></div>
-        <div class="forkOnly"><label>Arm dwell (ms) <span class="muted">— extra hold before every arm move; slow tumblers get exactly this much longer to clear</span></label>
-          <input type="number" id="msArmDwell" min="0" max="1000" step="10"></div>
-        <div><label>Slot drop delay (ms) <span class="muted">— minimum spacing between arm moves; below the sorting cycle (~800ms) it never fires — use Arm dwell to add real clearance</span></label>
-          <input type="number" id="msDropDelay" min="0" max="3000" step="50"></div>
-        <div><label>Notification delay (ms) <span class="muted">— raise in steps of 20 if images blur</span></label>
-          <input type="number" id="msNotifDelay" min="0" max="1000" step="10"></div>
-      </div>
-      <div class="picoOnly" style="margin-top:10px">
-        <h3 style="margin-bottom:4px">Jam detection (StallGuard)</h3>
-        <div class="ctlRow" style="gap:18px; flex-wrap:wrap; align-items:flex-end">
-          <label class="inline" style="display:flex; gap:6px; align-items:center; margin:0; color:var(--text); font-size:13px">
-            <input type="checkbox" id="msSg" style="accent-color:var(--brass)">
-            Enabled</label>
-          <div><label>Feed stall threshold <span class="muted">— higher = more sensitive; 0 = feed detection off</span></label>
-            <input type="number" id="msSgFeed" min="0" max="255" style="width:110px"></div>
-          <span class="muted" style="font-size:11.5px">feed wheel only — the sort arm is
-            guarded by its slot-0 position check until the firmware rewrite</span>
+      <h3>Motion tuning <span class="muted" style="font-weight:normal; font-size:11.5px">— the knobs you tune with brass running; every value is clamped to a safe range on save</span></h3>
+      <div style="display:flex; flex-direction:column; gap:10px; margin-top:6px">
+
+        <div class="msTile">
+          <h4>Feed wheel</h4>
+          <div class="msTileRow">
+            <div><label>Speed (1–100) <span class="muted">— cruise past the camera</span></label>
+              <input type="number" id="msFeedSpeed" min="1" max="100"></div>
+            <div><label>Current (mA)</label>
+              <input type="number" id="msFeedCurrent" min="300" max="1200" step="50"></div>
+            <div class="picoOnly"><label>Accel (µs) <span class="muted">— bigger = gentler launch</span></label>
+              <input type="number" id="msFeedAccel" min="100" max="5000" step="50"></div>
+            <div class="picoOnly"><label>Decel (µs) <span class="muted">— bigger = softer stop</span></label>
+              <input type="number" id="msFeedDecRate" min="100" max="5000" step="50"></div>
+            <div class="forkOnly"><label>Launch ramp (µsteps) <span class="muted">— ends before the camera port</span></label>
+              <input type="number" id="msFeedLaunch" min="0" max="200"></div>
+            <div><label>Cycle steps <span class="muted">— blind travel before the seek</span></label>
+              <input type="number" id="msFeedSteps" min="30" max="200"></div>
+            <div><label>Homing offset (steps) <span class="muted">— seating travel / decel length</span></label>
+              <input type="number" id="msFeedHome" min="0" max="30"></div>
+          </div>
+          <label class="inline forkOnly" style="display:flex; gap:6px; align-items:center; margin-top:6px; color:var(--dim); font-size:12.5px">
+            <input type="checkbox" id="msFeedDecel" style="accent-color:var(--brass)">
+            Stop as decel ramp <span class="muted">(off = stock dead stop)</span></label>
         </div>
-      </div>
-      <label class="inline forkOnly" style="display:flex; gap:6px; align-items:center; margin-top:8px; color:var(--dim); font-size:12.5px">
-        <input type="checkbox" id="msFeedDecel" style="accent-color:var(--brass)">
-        Feed stop as decel ramp <span class="muted">(off = stock dead stop)</span></label>
-      <label class="inline" style="display:flex; gap:6px; align-items:center; margin-top:8px; color:var(--dim); font-size:12.5px">
-        <input type="checkbox" id="msAirDrop" style="accent-color:var(--brass)">
-        AirDrop mod <span class="muted">(air-blast brass ejection — leave off unless the mod is installed;
-        enabling restores the ~30ms notification delay the blast needs)</span></label>
-      <div class="msGrid" style="margin-top:6px; display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:2px 24px">
-        <div class="airField"><label>Air pre-delay (ms) <span class="muted">— brass starts falling before the blast</span></label>
-          <input type="number" id="msAirPre" min="0" max="500" step="10"></div>
-        <div class="airField"><label>Air blast length (ms)</label>
-          <input type="number" id="msAirSignal" min="0" max="500" step="10"></div>
-        <div class="airField"><label>AirDrop drop delay (ms) <span class="muted">— used instead of Slot drop delay while the mod is on</span></label>
-          <input type="number" id="msAirPost" min="0" max="3000" step="10"></div>
-      </div>
-      <details style="margin-top:12px">
-        <summary style="color:var(--dim); font-size:12.5px">Machine constants — set once per mechanical build</summary>
-        <div class="muted" style="font-size:11.5px; margin:4px 0 6px">
-          Leave at defaults unless you know your machine — wrong currents
-          overheat motors or skip steps. Every value is clamped to a safe
-          range on save, so experimenting can't damage anything — and
-          <b>Reset to defaults</b> below always brings back the
-          bench-proven setup.
+
+        <div class="msTile">
+          <h4>Sort arm</h4>
+          <div class="msTileRow">
+            <div><label>Speed (1–100) <span class="muted">— cruise between slots</span></label>
+              <input type="number" id="msSortSpeed" min="1" max="100"></div>
+            <div><label>Current (mA)</label>
+              <input type="number" id="msSortCurrent" min="300" max="1200" step="50"></div>
+            <div class="forkOnly"><label>Accel (µs) <span class="muted">— bigger = gentler launch</span></label>
+              <input type="number" id="msSortAccel" min="100" max="5000" step="50"></div>
+            <div class="picoOnly"><label>Decel (µs) <span class="muted">— bigger = softer landing</span></label>
+              <input type="number" id="msSortDecel" min="100" max="5000" step="50"></div>
+            <div class="forkOnly"><label>Homing backoff (µsteps) <span class="muted">— retreat past the sensor</span></label>
+              <input type="number" id="msHomeBackoff" min="0" max="200"></div>
+            <div class="forkOnly"><label>Homing creep (µs/µstep) <span class="muted">— slower = repeatable edge</span></label>
+              <input type="number" id="msHomeSlow" min="100" max="5000" step="50"></div>
+            <div class="forkOnly"><label>Arm dwell (ms) <span class="muted">— extra hold; clears slow tumblers</span></label>
+              <input type="number" id="msArmDwell" min="0" max="1000" step="10"></div>
+          </div>
         </div>
-        <div class="msGrid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:2px 24px">
-          <div><label>Feed cycle steps <span class="muted">— blind travel before the homing seek</span></label>
-            <input type="number" id="msFeedSteps" min="30" max="200"></div>
-          <div><label>Feed current (mA)</label>
-            <input type="number" id="msFeedCurrent" min="300" max="1200" step="50"></div>
-          <div><label>Sort current (mA)</label>
-            <input type="number" id="msSortCurrent" min="300" max="1200" step="50"></div>
-          <div><label>Feed homing offset (steps) <span class="muted">— seating travel; also the decel-ramp length</span></label>
-            <input type="number" id="msFeedHome" min="0" max="30"></div>
-          <div><label>Motor standby (s) <span class="muted">— idle time before motors power down</span></label>
-            <input type="number" id="msStandby" min="0" max="600"></div>
+
+        <div class="msTile">
+          <h4>Cycle timing</h4>
+          <div class="msTileRow">
+            <div><label>Slot drop delay (ms) <span class="muted">— minimum spacing between arm moves</span></label>
+              <input type="number" id="msDropDelay" min="0" max="3000" step="50"></div>
+            <div><label>Notification delay (ms) <span class="muted">— raise by 20s if images blur</span></label>
+              <input type="number" id="msNotifDelay" min="0" max="1000" step="10"></div>
+            <div><label>Motor standby (s) <span class="muted">— idle time before power-down</span></label>
+              <input type="number" id="msStandby" min="0" max="600"></div>
+          </div>
         </div>
-      </details>
+
+        <div class="msTile picoOnly">
+          <h4>Jam detection (StallGuard)</h4>
+          <div class="ctlRow" style="gap:18px; flex-wrap:wrap; align-items:flex-end">
+            <label class="inline" style="display:flex; gap:6px; align-items:center; margin:0; color:var(--text); font-size:13px">
+              <input type="checkbox" id="msSg" style="accent-color:var(--brass)">
+              Enabled</label>
+            <div><label>Feed stall threshold <span class="muted">— higher = more sensitive; 0 = off</span></label>
+              <input type="number" id="msSgFeed" min="0" max="255" style="width:110px"></div>
+            <span class="muted" style="font-size:11.5px">feed wheel only — the sort arm is
+              guarded by its slot-0 position check until the firmware rewrite</span>
+          </div>
+        </div>
+
+        <div class="msTile">
+          <h4>AirDrop mod</h4>
+          <label class="inline" style="display:flex; gap:6px; align-items:center; margin:0 0 4px; color:var(--dim); font-size:12.5px">
+            <input type="checkbox" id="msAirDrop" style="accent-color:var(--brass)">
+            Enabled <span class="muted">(air-blast ejection — leave off unless installed; restores the ~30ms notification delay the blast needs)</span></label>
+          <div class="msTileRow">
+            <div class="airField"><label>Pre-delay (ms) <span class="muted">— brass falls before the blast</span></label>
+              <input type="number" id="msAirPre" min="0" max="500" step="10"></div>
+            <div class="airField"><label>Blast length (ms)</label>
+              <input type="number" id="msAirSignal" min="0" max="500" step="10"></div>
+            <div class="airField"><label>Drop delay (ms) <span class="muted">— replaces Slot drop delay while on</span></label>
+              <input type="number" id="msAirPost" min="0" max="3000" step="10"></div>
+          </div>
+        </div>
+
+      </div>
       <div style="margin-top:12px; display:flex; gap:8px; align-items:center">
         <button class="primary" id="btnMsSave">Save</button>
         <button class="ghost" id="btnMsRead">Read from board</button>
