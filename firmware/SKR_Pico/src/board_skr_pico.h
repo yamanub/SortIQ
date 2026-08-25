@@ -94,11 +94,11 @@
 // ---- StallGuard jam detection ---------------------------------------------
 #define STALLGUARD_ENABLED true
 #define FEED_SGTHRS 40               // 0-255, higher = more sensitive; tune with sgprobe
-#define SORT_SGTHRS 90               // trip below 180, 5 confirms. Valid at TRUE cruise speed 94
-                                     // with 1400 mA: free band ~254-347, a real mid-motion brass jam
-                                     // reads 84-181 (a pre-wedged standstill ratchet reads high — but
-                                     // that is not how brass jams; it catches a MOVING arm). Bench:
-                                     // 20/20 free sweeps clean + live jam caught, twice.
+#define SORT_SGTHRS 100              // trip below 200, 5 confirms. Calibrated at speed 90 / accel 1800
+                                     // with 1400 mA: free floor 238 (min 238-264, avg 285-325), a real
+                                     // mid-motion brass jam reads 84-181 (standstill ratchets read high
+                                     // — but that is not how brass jams; it catches a MOVING arm).
+
 #define SG_TCOOLTHRS 0xFFFFF
 #define SG_TRIP_HITS 48               // leaky DIAG integrator: high +1, low -2 (floor 0).
                                      // A hard stall RATCHETS (pole slips), so DIAG oscillates

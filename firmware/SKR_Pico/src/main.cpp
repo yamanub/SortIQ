@@ -223,6 +223,9 @@ void applyDriverConfig(); bool driversPresent(); void checkMotorPower();
 bool requireMotorPower(); void ringShow();
 
 void setup() {
+  Serial1.setFIFOSize(256);              // [PICO] default RX is 32 bytes: rapid app
+                                         // commands during a move overflowed it and
+                                         // parsed as garbage (wrong slots on fast clicks)
   Serial1.begin(HOST_BAUD);              // Pi header UART (GPIO0/1)
   Serial.begin(HOST_BAUD);               // USB-C mirror
   Serial2.begin(DRIVER_BAUD);            // TMC2209 bus (GPIO8/9)
@@ -1008,6 +1011,16 @@ void moveSorterToPosition(int position){
     if(!sortAxis){
       sortToSlot=position; qPos1=position; qPos2=position; slotQueued=true;
       SortInProgress=false; SortComplete=true; IsSorting=false; return;
+    }
+    // [PICO] settle dwell: at true cruise speed a single-slot hop lands in
+    // ~0.2 s, so rapid sortto commands (fast UI clicks) reversed the arm
+    // while it was still ringing from the stop — slips, grinding, drifted
+    // slots. The pipelined path has SlotDropDelay for this; sortto gets a
+    // short one of its own.
+    {
+      unsigned long since = millis() - timeSinceLastSortMove;
+      unsigned long dwell = (unsigned long)(dropDelay > 0 ? dropDelay : 150);
+      if(since < dwell){ delay(dwell - since); }
     }
     sgSortHits = 0; sgSortCruise = 0; sgProbeReset(); sgSortSeenLow = false;
     sortToSlot=position;
