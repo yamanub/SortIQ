@@ -94,7 +94,13 @@
 // ---- StallGuard jam detection ---------------------------------------------
 #define STALLGUARD_ENABLED true
 #define FEED_SGTHRS 40               // 0-255, higher = more sensitive; tune with sgprobe
-#define SORT_SGTHRS 100              // trip below 200, 5 confirms. Calibrated at speed 90 / accel 1800
+#define SORT_SGTHRS 0                // OFF for phase 1 — final verdict after exhaustive bench work:
+                                     // load-sampling mid-move freezes steps and the arm slips (5 ms
+                                     // UART read at cruise = pole slip); pin-duty detection false-trips
+                                     // on rapid sequences AND missed a real jam. This architecture
+                                     // cannot sample without hurting motion; phase 2 (PIO steps +
+                                     // core-1 sampling) is the fix. The arm is guarded by the slot-0
+                                     // flag self-check; the feed keeps its validated detection.
                                      // with 1400 mA: free floor 238 (min 238-264, avg 285-325), a real
                                      // mid-motion brass jam reads 84-181 (standstill ratchets read high
                                      // — but that is not how brass jams; it catches a MOVING arm).

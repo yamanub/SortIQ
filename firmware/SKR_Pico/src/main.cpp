@@ -99,6 +99,7 @@ uint8_t sortSgThrs = SORT_SGTHRS;
 uint32_t sgTcoolThrs = SG_TCOOLTHRS;
 uint32_t sgDiagHi = 0, sgDiagN = 0;   //bench probe: DIAG duty across the cruise
 uint32_t dbgUp = 0, dbgCruise = 0, dbgDown = 0;   //bench: trapezoid branch census
+uint32_t dbgReads = 0, dbgGateHi = 0;             //bench: confirm reads + DIAG-high steps
 int16_t sgFeedHits = 0;               //low-load confirms this move (3 = jam)
 int16_t sgFeedGate = 0, sgSortGate = 0; //leaky DIAG tripwire, gates the UART confirm
 int16_t sgSortHits = 0;
@@ -732,6 +733,8 @@ void checkSerial(){
         host.print(F(",\"sortSG\":")); host.print(motorPower ? sortmotorUART.SG_RESULT() : 0);
         host.print(F(",\"feedDiag\":")); host.print(digitalRead(FEED_DIAG_PIN));
         host.print(F(",\"sortDiag\":")); host.print(digitalRead(SORT_DIAG_PIN));
+        host.print(F(",\"reads\":")); host.print(dbgReads);
+        host.print(F(",\"gateHi\":")); host.print(dbgGateHi);
         host.print(F(",\"up\":")); host.print(dbgUp);
         host.print(F(",\"cruise\":")); host.print(dbgCruise);
         host.print(F(",\"down\":")); host.print(dbgDown);
@@ -1082,7 +1085,11 @@ void setAccSortDelay(){
     if(remaining <= rampSteps){                          //down ramp (mirror)
       dbgDown++;
       if(trapN > 1){
-        trapDelay += (2UL * trapDelay) / (4UL * trapN + 1);
+        // same integer flaw as the up ramp: the increment floors to 0 for
+        // the first half of the decel, so the arm held cruise speed deep
+        // into the landing and arrived hard. Never grow by less than 1.
+        unsigned long inc = (2UL * trapDelay) / (4UL * trapN + 1);
+        trapDelay += (inc > 0 ? inc : 1);
         trapN--;
       }
       if(trapDelay > (unsigned int)accFactor){
@@ -1634,17 +1641,11 @@ bool sgCheckSort(bool cruising){
     return false;
   }
   if(sortSgThrs == 0){ return false; }
-  if(digitalRead(SORT_DIAG_PIN) == HIGH){ sgSortGate++; }
+  if(digitalRead(SORT_DIAG_PIN) == HIGH){ sgSortGate++; dbgGateHi++; }
   else if(sgSortGate > 0){ sgSortGate--; }
-  if(sgSortGate >= 24){
+  if(sgSortGate >= 192){
     sgSortGate = 0;
-    uint16_t r = sortmotorUART.SG_RESULT();
-    if(r == 0){ r = sortmotorUART.SG_RESULT(); }
-    if(r < (uint16_t)sortSgThrs * 2){
-      // 5 confirms (feed uses 3): the arm's free band has rare deep dips
-      // in its tail; a real brass jam reads low on EVERY sample
-      if(++sgSortHits >= 5){ sortStallDetected(); return true; }
-    }
+    sortStallDetected(); return true;
   }
   return false;
 }
