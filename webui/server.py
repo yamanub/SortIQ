@@ -1022,7 +1022,7 @@ def _v4l2_ranges(index):
 # selector and warns on a mismatch but never overrides the user.
 CAMERA_MODELS = {
     "ov3660": {
-        "label": "Stock OV3660 (CS7.2)",
+        "label": "Stock OV3660",
         "usb": ("0c45", "6366"),
         # the classic UVC set the stock camera has always shown; exposure
         # and gain are known-decorative in MJPG mode, but the shipped
@@ -6250,8 +6250,8 @@ MACHINE_BOUNDS = {
     "sort_speed": (1, 100),
     "feed_steps": (30, 200),         # official guide: 70/80; ours: 60
     "sort_steps": (5, 50),           # 8-slot disc = 20
-    "feed_current": (300, 1200),     # mA; motors rated 1.7A, drivers are
-    "sort_current": (300, 1200),     # bare StepSticks — 1.2A is the safe top
+    "feed_current": (300, 1200),     # mA; CS7.2 StepSticks top out at 1.2A —
+    "sort_current": (300, 1200),     # the Pico's onboard drivers get 1.6A (below)
     "feed_homing_offset": (0, 30),   # full steps past the sensor edge
     "sort_homing_offset": (0, 20),
     "slot_drop_delay": (0, 3000),    # ms
@@ -6370,6 +6370,11 @@ def save_machine_settings(update):
                 m[k] = bool(update[k])
             elif k == "slots_enabled":
                 m[k] = sorted({int(s) for s in (update[k] or [])})
+            elif k in ("feed_current", "sort_current"):
+                lo, hi = MACHINE_BOUNDS[k]
+                if m.get("firmware") == "pico" or update.get("firmware") == "pico":
+                    hi = 1600            # onboard TMC2209s, actively cooled
+                m[k] = min(max(int(update[k]), lo), hi)
             elif k == "slot_positions":
                 m[k] = ([min(max(int(v), 0), SLOTPOS_MAX)
                          for v in update[k]][:MAX_SLOTS]
