@@ -313,17 +313,41 @@ int qSlot = 0;
 uint32_t feedT0 = 0, waitMsgT = 0;
 long feedSeekStart = 0;
 int feedSgHits = 0, feedSgGate = 0;
+long feedSgArmPos = -1;
 
 // Flag edge by INTERRUPT, not loop polling: the PIO keeps stepping while the
 // CPU services serial or TMC UART, so a polled edge is seen late (or a narrow
 // tab is missed outright — bench-measured 100+ usteps of jitter). The ISR
 // timestamps the true edge; the service latency-corrects the position with
-// elapsed-time * cruise-rate (exact at coast).
+// elapsed-time * current-rate.
+//
+// Armed for the WHOLE cycle (blind phase included), and ONLY a falling edge
+// counts — never a level read. A level read on a wheel that stopped inside
+// the tab yields a mid-tab pseudo-edge, and that error carries into the next
+// cycle's start with nothing to reset it (bench: cycles alternating between
+// instant stop, a barely-move, and a full extra pitch). A true leading edge
+// each cycle is an absolute reference; wherever the blind lands, the cycle
+// re-anchors.
 volatile bool feedEdgeArm = false;
 volatile bool feedEdgeSeen = false;
 volatile uint32_t feedEdgeUs = 0;
+bool feedEdgeCalced = false;
+long feedEdgeAbs = 0;
+bool feedEdgeInBlind = false;
 void feedHomeIsr() {
   if (feedEdgeArm && !feedEdgeSeen) { feedEdgeUs = micros(); feedEdgeSeen = true; }
+}
+
+// resolve the ISR timestamp to an absolute edge position ASAP (same ramp
+// instant => the speed read is honest)
+static void feedEdgeResolve() {
+  if (!feedEdgeSeen || feedEdgeCalced) return;
+  uint32_t lateUs = micros() - feedEdgeUs;
+  int32_t vm = feedSt->getCurrentSpeedInMilliHz();
+  if (vm < 0) vm = -vm;
+  feedEdgeAbs = (long)feedSt->getCurrentPosition() -
+                (long)((uint64_t)lateUs * (uint32_t)(vm / 1000) / 1000000ULL);
+  feedEdgeCalced = true;
 }
 
 void feedApplyMotion() {
@@ -338,9 +362,33 @@ void feedAbort(const __FlashStringHelper *err) {
   host.println(err);
 }
 
+// tab edge in hand (feedEdgeAbs): stop at edge + offset, forward-only
+void feedFinishHome() {
+  feedEdgeArm = false;
+  long pos = (long)feedSt->getCurrentPosition();
+  long stopAt = feedEdgeAbs + (long)feedHomingOffset * USTEP;
+  lastSeek = feedEdgeInBlind ? 0 : feedEdgeAbs - feedSeekStart;
+  if (lastSeek < 0) lastSeek = 0;
+  if (lastSeek > maxSeek) maxSeek = lastSeek;
+  // never reverse across the drop port: an overrun stops just past home
+  // (bounded, and next cycle re-anchors on a fresh edge)
+  long remain = stopAt - pos;
+  if (remain < 8) { remain = 8; stopAt = pos + 8; }
+  uint32_t hz = speedToHz(feedSpeedSet);
+  uint32_t a = feedDecelOverOffset ? accFToSS2(feedDecF) : 500000;
+  uint64_t need = ((uint64_t)hz * hz) / (uint64_t)(2L * remain);
+  need += need / 8;
+  if (need > a) a = (need > 4000000ULL) ? 4000000UL : (uint32_t)need;
+  feedSt->setAcceleration(a);
+  feedSt->moveTo(stopAt);
+  feedState = F_OFFSET;
+}
+
 void feedStartCycle() {                            // after the arm is parked
   feedApplyMotion();
-  feedSgHits = 0; feedSgGate = 0;
+  feedEdgeSeen = false; feedEdgeCalced = false; feedEdgeInBlind = false;
+  feedEdgeArm = true;
+  feedSgHits = 0; feedSgGate = 0; feedSgArmPos = -1;
   sgLastN = 0; sgLastSum = 0; sgLastMin = 1023;
   feedSt->move((long)feedSteps * USTEP);           // blind travel
   feedT0 = millis();
@@ -380,7 +428,12 @@ void feedService() {
       // blocks the loop ~10 ms per read.
       if (sgEnabled && feedSgThrs > 0 &&
           (feedSt->rampState() & RAMP_STATE_COAST)) {
-        if (digitalRead(FEED_DIAG) == HIGH) { feedSgGate++; }
+        // 1.x SG_ARM_STEPS parity: SG_RESULT reads ~0 for the first ~8 full
+        // steps after a standstill and DIAG asserts through the settle
+        long pn = (long)feedSt->getCurrentPosition();
+        if (feedSgArmPos < 0) feedSgArmPos = pn + 128;
+        bool sgArmed = pn >= feedSgArmPos;
+        if (sgArmed && digitalRead(FEED_DIAG) == HIGH) { feedSgGate++; }
         else if (feedSgGate > 0) { feedSgGate--; }
         if (feedSgGate >= 24) {
           feedSgGate = 0;
@@ -400,10 +453,15 @@ void feedService() {
       } else {
         feedSgGate = 0;
       }
-      if (!feedSt->isRunning()) {                  // blind travel done: seek
+      feedEdgeResolve();                           // tab edge may pass mid-blind
+      if (!feedSt->isRunning()) {                  // blind travel done
+        if (feedEdgeCalced) {                      // edge already found: home now
+          feedEdgeInBlind = true;
+          feedFinishHome();
+          return;
+        }
         feedSt->setSpeedInHz(speedToHz(feedSpeedSet));
-        feedEdgeSeen = false; feedEdgeArm = true;
-        feedSt->runForward();
+        feedSt->runForward();                      // seek the leading edge fresh
         feedSeekStart = (long)feedSt->getCurrentPosition();
         feedT0 = millis();
         feedState = F_SEEK;
@@ -411,32 +469,8 @@ void feedService() {
       return;
     }
     case F_SEEK: {
-      // ISR-latched edge, or already sitting on the flag at seek start
-      // (1.x parity: its pre-step level check homes instantly in that case)
-      if (feedEdgeSeen || digitalRead(FEED_HOME) == LOW) {
-        feedEdgeArm = false;
-        long pos = (long)feedSt->getCurrentPosition();
-        long edge = pos;
-        uint32_t hz = speedToHz(feedSpeedSet);
-        if (feedEdgeSeen)                          // back out service latency
-          edge = pos - (long)((uint64_t)(micros() - feedEdgeUs) * hz / 1000000ULL);
-        lastSeek = edge - feedSeekStart;
-        if (lastSeek < 0) lastSeek = 0;
-        if (lastSeek > maxSeek) maxSeek = lastSeek;
-        long stopAt = edge + (long)feedHomingOffset * USTEP;
-        // the feed wheel must never reverse across the drop port: if the
-        // configured decel can't rest inside what remains of the offset,
-        // brake as hard as needed (FAS reverses on moveTo overshoot)
-        long remain = stopAt - pos; if (remain < 8) remain = 8;
-        uint32_t a = feedDecelOverOffset ? accFToSS2(feedDecF) : 500000;
-        uint64_t need = ((uint64_t)hz * hz) / (uint64_t)(2L * remain);
-        need += need / 8;
-        if (need > a) a = (need > 4000000ULL) ? 4000000UL : (uint32_t)need;
-        feedSt->setAcceleration(a);
-        feedSt->moveTo(stopAt);
-        feedState = F_OFFSET;
-        return;
-      }
+      feedEdgeResolve();
+      if (feedEdgeCalced) { feedFinishHome(); return; }
       long trav = (long)feedSt->getCurrentPosition() - feedSeekStart;
       if (trav > 400L * USTEP || millis() - feedT0 > 6000) {
         feedAbort(F("error:feed overtravel detected"));
