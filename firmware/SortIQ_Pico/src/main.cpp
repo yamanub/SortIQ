@@ -33,6 +33,7 @@
 #define SORT_DIR  5
 #define SORT_EN   7
 #define FEED_HOME 16          // E0-STOP slotted opto, LOW = blocked
+#define FEED_DIAG 4           // X-STOP (DIAG jumper set): TMC stall tripwire
 #define SORT_HOME 25          // Z-STOP  slotted opto, LOW = blocked
 #define PROX_PIN  22          // WD-DET conditioned prox, HIGH = brass
 #define AUX_FAN1  17          // Pi/board cooling, on at boot
@@ -81,11 +82,38 @@ Adafruit_NeoPixel ring(RING_N, RING_PIN, NEO_GRB + NEO_KHZ800);
 uint8_t ringR = 255, ringG = 255, ringB = 255;
 
 // ---------------- dual host ----------------
+// Host TX is BUFFERED and pumped from loop(). A raw print to the Pi link
+// (9600 baud) blocks for 100+ ms once the UART FIFO fills — and unlike the
+// 1.x core, the PIO keeps stepping while the CPU is stuck, so a blocked
+// loop() means missed sensor edges. Nothing may write a host port directly.
+class BufferedOut {
+ public:
+  explicit BufferedOut(Stream &s) : port(s) {}
+  Stream &port;
+  uint8_t buf[2048];
+  volatile uint16_t head = 0, tail = 0;
+  uint32_t dropped = 0;
+  void put(uint8_t c) {
+    uint16_t n = (uint16_t)((head + 1) % sizeof(buf));
+    if (n == tail) { dropped++; return; }          // full: drop, never block
+    buf[head] = c; head = n;
+  }
+  void pump() {
+    while (tail != head && port.availableForWrite() > 0) {
+      port.write(buf[tail]);
+      tail = (uint16_t)((tail + 1) % sizeof(buf));
+    }
+  }
+};
+BufferedOut outPi(Serial1), outUsb(Serial);
+
 class DualHost : public Print {
  public:
   Stream *active = &Serial1;
-  size_t write(uint8_t c) override { return active->write(c); }
-  size_t write(const uint8_t *b, size_t n) override { return active->write(b, n); }
+  size_t write(uint8_t c) override {
+    (active == (Stream *)&Serial1 ? outPi : outUsb).put(c);
+    return 1;
+  }
 };
 DualHost host;
 String inPi, inUsb, input;
@@ -140,7 +168,9 @@ void applyDriverConfig() {
   }
   feedDrv.rms_current(feedCurrent); feedDrv.ihold(8);
   sortDrv.rms_current(sortCurrent); sortDrv.ihold(16);
-  feedDrv.SGTHRS(0); sortDrv.SGTHRS(0);  // DIAG unused; SG_RESULT is sampled
+  // feed DIAG is the free stall tripwire (fires when SG_RESULT < 2*SGTHRS);
+  // sort keeps DIAG quiet — its detector is the flag audit, SG is telemetry
+  feedDrv.SGTHRS(feedSgThrs); sortDrv.SGTHRS(0);
 }
 
 bool driversPresent() {
@@ -282,7 +312,19 @@ bool slotQueued = true;
 int qSlot = 0;
 uint32_t feedT0 = 0, waitMsgT = 0;
 long feedSeekStart = 0;
-int feedSgHits = 0;
+int feedSgHits = 0, feedSgGate = 0;
+
+// Flag edge by INTERRUPT, not loop polling: the PIO keeps stepping while the
+// CPU services serial or TMC UART, so a polled edge is seen late (or a narrow
+// tab is missed outright — bench-measured 100+ usteps of jitter). The ISR
+// timestamps the true edge; the service latency-corrects the position with
+// elapsed-time * cruise-rate (exact at coast).
+volatile bool feedEdgeArm = false;
+volatile bool feedEdgeSeen = false;
+volatile uint32_t feedEdgeUs = 0;
+void feedHomeIsr() {
+  if (feedEdgeArm && !feedEdgeSeen) { feedEdgeUs = micros(); feedEdgeSeen = true; }
+}
 
 void feedApplyMotion() {
   feedSt->setSpeedInHz(speedToHz(feedSpeedSet));
@@ -291,13 +333,14 @@ void feedApplyMotion() {
 
 void feedAbort(const __FlashStringHelper *err) {
   feedSt->forceStop();
+  feedEdgeArm = false;
   feedState = F_IDLE; forceFeed = false;
   host.println(err);
 }
 
 void feedStartCycle() {                            // after the arm is parked
   feedApplyMotion();
-  feedSgHits = 0;
+  feedSgHits = 0; feedSgGate = 0;
   sgLastN = 0; sgLastSum = 0; sgLastMin = 1023;
   feedSt->move((long)feedSteps * USTEP);           // blind travel
   feedT0 = millis();
@@ -330,13 +373,22 @@ void feedService() {
       if (millis() - feedT0 >= (uint32_t)debounceTime) feedStartCycle();
       return;
     case F_BLIND: {
-      // feed jam detection: SG sampled at cruise; any 3 lows = jam (validated)
+      // feed jam detection, the 1.x two-stage detector: DIAG is a free
+      // tripwire (asserts when SG_RESULT < 2*SGTHRS); only when it
+      // accumulates do we pay for ONE UART confirm read. Continuous UART
+      // sampling both false-trips on transient dips 1.x never saw and
+      // blocks the loop ~10 ms per read.
       if (sgEnabled && feedSgThrs > 0 &&
           (feedSt->rampState() & RAMP_STATE_COAST)) {
-        uint16_t r = feedDrv.SG_RESULT();
-        if (r == 0) r = feedDrv.SG_RESULT();
-        if (r > 0) {
-          sgLastN++; sgLastSum += r; if (r < sgLastMin) sgLastMin = r;
+        if (digitalRead(FEED_DIAG) == HIGH) { feedSgGate++; }
+        else if (feedSgGate > 0) { feedSgGate--; }
+        if (feedSgGate >= 24) {
+          feedSgGate = 0;
+          uint16_t r = feedDrv.SG_RESULT();
+          if (r == 0) r = feedDrv.SG_RESULT();     // CRC-miss guard
+          if (r > 0) {
+            sgLastN++; sgLastSum += r; if (r < sgLastMin) sgLastMin = r;
+          }
           if (r < (uint16_t)(feedSgThrs * 2)) {
             if (++feedSgHits >= 3) {
               feedStalls++;
@@ -345,9 +397,12 @@ void feedService() {
             }
           }
         }
+      } else {
+        feedSgGate = 0;
       }
       if (!feedSt->isRunning()) {                  // blind travel done: seek
         feedSt->setSpeedInHz(speedToHz(feedSpeedSet));
+        feedEdgeSeen = false; feedEdgeArm = true;
         feedSt->runForward();
         feedSeekStart = (long)feedSt->getCurrentPosition();
         feedT0 = millis();
@@ -356,13 +411,28 @@ void feedService() {
       return;
     }
     case F_SEEK: {
-      if (digitalRead(FEED_HOME) == LOW) {         // flag edge at cruise
-        long edge = (long)feedSt->getCurrentPosition();
+      // ISR-latched edge, or already sitting on the flag at seek start
+      // (1.x parity: its pre-step level check homes instantly in that case)
+      if (feedEdgeSeen || digitalRead(FEED_HOME) == LOW) {
+        feedEdgeArm = false;
+        long pos = (long)feedSt->getCurrentPosition();
+        long edge = pos;
+        uint32_t hz = speedToHz(feedSpeedSet);
+        if (feedEdgeSeen)                          // back out service latency
+          edge = pos - (long)((uint64_t)(micros() - feedEdgeUs) * hz / 1000000ULL);
         lastSeek = edge - feedSeekStart;
+        if (lastSeek < 0) lastSeek = 0;
         if (lastSeek > maxSeek) maxSeek = lastSeek;
         long stopAt = edge + (long)feedHomingOffset * USTEP;
-        if (!feedDecelOverOffset) feedSt->setAcceleration(500000);  // crisp stop
-        else feedSt->setAcceleration(accFToSS2(feedDecF));
+        // the feed wheel must never reverse across the drop port: if the
+        // configured decel can't rest inside what remains of the offset,
+        // brake as hard as needed (FAS reverses on moveTo overshoot)
+        long remain = stopAt - pos; if (remain < 8) remain = 8;
+        uint32_t a = feedDecelOverOffset ? accFToSS2(feedDecF) : 500000;
+        uint64_t need = ((uint64_t)hz * hz) / (uint64_t)(2L * remain);
+        need += need / 8;
+        if (need > a) a = (need > 4000000ULL) ? 4000000UL : (uint32_t)need;
+        feedSt->setAcceleration(a);
         feedSt->moveTo(stopAt);
         feedState = F_OFFSET;
         return;
@@ -533,6 +603,8 @@ void handleCommand() {
     host.print(F(" sortState=")); host.print((int)sortState);
     host.print(F(" feedState=")); host.print((int)feedState);
     host.print(F(" flagPos=")); host.print(sortFlagPos);
+    host.print(F(" txDropPi=")); host.print(outPi.dropped);
+    host.print(F(" txDropUsb=")); host.print(outUsb.dropped);
     host.print(F(" rxPi=")); host.print(rxPiBytes);
     host.print(F(" rxUsb=")); host.print(rxUsbBytes);
     if (sortSt) { host.print(F(" pos=")); host.print((long)sortSt->getCurrentPosition());
@@ -661,7 +733,7 @@ void handleCommand() {
   SET_INT("airdropdsignalduration:", airSignal, 0, 500, );
   SET_INT("airdroppostdelay:", airPost, 0, 3000, );
   SET_INT("cameraledlevel:", cameraLEDLevel, 0, 255, ringShow());
-  SET_INT("sgfeed:", feedSgThrs, 0, 255, );
+  SET_INT("sgfeed:", feedSgThrs, 0, 255, feedDrv.SGTHRS(feedSgThrs));
   SET_INT("sgsort:", sortSgThrs, 0, 255, );
   SET_INT("fan:", caseFanLevel, 0, 100,
           analogWrite(CASEFAN, caseFanLevel * 255 / 100));
@@ -730,6 +802,8 @@ void setup() {
   if (EEPROM.read(0) == 0xA5) sortAxis = EEPROM.read(1) != 0;
 
   pinMode(FEED_HOME, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(FEED_HOME), feedHomeIsr, FALLING);
+  pinMode(FEED_DIAG, INPUT);
   pinMode(SORT_HOME, INPUT_PULLUP);
   pinMode(PROX_PIN, INPUT_PULLUP);
   pinMode(FEED_EN, OUTPUT); digitalWrite(FEED_EN, LOW);
@@ -770,4 +844,6 @@ void loop() {
   sortService();
   feedService();
   checkMotorPower();
+  outPi.pump();
+  outUsb.pump();
 }

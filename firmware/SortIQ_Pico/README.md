@@ -15,9 +15,24 @@ or the 1200-baud touch on the USB CDC port.
   the frame says it belongs aborts the move and re-homes (bench-proven to
   catch jams StallGuard reads straight through). StallGuard on the sort is
   telemetry only.
-- Feed jam detection: StallGuard load sampling at cruise (validated bands:
-  free ≥300, wedged <80; three lows in a cycle = jam) plus the flag-seek
-  overtravel budget.
+- Feed jam detection: the 1.x two-stage detector — the driver's DIAG pin is
+  a free tripwire (asserts when SG_RESULT < 2*SGTHRS); 24 accumulated highs
+  buy ONE UART confirm read, three low confirms = jam — plus the flag-seek
+  overtravel budget. Continuous UART sampling is wrong twice: it false-trips
+  on transient dips, and each read blocks the loop ~10 ms.
+- Feed flag edge by INTERRUPT with latency-corrected position (edge =
+  pos_now − elapsed_µs × cruise rate), and host TX is ring-buffered and
+  pumped from loop(). Both exist for the same reason, the core lesson of
+  the rewrite: **the PIO keeps stepping while the CPU blocks.** On the 1.x
+  core a blocked loop also froze the motor, so polled sensing stayed in
+  lockstep with motion; here a 9600-baud print to the Pi (100+ ms once the
+  FIFO fills) or a TMC read lets the wheel sail past the flag. Bench
+  signature: seeks of ~920 µsteps with ±100 jitter instead of the true
+  0–150. Nothing may write a host port directly, and no polled edge may be
+  trusted without the ISR timestamp.
+- The feed stop never reverses: if the configured decel cannot rest within
+  what remains of the offset, braking is raised to fit (FastAccelStepper
+  reverses on moveTo overshoot — unacceptable across the drop port).
 
 ## Library caveats (bench-bisected)
 1. **FastAccelStepper 0.31 rp2040: `claimed_pios` is never written.** The
