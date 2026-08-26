@@ -615,6 +615,7 @@ def api_state():
         "bins": cfg.bins,
         "bin_count": cfg.bin_count,
         "bin_sizes": (raw.get("machine") or {}).get("bin_sizes") or [],
+        "bin_colors": (raw.get("machine") or {}).get("bin_colors") or [],
         "slots_enabled": cfg.slots_enabled,
         "unmatched_bin": cfg.unmatched_bin,
         "floors": cfg.floors,
@@ -937,6 +938,12 @@ def api_stream():
                 zp = _camera.get("zoom_preview")
                 if zp is not None and time.monotonic() - zp["t"] > 120:
                     _camera["zoom_preview"] = zp = None   # abandoned tune-up
+                elif zp is not None:
+                    # someone is WATCHING this tune-up: keep it alive. The
+                    # expiry now only fires when no stream has served the
+                    # preview for 2 min (the real abandoned case) — it used
+                    # to snap the view back mid-focus-session.
+                    zp["t"] = time.monotonic()
                 z = zp or _camera["zoom"]
                 if z:
                     frame = apply_zoom(frame, z)
@@ -1015,7 +1022,7 @@ def _v4l2_ranges(index):
 # selector and warns on a mismatch but never overrides the user.
 CAMERA_MODELS = {
     "ov3660": {
-        "label": "Stock OV3660 (CS7.2)",
+        "label": "Stock OV3660",
         "usb": ("0c45", "6366"),
         # the classic UVC set the stock camera has always shown; exposure
         # and gain are known-decorative in MJPG mode, but the shipped
@@ -1123,7 +1130,8 @@ def api_camera_model_post():
             "width": cam.get("width"), "height": cam.get("height"),
             "zoom": cam.get("zoom"), "controls": cam.get("controls", {}),
             "active_preset": cam.get("active_preset"),
-            "camera_led": machine_settings()["camera_led"]}
+            "camera_led": machine_settings()["camera_led"],
+            "led_color": machine_settings().get("led_color", "#ffffff")}
         cam["model"] = key
         s = (cams.get(key) or {}).get("saved") or {}
         for k2 in ("width", "height", "zoom", "controls"):
@@ -1136,6 +1144,11 @@ def api_camera_model_post():
     with _camera["lock"]:
         open_camera_locked()
     led_pushed = False
+    if s.get("led_color"):
+        save_machine_settings({"led_color": s["led_color"]})
+        if _console["transport"] is not None:
+            _apply_machine_settings({"led_color":
+                                     machine_settings()["led_color"]})
     if s.get("camera_led") is not None:
         m = save_machine_settings({"camera_led": s["camera_led"]})
         if _console["transport"] is not None:
@@ -1272,7 +1285,8 @@ def _preset_snapshot():
     return {"width": c.get("width"), "height": c.get("height"),
             "zoom": c.get("zoom") or {"factor": 1.0, "x": 0, "y": 0},
             "controls": c.get("controls", {}),
-            "camera_led": machine_settings()["camera_led"]}
+            "camera_led": machine_settings()["camera_led"],
+            "led_color": machine_settings().get("led_color", "#ffffff")}
 
 
 @app.get("/api/camera/presets")
@@ -1318,6 +1332,11 @@ def api_camera_presets_apply():
     with _camera["lock"]:
         open_camera_locked()   # reopen applies resolution + saved controls
     led_pushed = False
+    if p.get("led_color"):
+        save_machine_settings({"led_color": p["led_color"]})
+        if _console["transport"] is not None:
+            _apply_machine_settings({"led_color":
+                                     machine_settings()["led_color"]})
     if p.get("camera_led") is not None:
         m = save_machine_settings({"camera_led": p["camera_led"]})
         if _console["transport"] is not None:
@@ -1978,6 +1997,10 @@ def api_gallery_pin():
 
 
 _gal_build = {"running": False, "error": None, "done": None, "log": ""}
+# batch-review clustering in flight (api_run_groups embedding fresh
+# unknowns) — a run must not start under it, and it must not start
+# under a run: same interpreter, and on a Pi the same CPU budget
+_groups_busy = {"n": 0}
 
 
 @app.post("/api/gallery/rebuild")
@@ -1987,6 +2010,15 @@ def api_gallery_rebuild():
     the live gallery and canonical dataset already are: no pull/push)."""
     if _gal_build["running"]:
         return jsonify({"error": "rebuild already running"}), 409
+    # the finished rebuild swaps shadow_gallery.npz, which hot-reloads
+    # into whatever is using it — never under a live run, and not under
+    # a scan mid-read either
+    if run_mgr.status().get("running"):
+        return jsonify({"error": "a run is active — the rebuilt gallery "
+                        "would swap in mid-run; rebuild when it ends"}), 409
+    if _scan_status["running"] or _dup_status["running"]:
+        return jsonify({"error": "a dataset scan is running — let it "
+                        "finish, then rebuild"}), 409
 
     def work():
         try:
@@ -2210,6 +2242,9 @@ def api_dataset_scan():
         return jsonify({"error": "a sorting run is active — the scan "
                         "shares the recognizer; wait for the run to "
                         "end"}), 409
+    if _gal_build["running"]:
+        return jsonify({"error": "the gallery is rebuilding — the scan "
+                        "reads it; wait for the rebuild to finish"}), 409
     if get_shadow() is None:
         return jsonify({"error": "no embedding model installed — the scan "
                         "uses it to second-guess the labels"}), 400
@@ -2436,6 +2471,9 @@ def api_dataset_dupscan():
         return jsonify({"error": "a sorting run is active — the scan "
                         "shares the recognizer; wait for the run to "
                         "end"}), 409
+    if _gal_build["running"]:
+        return jsonify({"error": "the gallery is rebuilding — the scan "
+                        "reads it; wait for the rebuild to finish"}), 409
     if get_shadow() is None:
         return jsonify({"error": "no embedding model installed — the scan "
                         "uses it to compare images"}), 400
@@ -2643,6 +2681,14 @@ def api_dataset_rebuild():
     changed outside the app (rsync from another machine, sync-tool lock
     leftovers). Idempotent: raw is the source of truth. Synchronous; the
     UI shows a busy state (~20-30s for a 1,400-image dataset on the Pi)."""
+    # a full reshape is a CPU storm on a Pi and rewrites the crops the
+    # scans pixel-verify against — not under a run, not under a scan
+    if run_mgr.status().get("running"):
+        return jsonify({"error": "a run is active — rebuild crops when "
+                        "it ends"}), 409
+    if _scan_status["running"] or _dup_status["running"]:
+        return jsonify({"error": "a dataset scan is running — let it "
+                        "finish, then rebuild"}), 409
     # the escape hatch stays an escape hatch: outside changes (rsync
     # with preserved mtimes) can defeat the freshness check, so the
     # manual button does the full reshape unless asked not to
@@ -2661,7 +2707,14 @@ def api_dataset_rebuild():
 @app.get("/api/dataset/manifest")
 def api_dataset_manifest():
     """Inventory for the trainer's incremental pull: the active model's
-    raw/ images (size+mtime) plus model.json (labels + imaging config)."""
+    raw/ images (size+mtime) plus model.json (labels + imaging config).
+    Refused while a run is live: thousands of SD-card reads under a
+    sorting loop stutter the machine, and the modal that "prevents"
+    this is only client-side — a page refresh walks straight past it.
+    The trainer surfaces this message in its sync status."""
+    if run_mgr.status().get("running"):
+        return jsonify({"error": "the machine is running — pull the "
+                        "dataset when the run ends"}), 409
     files = []
     raw_dir = DATA_DIR / "raw"
     if raw_dir.is_dir():
@@ -2691,6 +2744,11 @@ def api_dataset_files():
     so the in-memory tar stays small on the 2GB Pi; the trainer chunks."""
     import io
     import tarfile
+    # a pull that was mid-flight when a run started stops at the next
+    # chunk — same reason the manifest refuses
+    if run_mgr.status().get("running"):
+        return jsonify({"error": "the machine is running — pull the "
+                        "dataset when the run ends"}), 409
     paths = ((request.get_json() or {}).get("paths") or [])[:50]
     buf = io.BytesIO()
     root = str(DATA_DIR.resolve()) + os.sep
@@ -2753,6 +2811,13 @@ def api_models_install():
     (Legacy twins installs are retired — a trainer old enough to push
     stamp*.tflite can't exist behind the code-sync digest gate.)"""
     import shutil as _sh
+    # a model landing mid-run hot-reloads into the sorting loop — the
+    # brain (and every class's bar) would swap between two cases. The
+    # trainer's Install surfaces this message; retry when the run ends.
+    if run_mgr.status().get("running"):
+        return jsonify({"error": "the machine is running — installing "
+                        "would swap the model mid-run; install when "
+                        "it ends"}), 409
     got = {k: f for k, f in request.files.items()
            if k in ("shadow_embed.tflite", "shadow_gallery.npz",
                     "shadow_embed.json")}
@@ -2804,6 +2869,9 @@ def api_shadow_push():
     files = {"shadow_embed.tflite": model.read_bytes(),
              "shadow_gallery.npz": gal.read_bytes()}
     if body.get("target") == "local":
+        if run_mgr.status().get("running"):
+            return jsonify({"error": "a run is active — installing would "
+                            "swap the model mid-run"}), 409
         MODELS_DIR.mkdir(parents=True, exist_ok=True)
         for name, data in files.items():
             (MODELS_DIR / name).write_bytes(data)
@@ -2826,6 +2894,9 @@ def api_shadow_remove():
     import urllib.request
     body = request.get_json(silent=True) or {}
     if body.get("target") == "local":
+        if run_mgr.status().get("running"):
+            return jsonify({"error": "a run is active — removing the "
+                            "model would blind it mid-run"}), 409
         removed = []
         for n in ("shadow_embed.tflite", "shadow_gallery.npz"):
             p = MODELS_DIR / n
@@ -2842,6 +2913,109 @@ def api_shadow_remove():
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=30) as r:
         return jsonify(json.loads(r.read()))
+
+
+# ------------------------------------------------ community starter model ---
+# A trained recognizer + gallery published as a release asset, so a fresh
+# install can SORT before its owner has collected a single image. Pinned
+# by URL and SHA-256: the download must hash to exactly the published
+# digest or nothing is installed. Re-pinned each time a new starter ships.
+STARTER_URL = ("https://github.com/yamanub/SortIQ/releases/download/"
+               "v1.4/starter_9mm.tar.gz")
+# UNPINNED for the v1.4 release (owner's call — held for later). The v5
+# pair (99.9% closed-set, 86 classes, packaged 2026-08-18) lives at
+# Documents\SortIQ-release-assets\starter_9mm.tar.gz with digest
+# e40d5abec51e4649c44790cf177d8f4ae70617deb33ec8540a25bf53dee9ba9c —
+# re-pin that digest here and attach the asset to a release to publish.
+# With no pin the Train tab hides the starter card entirely.
+STARTER_SHA256 = ""
+
+
+@app.get("/api/models/starter")
+def api_models_starter_info():
+    return jsonify({"available": bool(STARTER_SHA256), "url": STARTER_URL,
+                    "installed": get_shadow() is not None})
+
+
+@app.post("/api/models/starter")
+def api_models_starter():
+    """Download the pinned starter asset, verify its digest, and install
+    the pair into the active profile — the same landing spot a trainer
+    push uses, so get_shadow() hot-reloads it the same way. "url"/"sha256"
+    in the body override the pin (the docs' drop-a-file path, and how the
+    asset is verified against a local server before it's ever published);
+    an override URL still gets its digest echoed back so it can be pinned."""
+    import hashlib
+    import io
+    import shutil as _sh
+    import tarfile
+    import urllib.request
+    if run_mgr.status().get("running"):
+        return jsonify({"error": "a run is active — install after it ends"}), 409
+    body = request.get_json(silent=True) or {}
+    url = body.get("url") or STARTER_URL
+    sha = body.get("sha256") if "url" in body else STARTER_SHA256
+    if "url" not in body and not STARTER_SHA256:
+        return jsonify({"error": "no starter is pinned for this build"}), 400
+    try:
+        with urllib.request.urlopen(url, timeout=300) as r:
+            blob = r.read()
+    except Exception as e:
+        return jsonify({"error": f"download failed: {e}"}), 502
+    got_sha = hashlib.sha256(blob).hexdigest()
+    if sha and got_sha != sha:
+        return jsonify({"error": "digest mismatch — the download is not the "
+                                 f"published starter (got {got_sha[:16]}…)"}), 400
+    want = {"shadow_embed.tflite", "shadow_gallery.npz"}
+    files = {}
+    try:
+        with tarfile.open(fileobj=io.BytesIO(blob), mode="r:*") as tar:
+            for m in tar.getmembers():
+                base = Path(m.name).name
+                if m.isfile() and base in want:
+                    files[base] = tar.extractfile(m).read()
+    except tarfile.TarError as e:
+        return jsonify({"error": f"not a readable tar archive: {e}"}), 400
+    if set(files) != want:
+        return jsonify({"error": "asset must carry shadow_embed.tflite "
+                                 "and shadow_gallery.npz"}), 400
+    # the pair must agree with EACH OTHER: the gallery was built by
+    # embedding crops through one exact model, and a digest mismatch
+    # means every stored vector is in a different space
+    import numpy as np
+    try:
+        gal = np.load(io.BytesIO(files["shadow_gallery.npz"]),
+                      allow_pickle=False)
+        meta = json.loads(str(gal["meta"]))
+    except Exception as e:
+        return jsonify({"error": f"gallery unreadable: {e}"}), 400
+    model_digest = hashlib.md5(files["shadow_embed.tflite"]).hexdigest()
+    if meta.get("model_digest") != model_digest:
+        return jsonify({"error": "gallery/model mismatch inside the asset"}), 400
+    # same landing as /api/models/install: archive the outgoing
+    # generation first, then write — the mtime watcher does the reload
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    arch_dir = MODELS_DIR / "archive"
+    arch_dir.mkdir(exist_ok=True)
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    archived = False
+    if (MODELS_DIR / "shadow_embed.tflite").exists():
+        for name, arch in (("shadow_embed.tflite", f"shadow_embed_{ts}.tflite"),
+                           ("shadow_gallery.npz", f"shadow_gallery_{ts}.npz"),
+                           ("shadow_embed.json", f"shadow_embed_{ts}.json")):
+            cur = MODELS_DIR / name
+            if cur.exists():
+                _sh.copy2(cur, arch_dir / arch)
+        archived = True
+    for name, data in files.items():
+        (MODELS_DIR / name).write_bytes(data)
+    # a community model carries no bench sidecar for THIS dataset
+    (MODELS_DIR / "shadow_embed.json").unlink(missing_ok=True)
+    return jsonify({"ok": True, "classes": meta.get("classes"),
+                    "vectors": meta.get("vectors"),
+                    "built_at": meta.get("built_at"),
+                    "sha256": got_sha,
+                    "archived_as": ts if archived else None})
 
 
 # ------------------------------------------------------------- USB export ---
@@ -3216,6 +3390,170 @@ def api_code_update():
     threading.Thread(target=_relaunch_self, daemon=True).start()
     return jsonify({"ok": True, "updated": len(fetch), "deleted": len(delete),
                     "restarting": True})
+
+
+# ------------------------------------------------ release self-update ---
+# "Check for updates" in the System dialog: compare the local VERSION
+# against the newest GitHub RELEASE (tagged versions only — users ride
+# stable points, never master), and on the user's click make this
+# install byte-identical to that release through the same plan/write/
+# verify/restart path a trainer pull uses. Click-driven by design: the
+# app never phones home on its own.
+GH_REPO = "yamanub/SortIQ"
+
+
+def _ver_tuple(s):
+    return tuple(int(x) for x in re.findall(r"\d+", str(s))[:3]) or (0,)
+
+
+def _local_version():
+    try:
+        return (ROOT / "VERSION").read_text().strip()
+    except OSError:
+        return "0"
+
+
+def _latest_release():
+    """Newest published version: the latest GitHub Release when one
+    exists, else the highest-versioned bare tag (a maintainer who only
+    tags still counts as releasing). Returns (tag, name, notes) or
+    raises."""
+    import urllib.request
+    import urllib.error
+    hdrs = {"Accept": "application/vnd.github+json"}
+    try:
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{GH_REPO}/releases/latest",
+            headers=hdrs)
+        with urllib.request.urlopen(req, timeout=15) as r:
+            rel = json.loads(r.read())
+        tag = rel.get("tag_name") or ""
+        if tag:
+            return tag, rel.get("name") or tag, (rel.get("body") or "")[:4000]
+    except urllib.error.HTTPError as e:
+        if e.code != 404:            # 404 = no Release objects, try tags
+            raise
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{GH_REPO}/tags?per_page=30",
+        headers=hdrs)
+    with urllib.request.urlopen(req, timeout=15) as r:
+        tags = [t.get("name") or "" for t in json.loads(r.read())]
+    tag = max((t for t in tags if _ver_tuple(t) > (0,)),
+              key=_ver_tuple, default="")
+    return tag, tag, ""
+
+
+@app.get("/api/update/check")
+def api_update_check():
+    try:
+        tag, name, notes = _latest_release()
+    except Exception as e:
+        return jsonify({"error": f"couldn't reach GitHub ({e})"}), 502
+    if not tag:
+        return jsonify({"error": "no releases or tags found"}), 502
+    cur = _local_version()
+    return jsonify({
+        "current": cur, "latest": tag, "name": name, "notes": notes,
+        "update_available": _ver_tuple(tag) > _ver_tuple(cur),
+        "git_checkout": codesync.is_git_checkout(ROOT)})
+
+
+@app.post("/api/update/apply")
+def api_update_apply():
+    """Update this install to the given release tag (default: latest).
+    Same rules as a trainer pull: refused while anything is running,
+    refused on git checkouts, every byte verified before restart."""
+    import hashlib
+    import io
+    import tarfile
+    import urllib.request
+    busy = ("a sorting run" if run_mgr.status().get("running")
+            else "training" if train_status.get("running")
+            else "a gallery rebuild" if _gal_build.get("running")
+            else "a mislabel scan" if _scan_status.get("running")
+            else "a duplicate scan" if _dup_status.get("running") else None)
+    if busy:
+        return jsonify({"error": f"{busy} is active — updating restarts "
+                                 "the app and would kill it; retry when "
+                                 "it finishes"}), 409
+    if codesync.is_git_checkout(ROOT):
+        return jsonify({"error": "this install is a git checkout — update "
+                                 "it with git"}), 400
+    body = request.get_json(silent=True) or {}
+    tag = (body.get("tag") or "").strip()
+    if not tag:
+        try:
+            tag, _, _ = _latest_release()
+        except Exception as e:
+            return jsonify({"error": f"couldn't reach GitHub ({e})"}), 502
+    if not tag:
+        return jsonify({"error": "no release found"}), 502
+    if (_ver_tuple(tag) <= _ver_tuple(_local_version())
+            and not body.get("force")):
+        return jsonify({"error": f"already on v{_local_version()} — "
+                                 f"{tag} isn't newer"}), 400
+    try:
+        url = f"https://github.com/{GH_REPO}/archive/refs/tags/{tag}.tar.gz"
+        with urllib.request.urlopen(url, timeout=300) as r:
+            blob = r.read()
+    except Exception as e:
+        return jsonify({"error": f"release download failed: {e}"}), 502
+    # the release tarball, filtered through the same rules the manifest
+    # lives by, IS a remote manifest — the rest is the proven pull path
+    skip_sfx = codesync._SKIP_SUFFIXES
+    skip_dirs = codesync._SKIP_DIRS
+    files, data = [], {}
+    try:
+        with tarfile.open(fileobj=io.BytesIO(blob), mode="r:*") as tar:
+            for m in tar.getmembers():
+                if not m.isfile():
+                    continue
+                parts = m.name.split("/")[1:]        # strip repo-tag prefix
+                if not parts:
+                    continue
+                rel = "/".join(parts)
+                tracked = (
+                    (len(parts) == 1 and parts[0] in codesync.CODE_FILES)
+                    or (parts[0] in codesync.CODE_DIRS
+                        and not any(p in skip_dirs for p in parts)
+                        and Path(parts[-1]).suffix.lower() not in skip_sfx))
+                if not tracked:
+                    continue
+                raw = tar.extractfile(m).read()
+                data[rel] = raw
+                files.append({"path": rel, "size": len(raw),
+                              "sha256": hashlib.sha256(raw).hexdigest()})
+    except tarfile.TarError as e:
+        return jsonify({"error": f"release tarball unreadable: {e}"}), 502
+    if not files:
+        return jsonify({"error": "release carries no tracked code files"}), 502
+    fetch, delete = codesync.plan(ROOT, files)
+    if not fetch and not delete:
+        return jsonify({"ok": True, "updated": 0, "deleted": 0, "tag": tag,
+                        "restarting": False})
+    for rel in fetch:
+        codesync.write_file(ROOT, rel, data[rel])
+    for rel in delete:
+        codesync.delete_file(ROOT, rel)
+    # verify with the freshly written codesync (its rules may have
+    # changed in this very release), comparing file-by-file against
+    # what the tarball carried
+    try:
+        import importlib
+        verifier = importlib.reload(codesync)
+    except Exception:
+        verifier = codesync
+    now = {f["path"]: f["sha256"] for f in verifier.manifest(ROOT)["files"]}
+    want = {f["path"]: f["sha256"] for f in files}
+    if now != want:
+        return jsonify({"error": "install doesn't match the release after "
+                                 "the update (files changed mid-write?) — "
+                                 "retry"}), 500
+    print(f"release update: {tag} — {len(fetch)} file(s) written, "
+          f"{len(delete)} deleted; restarting", flush=True)
+    threading.Thread(target=_relaunch_self, daemon=True).start()
+    return jsonify({"ok": True, "updated": len(fetch), "deleted": len(delete),
+                    "tag": tag, "restarting": True})
 
 
 def _relaunch_self():
@@ -3777,8 +4115,10 @@ def api_fleet():
 
     def fetch(url):
         try:
+            # generous budget: a freshly restarted peer's first status
+            # answer hashes its whole code tree (seconds on a Pi's SD)
             with urllib.request.urlopen(url + "/api/fleet/status",
-                                        timeout=2.5) as r:
+                                        timeout=6) as r:
                 j = json.loads(r.read())
             j.update(url=url, reachable=True, me=False,
                      same_build=j.get("digest") == me["digest"])
@@ -4014,22 +4354,35 @@ class _ServerCamera:
         pass
 
 
-KEEP_RUNS = 5   # rolling window of run folders kept on disk. Runs now
-                # store a full frame for EVERY case (~80MB per 400-case
-                # run) so any card in the report can be filed into the
-                # dataset — the old use of deep run history as a capture
-                # substitute is superseded by the batch-capture workflow.
+KEEP_RUNS = 5   # rolling window of run folders kept on disk — PER KIND:
+                # the newest 5 sorting runs AND the newest 5 batch
+                # captures, on separate shelves, so a capture spree can't
+                # evict a sort report (or vice versa) before it's been
+                # reviewed. Runs store a full frame for EVERY case
+                # (~80MB per 400-case run) so any card in the report can
+                # be filed into the dataset.
+
+
+def _run_is_capture(d):
+    try:
+        return bool(json.loads((d / "run.json").read_text()).get("capture"))
+    except (OSError, ValueError):
+        return False              # unlabeled (pre-capture-flag) = sort run
 
 
 def _prune_runs(keep=KEEP_RUNS):
-    """Delete all but the newest `keep` run folders under runs/."""
+    """Delete all but the newest `keep` run folders OF EACH KIND."""
     import shutil
     runs_dir = ROOT / "runs"
     if not runs_dir.is_dir():
         return
     dirs = sorted((p for p in runs_dir.iterdir() if p.is_dir()), reverse=True)
-    for d in dirs[keep:]:
-        shutil.rmtree(d, ignore_errors=True)
+    seen = {True: 0, False: 0}
+    for d in dirs:
+        kind = _run_is_capture(d)
+        seen[kind] += 1
+        if seen[kind] > keep:
+            shutil.rmtree(d, ignore_errors=True)
 
 
 def _persist_bin(slot, stamp):
@@ -4143,6 +4496,11 @@ class RunManager:
             if isinstance(s.get("bin_stamp_counts"), dict):
                 s["bin_stamp_counts"] = {k: dict(v) for k, v
                                          in s["bin_stamp_counts"].items()}
+            # a pending stop is user-visible state: the loop only reads
+            # the flag between case cycles (and finishes the end-of-brass
+            # flush regardless), so the UI must say "stopping" instead of
+            # letting the button look ignored — field-hit during a flush
+            s["stopping"] = bool(s.get("running") and self.stop_evt.is_set())
             return s
 
     def start(self, params):
@@ -4697,9 +5055,11 @@ run_mgr = RunManager()
 
 @app.post("/api/run/start")
 def api_run_start():
-    # the run loop and the dataset scans share ONE TFLite interpreter —
-    # concurrent invokes trip its internal-reference safety check
-    # (field-hit: a sort started mid-mislabel-scan). Refuse with a reason.
+    # the run loop and the dataset jobs share ONE TFLite interpreter and
+    # one gallery — a run started under any of them either fights for
+    # the interpreter (field-hit: a sort started mid-mislabel-scan) or
+    # gets its gallery swapped mid-run. Refuse with a reason. (The
+    # interpreter itself is also lock-serialized as a backstop.)
     if _scan_status["running"]:
         return jsonify({"error": "the mislabel scan is re-reading the "
                         "dataset — let it finish (or cancel it on the "
@@ -4708,6 +5068,17 @@ def api_run_start():
         return jsonify({"error": "the duplicate scan is running — let it "
                         "finish (or cancel it on the Dataset tab), then "
                         "start the run"}), 409
+    if _gal_build["running"]:
+        return jsonify({"error": "the gallery is rebuilding — a run "
+                        "started now would have its matching gallery "
+                        "swapped mid-run; wait for it to finish"}), 409
+    if _groups_busy["n"] > 0:
+        return jsonify({"error": "a batch review is clustering its "
+                        "unknowns — give it a few seconds, then start "
+                        "the run"}), 409
+    if train_status.get("running"):
+        return jsonify({"error": "training is running on this install — "
+                        "wait for it to finish"}), 409
     err = run_mgr.start(request.get_json() or {})
     if err:
         return jsonify({"error": err}), 409
@@ -4760,8 +5131,19 @@ def api_runs():
                 capture = bool(rj.get("capture"))
             except (OSError, ValueError):
                 pass
+            # tally + duration off the log so the run list can describe
+            # each run without anyone opening its full report
+            total = dur = None
+            try:
+                lines = (d / "log.jsonl").read_text().splitlines()
+                total = len(lines)
+                if lines:
+                    dur = json.loads(lines[-1]).get("ts")
+            except (OSError, ValueError):
+                pass
             runs.append({"run": d.name, "rejects": n_rej, "mode": mode,
-                         "capture": capture, "cases_left": n_frames + n_rej})
+                         "capture": capture, "cases_left": n_frames + n_rej,
+                         "total": total, "dur_s": dur})
     return jsonify({"runs": runs[:20]})
 
 
@@ -4802,24 +5184,89 @@ def api_run_rejects(run_id):
             except (ValueError, KeyError):
                 pass
     items = []
-    # thumbnails make the payload heavy, so serve 100 at a time; total lets
-    # the UI say so and reload the next batch once these are resolved
+    # thumbs ship as URLs (lazy-loaded client-side), so listing every
+    # pending reject costs bytes, not image decodes
     pending = sorted((d / "rejects").glob("*_A.png"))
-    for a_path in pending[:100]:
+    for a_path in pending:
         n = int(a_path.name.split("_")[0])
-        img = cv2.imread(str(a_path))
-        if img is None:
-            continue
         e = meta.get(n, {})
-        # stored reject files stay FULL frames (the resolve flow feeds them
-        # back into the dataset, which needs raws) — only the review
-        # thumbnail is cropped to the readable head
         items.append({"n": n, "reason": e.get("reason", "?"),
                       "stamp": e.get("stamp"),
                       "conf": e.get("stamp_conf"),
                       "embed": e.get("embed"),
-                      "thumb": b64_jpg(imaging.head_view(img), max_side=220)})
+                      "thumb": f"/api/runs/{run_id}/reject_thumb/{n}"})
     return jsonify({"run": run_id, "rejects": items, "total": len(pending)})
+
+
+@app.get("/api/runs/<run_id>/thumb/<int:n>")
+def api_run_thumb(run_id, n):
+    """One report thumbnail as a plain image — the report JSON carries
+    URLs, the browser lazy-loads only what scrolls into view."""
+    d = _run_dir(run_id)
+    if d is None:
+        return jsonify({"error": "unknown run"}), 404
+    tp = d / "thumbs" / f"{n:04d}.jpg"
+    if not tp.is_file():
+        return jsonify({"error": "no thumb"}), 404
+    resp = send_file(tp, mimetype="image/jpeg")
+    resp.headers["Cache-Control"] = "private, max-age=86400"
+    return resp
+
+
+@app.get("/api/runs/<run_id>/frame/<int:n>")
+def api_run_frame(run_id, n):
+    """A classified case's saved frame at inspect size — the report
+    modal's click-to-enlarge. 404s once filing consumed the frame; the
+    client falls back to the stored thumb."""
+    d = _run_dir(run_id)
+    if d is None:
+        return jsonify({"error": "unknown run"}), 404
+    a_path = d / "frames" / f"{n:04d}_A.png"
+    if not a_path.is_file():
+        a_path = d / "rejects" / f"{n:04d}_A.png"
+    if not a_path.is_file():
+        return jsonify({"error": "frame consumed"}), 404
+    img = cv2.imread(str(a_path))
+    if img is None:
+        return jsonify({"error": "unreadable"}), 404
+    img = imaging.head_view(img)
+    h, w = img.shape[:2]
+    scale = 900 / max(h, w)
+    if scale < 1:
+        img = cv2.resize(img, (int(w * scale), int(h * scale)))
+    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 88])
+    if not ok:
+        return jsonify({"error": "encode failed"}), 500
+    resp = app.response_class(buf.tobytes(), mimetype="image/jpeg")
+    resp.headers["Cache-Control"] = "private, max-age=3600"
+    return resp
+
+
+@app.get("/api/runs/<run_id>/reject_thumb/<int:n>")
+def api_run_reject_thumb(run_id, n):
+    """A reject's review thumbnail, cropped to the readable head on
+    demand. The stored file stays a FULL frame (the resolve flow feeds
+    it back into the dataset, which needs raws)."""
+    d = _run_dir(run_id)
+    if d is None:
+        return jsonify({"error": "unknown run"}), 404
+    a_path = d / "rejects" / f"{n:04d}_A.png"
+    if not a_path.is_file():
+        return jsonify({"error": "no reject"}), 404
+    img = cv2.imread(str(a_path))
+    if img is None:
+        return jsonify({"error": "unreadable"}), 404
+    img = imaging.head_view(img)
+    h, w = img.shape[:2]
+    scale = 220 / max(h, w)
+    if scale < 1:
+        img = cv2.resize(img, (int(w * scale), int(h * scale)))
+    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    if not ok:
+        return jsonify({"error": "encode failed"}), 500
+    resp = app.response_class(buf.tobytes(), mimetype="image/jpeg")
+    resp.headers["Cache-Control"] = "private, max-age=86400"
+    return resp
 
 
 @app.get("/api/runs/<run_id>/report")
@@ -4875,14 +5322,12 @@ def api_run_report(run_id):
             duration = round(max(log.stat().st_mtime - start, 0), 1) or None
         except ValueError:
             pass
-    # thumbs only for the slice that ships — a 2,000-case run was
-    # encoding 2,000 jpgs to then discard 1,600 of them
-    cases = cases[:400]
+    # thumbs ship as URLs — no encoding cost per case, so every case
+    # ships and the client's pagination decides what actually loads
+    thumbs = d / "thumbs"
     for c in cases:
-        tp = d / "thumbs" / f"{c['n']:04d}.jpg"
-        if tp.exists():
-            c["thumb"] = ("data:image/jpeg;base64,"
-                          + base64.b64encode(tp.read_bytes()).decode())
+        if (thumbs / f"{c['n']:04d}.jpg").exists():
+            c["thumb"] = f"/api/runs/{run_id}/thumb/{c['n']}"
     return jsonify({"run": run_id, "mode": meta.get("mode"),
                     "total": len(entries), "duration_s": duration,
                     "bins": bins_out, "reasons": reasons, "stamps": stamps,
@@ -5061,15 +5506,27 @@ def api_run_groups(run_id):
                         vcache = dict(zip(z["ns"].tolist(), z["vecs"]))
             except Exception:      # torn/corrupt cache must never 500 the
                 vcache = {}        # review page — it just recomputes
+        # every uncached unknown costs an interpreter embed — behind the
+        # invoke lock that means STALLING a live run's think time, so a
+        # fresh clustering waits its turn instead
+        need = [e["n"] for e, _ in unknown if e["n"] not in vcache]
+        if need and run_mgr.status().get("running"):
+            return jsonify({"error": "the machine is running — this "
+                            "review needs to analyze new cases first; "
+                            "open it when the run ends"}), 409
         vecs, fresh = [], False
-        for e, p in unknown:
-            v = vcache.get(e["n"])
-            if v is None:
-                img = cv2.imread(str(p))
-                v = sh.embed(imaging.crop_head(img))
-                vcache[e["n"]] = v
-                fresh = True
-            vecs.append(v)
+        _groups_busy["n"] += 1
+        try:
+            for e, p in unknown:
+                v = vcache.get(e["n"])
+                if v is None:
+                    img = cv2.imread(str(p))
+                    v = sh.embed(imaging.crop_head(img))
+                    vcache[e["n"]] = v
+                    fresh = True
+                vecs.append(v)
+        finally:
+            _groups_busy["n"] -= 1
         if fresh:
             try:
                 tmp = vp.with_suffix(".tmp.npz")
@@ -5187,16 +5644,30 @@ def api_run_bulk_resolve(run_id):
 # ethernet or the current Wi-Fi. On the dev box nmcli simply isn't there
 # and the UI says so.
 def _nmcli(*args, timeout=20):
-    """Run nmcli; returns (ok, text). Never raises."""
-    try:
-        r = subprocess.run(("nmcli", *args), capture_output=True,
-                           text=True, timeout=timeout)
-    except FileNotFoundError:
-        return False, "nmcli not found — Wi-Fi management runs on the Pi"
-    except subprocess.TimeoutExpired:
-        return False, "nmcli timed out"
-    out = r.stdout if r.returncode == 0 else (r.stderr or r.stdout)
-    return r.returncode == 0, out.strip()
+    """Run nmcli; returns (ok, text). Never raises. Polkit allows a
+    service-context user less than an interactive one — scans and joins
+    pass on netdev membership, but hotspot creation (wifi.share.*) came
+    back "Not authorized" from the live bench test. Denied calls retry
+    once under the passwordless sudo the Pi image grants; if the retry
+    fails too, the original polkit error is the one worth reporting."""
+    def run(cmd):
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True,
+                               timeout=timeout)
+        except FileNotFoundError:
+            return None, "nmcli not found — Wi-Fi management runs on the Pi"
+        except subprocess.TimeoutExpired:
+            return None, "nmcli timed out"
+        out = r.stdout if r.returncode == 0 else (r.stderr or r.stdout)
+        return r.returncode == 0, out.strip()
+    ok, out = run(("nmcli", *args))
+    if ok is None:
+        return False, out
+    if not ok and "not authorized" in out.lower():
+        ok2, out2 = run(("sudo", "-n", "nmcli", *args))
+        if ok2:
+            return True, out2
+    return ok, out
 
 
 @app.post("/api/system/restart")
@@ -5207,8 +5678,8 @@ def api_system_restart():
     mid-run and mid-training so a restart can't eat a hopper run."""
     import shutil
     what = (request.get_json() or {}).get("what")
-    if what not in ("app", "pi"):
-        return jsonify({"error": "what must be 'app' or 'pi'"}), 400
+    if what not in ("app", "pi", "off"):
+        return jsonify({"error": "what must be 'app', 'pi' or 'off'"}), 400
     if not (sys.platform.startswith("linux") and shutil.which("systemctl")):
         return jsonify({"error": "restart only works on the machine itself"}), 400
     if run_mgr.state.get("running"):
@@ -5216,12 +5687,13 @@ def api_system_restart():
     if train_status.get("running"):
         return jsonify({"error": "training is running — wait for it to finish"}), 409
     cmd = (("sudo", "-n", "systemctl", "restart", "sortiq") if what == "app"
-           else ("sudo", "-n", "reboot"))
+           else ("sudo", "-n", "reboot") if what == "pi"
+           else ("sudo", "-n", "poweroff"))
     # reply first, act a beat later — the browser needs the 200 to start
     # its reconnect countdown before this process dies
     threading.Timer(0.8, lambda: subprocess.Popen(cmd)).start()
     return jsonify({"ok": True, "restarting": what,
-                    "eta_s": 12 if what == "app" else 55})
+                    "eta_s": 12 if what == "app" else 55 if what == "pi" else 0})
 
 
 _net_cache = {"t": 0.0, "resp": None}
@@ -5249,7 +5721,9 @@ def api_network_status():
         d["ip"] = (out2.split(":", 1)[1].split("/")[0]
                    if ok2 and ":" in out2 else None)
     _net_cache.update(t=time.time(),
-                      resp={"available": True, "devices": devices})
+                      resp={"available": True, "devices": devices,
+                            "hotspot": (_ap_ssid() if _ap["active"]
+                                        else None)})
     return jsonify(_net_cache["resp"])
 
 
@@ -5282,11 +5756,55 @@ def api_network_connect():
     password = body.get("password") or ""
     if not ssid:
         return jsonify({"error": "ssid is required"}), 400
-    args = ["device", "wifi", "connect", ssid]
-    if password:
-        args += ["password", password]
-    ok, out = _nmcli(*args, timeout=60)    # DHCP can take a while
+    # one radio: an active fallback hotspot must stand down for the join —
+    # and stand back up if the join fails, or a bad password strands the box
+    was_ap = _ap["active"]
+    if was_ap:
+        _ap_down()
+        # the radio just left AP mode with an empty beacon cache — give a
+        # rescan a moment, or the connect below can't infer the target's
+        # security type (bench-test failure: "key-mgmt property is missing")
+        _nmcli("device", "wifi", "rescan")
+        time.sleep(4)
+
+    def join():
+        # a saved profile for this SSID (Imager/netplan-provisioned
+        # included) beats creating a duplicate: update its secret if a
+        # new one was typed, then bring it up by name
+        okc, outc = _nmcli("-t", "-f", "NAME,TYPE", "connection", "show")
+        for line in (outc.splitlines() if okc else []):
+            name = line.rsplit(":", 1)[0]
+            if not line.endswith(":802-11-wireless"):
+                continue
+            oks, outs = _nmcli("-g", "802-11-wireless.ssid",
+                               "connection", "show", name)
+            if not (oks and outs == ssid):
+                continue
+            if password:
+                _nmcli("connection", "modify", name,
+                       "wifi-sec.key-mgmt", "wpa-psk",
+                       "wifi-sec.psk", password)
+            return _nmcli("connection", "up", name, timeout=60)
+        args = ["device", "wifi", "connect", ssid]
+        if password:
+            args += ["password", password]
+        ok1, out1 = _nmcli(*args, timeout=60)   # DHCP can take a while
+        if not ok1 and "key-mgmt" in out1 and password:
+            # target still unseen (fresh out of AP mode): the half-made
+            # profile is broken — replace it with an explicit WPA-PSK one
+            _nmcli("connection", "delete", "id", ssid)
+            oka, outa = _nmcli("connection", "add", "type", "wifi",
+                               "con-name", ssid, "ssid", ssid,
+                               "wifi-sec.key-mgmt", "wpa-psk",
+                               "wifi-sec.psk", password)
+            if oka:
+                return _nmcli("connection", "up", ssid, timeout=60)
+        return ok1, out1
+
+    ok, out = join()
     if not ok:
+        if was_ap:
+            _ap_up()
         return jsonify({"error": out}), 400
     return jsonify({"ok": True, "detail": out})
 
@@ -5300,6 +5818,79 @@ def api_network_forget():
     if not ok:
         return jsonify({"error": out}), 400
     return jsonify({"ok": True})
+
+
+# ---- AP-mode fallback: a Pi that can't find any known network raises its
+# own. New garage, moved router, password mistyped at imaging time —
+# without this the headless box is unreachable and the fix is pulling the
+# SD card. A watchdog (machine only: Linux + nmcli) waits out the boot
+# autoconnect window, and if nothing has an IP it starts a WPA2 hotspot
+# named after the hostname; the operator joins it, browses to
+# http://10.42.0.1:5000, and uses the Wi-Fi panel to put the box on a
+# real network. The join tears the hotspot down first (one radio) and
+# raises it again if the join fails — a bad password must not strand the
+# box twice.
+AP_CON = "sortiq-ap"
+AP_PASSWORD = "sortbrass"       # WPA2 wants 8+; in the docs next to the SSID
+_ap = {"active": False}
+
+
+def _ap_ssid():
+    import socket
+    return f"SortIQ-{socket.gethostname()}"
+
+
+def _net_has_link():
+    """True if any ethernet/wifi device is connected to something that
+    isn't our own hotspot."""
+    ok, out = _nmcli("-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device")
+    if not ok:
+        return True          # can't tell — never raise an AP on a guess
+    for line in out.splitlines():
+        p = line.split(":")
+        if (len(p) >= 4 and p[1] in ("ethernet", "wifi")
+                and p[2] == "connected" and p[3] != AP_CON):
+            return True
+    return False
+
+
+def _ap_up():
+    # a stale profile from an earlier hotspot (interrupted teardown,
+    # reboot mid-AP) blocks creation under the same name — clear it
+    # first so bring-up is idempotent (bench-test failure: the AP never
+    # rose again after a reboot left sortiq-ap on disk)
+    _nmcli("connection", "delete", AP_CON)
+    ok, out = _nmcli("device", "wifi", "hotspot", "con-name", AP_CON,
+                     "ssid", _ap_ssid(), "password", AP_PASSWORD,
+                     timeout=30)
+    _ap["active"] = ok
+    _net_cache["resp"] = None            # header state changed right now
+    print(f"AP fallback: hotspot {_ap_ssid()} "
+          f"{'up' if ok else 'FAILED: ' + out}", flush=True)
+    return ok
+
+
+def _ap_down():
+    if not _ap["active"]:
+        return
+    _nmcli("connection", "down", AP_CON)
+    _nmcli("connection", "delete", AP_CON)   # or autoconnect resurrects it
+    _ap["active"] = False
+    _net_cache["resp"] = None
+
+
+def _ap_watchdog():
+    time.sleep(75)                   # NetworkManager's own autoconnect window
+    misses = 0
+    while True:
+        if _net_has_link():
+            misses = 0
+            _ap_down()               # a cable showed up: real network wins
+        elif not _ap["active"]:
+            misses += 1
+            if misses >= 2:          # two sightings 30s apart — not a blip
+                _ap_up()
+        time.sleep(30)
 
 
 # --------------------------------------------------------------- console ---
@@ -5347,6 +5938,8 @@ def _console_connect(mode, port=None):
     # retries on its own a few seconds after the handback.
     if run_mgr.state.get("running"):
         raise RuntimeError("a run owns the board — stop the run first")
+    if mode == "serial" and _power_get() is False:
+        raise RuntimeError("board power is off — press the Power button first")
     with _console["lock"]:
         _console_disconnect_locked()
         _console["log"] = []
@@ -5355,7 +5948,8 @@ def _console_connect(mode, port=None):
             transport = RawCs72Console(SerialCs72Link(port, FW_BAUD))
         else:
             transport = RawCs72Console(FakeCs72Link())
-        _console.update(transport=transport, mode=mode, hold=False)
+        _console.update(transport=transport, mode=mode, hold=False,
+                        port=(port if mode == "serial" else None))
         stop = threading.Event()
         _console["stop"] = stop
 
@@ -5396,8 +5990,11 @@ def _console_connect(mode, port=None):
         # SS1 is retired (every fork board runs SS2 now): a pre-SS2 fork
         # version is treated as stock — its extra knobs stay hidden, and
         # stock handling is safe on it (setters answer "ok", no pf/ps).
-        save_machine_settings({"firmware": "ss2" if "-SS2" in ver
-                               else "stock"})
+        save_machine_settings({"firmware": "pico" if "-PICO" in ver
+                               else "ss2" if "-SS2" in ver
+                               else "stock",
+                               "board": "SKR Pico" if "-PICO" in ver
+                               else "CS7.2"})
     # push the saved motor settings on connect, if the user asked to
     if machine_settings().get("init_on_startup"):
         _apply_machine_settings(machine_settings())
@@ -5428,6 +6025,10 @@ def _auto_connect_loop():
                 continue
             port = serial_cfg.get("port") or ""
             if not port.startswith("/dev/") or not os.path.exists(port):
+                continue
+            # the Pi-header UART exists whether or not the board has power:
+            # with the relay pin readable, a known-off board is not a target
+            if _power_get() is False:
                 continue
             _console_connect("serial", port)
         except Exception:
@@ -5471,10 +6072,110 @@ def api_console_send():
     return jsonify({"ok": True})
 
 
+# ---- sorter board power: a GPIO drives an IoT Relay (normally-off outlet
+# feeding the 24V PSU). GPIO 25 = physical pin 22, its neighbor pin 20 is
+# ground — the control pair the relay wants. State is read back from the
+# pin itself, so the button can never lie about what the relay sees.
+POWER_GPIO = 25
+_power_cache = {"t": 0.0, "on": None}
+
+
+def _power_init():
+    if not machine_settings().get("power_relay"):
+        return
+    """At app start: if the pin has never been driven (still an input),
+    pull it firmly low so the relay can't float on. If it's already an
+    output, leave it ALONE — an app restart mid-session must never cut
+    board power."""
+    if not sys.platform.startswith("linux"):
+        return
+    tool = _power_tool()
+    if tool is None:
+        return
+    try:
+        r = subprocess.run((tool, "get", str(POWER_GPIO)),
+                           capture_output=True, text=True, timeout=3)
+        out = r.stdout.lower()
+        if ("op" in out) or ("func=output" in out):
+            return                      # someone (us, earlier) owns it — hands off
+        subprocess.run((tool, "set", str(POWER_GPIO), "ip", "pd"),
+                       capture_output=True, timeout=3)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def _power_tool():
+    import shutil
+    for t in ("pinctrl", "raspi-gpio"):
+        if shutil.which(t):
+            return t
+    return None
+
+
+def _power_get(fresh=False):
+    if not machine_settings().get("power_relay"):
+        return None
+    if not sys.platform.startswith("linux"):
+        return None
+    now = time.monotonic()
+    if not fresh and now - _power_cache["t"] < 2.0:
+        return _power_cache["on"]
+    tool = _power_tool()
+    if tool is None:
+        return None
+    try:
+        r = subprocess.run((tool, "get", str(POWER_GPIO)),
+                           capture_output=True, text=True, timeout=3)
+        out = r.stdout.lower()
+        on = ("hi" in out) or ("level=1" in out)
+    except (OSError, subprocess.TimeoutExpired):
+        on = None
+    _power_cache.update(t=now, on=on)
+    return on
+
+
+@app.get("/api/power")
+def api_power_get():
+    return jsonify({"on": _power_get(fresh=True), "gpio": POWER_GPIO})
+
+
+@app.post("/api/power")
+def api_power_post():
+    on = bool((request.get_json() or {}).get("on"))
+    if not machine_settings().get("power_relay"):
+        return jsonify({"error": "no power relay configured on this machine"}), 400
+    tool = _power_tool()
+    if not (sys.platform.startswith("linux") and tool):
+        return jsonify({"error": "power control only works on the machine"}), 400
+    if not on:
+        if run_mgr.state.get("running"):
+            return jsonify({"error": "a sorting run is active — stop it first"}), 409
+        if train_status.get("running"):
+            return jsonify({"error": "training is running — wait for it"}), 409
+        # drop the serial link cleanly; auto-connect resumes when power returns
+        try:
+            with _console["lock"]:
+                _console_disconnect_locked()
+        except Exception:
+            pass
+    args = ((tool, "set", str(POWER_GPIO), "op", "dh" if on else "dl")
+            if tool == "pinctrl"
+            else (tool, "set", str(POWER_GPIO), "op", "dh" if on else "dl"))
+    try:
+        subprocess.run(args, capture_output=True, timeout=3)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return jsonify({"error": f"gpio set failed: {e}"}), 500
+    _power_cache.update(t=0.0, on=None)      # next poll reads the real pin
+    return jsonify({"ok": True, "on": _power_get(fresh=True)})
+
+
 @app.get("/api/console/log")
 def api_console_log():
     return jsonify({"connected": _console["transport"] is not None,
-                    "mode": _console["mode"], "log": _console["log"][-200:]})
+                    "mode": _console["mode"], "log": _console["log"][-200:],
+                    "port": _console.get("port"),
+                    "board": machine_settings().get("board") or "",
+                    "power": _power_get()})
 
 
 @app.post("/api/console/disconnect")
@@ -5504,19 +6205,30 @@ MACHINE_DEFAULTS = {"feed_speed": 94, "feed_steps": 60, "sort_speed": 94,
                     "air_drop": False, "air_drop_pre_delay": 30,
                     "air_drop_signal_ms": 100, "air_drop_post_delay": 100,
                     "motor_standby": 0, "camera_led": 200,
+                    "led_color": "#ffffff",   # WS2812 ring mix (SKR Pico only)
                     "slots_total": 8, "slots_enabled": None,   # None = all
                     # per-slot physical capacity in cases; None/0 entries =
                     # uncalibrated (fill bars fall back to relative widths)
                     "bin_sizes": None,
+                    # per-slot badge color (hex from the fixed palette;
+                    # None/"" = brass default). Machine-scoped like
+                    # bin_sizes: it describes the tray on the table
+                    "bin_colors": None,
                     "init_on_startup": False,
                     # SortIQ firmware fork (7.2.250925.6.1-SS1) knobs.
                     # Stock firmware answers "ok" to the setters and ignores
                     # them, so pushing these is harmless on either firmware.
                     # Defaults mirror the fork's baked-in boot values.
+                    "board": "",           # "CS7.2" | "SKR Pico" — from the version line on connect
+                    "power_relay": False,  # an IoT Relay on POWER_GPIO switches the board's
+                                           # mains — dev/Pico builds only; hides the UI when off
                     "firmware": "stock",   # "stock" | "ss2" (SS1 retired);
                                            # auto-detected from the version
                                            # reply on connect
                     "sort_accel": 1200, "sort_home_backoff": 160,
+                    "sort_decel": 1200, "feed_accel": 1200,
+                    "feed_decel_rate": 1200,
+                    "stall_guard": True, "feed_stall_threshold": 40,
                     "sort_home_slow": 1400, "feed_launch": 48,
                     "feed_decel": True,
                     # extra hold before every arm move (fork v6.2+): brass-
@@ -5528,8 +6240,14 @@ MACHINE_DEFAULTS = {"feed_speed": 94, "feed_steps": 60, "sort_speed": 94,
                     "arm_dwell": 0,
                     "slot_positions": None}   # None = the firmware's default
                                               # grid (i * sort_steps * 16)
-_MACHINE_BOOLS = ("init_on_startup", "feed_decel", "air_drop")
+_MACHINE_BOOLS = ("init_on_startup", "feed_decel", "air_drop", "stall_guard", "power_relay")
 MAX_SLOTS = 12                # matches the fork's slot table size
+
+# the six user-pickable bin-badge colors. Fixed on purpose: every entry
+# keeps dark badge text readable, and red/blue never appear — they stay
+# the reserved meanings (UNMATCHED / OVERFLOW)
+BIN_PALETTE = ("#e8d44d", "#4cc46a", "#a78bfa",
+               "#f08c3a", "#3fc8c8", "#e879b9")
 
 # (min, max) per numeric setting — values outside are CLAMPED on save, so
 # no amount of Machine-tab experimentation can push the board somewhere
@@ -5543,8 +6261,8 @@ MACHINE_BOUNDS = {
     "sort_speed": (1, 100),
     "feed_steps": (30, 200),         # official guide: 70/80; ours: 60
     "sort_steps": (5, 50),           # 8-slot disc = 20
-    "feed_current": (300, 1200),     # mA; motors rated 1.7A, drivers are
-    "sort_current": (300, 1200),     # bare StepSticks — 1.2A is the safe top
+    "feed_current": (300, 1200),     # mA; CS7.2 StepSticks top out at 1.2A —
+    "sort_current": (300, 1200),     # the Pico's onboard drivers get 1.6A (below)
     "feed_homing_offset": (0, 30),   # full steps past the sensor edge
     "sort_homing_offset": (0, 20),
     "slot_drop_delay": (0, 3000),    # ms
@@ -5553,6 +6271,10 @@ MACHINE_BOUNDS = {
     "camera_led": (0, 255),
     "slots_total": (1, MAX_SLOTS),   # the firmware slot table's size
     "sort_accel": (100, 5000),       # µs start/stop delay
+    "sort_decel": (100, 5000),       # µs landing-end delay (Pico)
+    "feed_accel": (100, 5000),       # µs launch start delay (Pico)
+    "feed_decel_rate": (100, 5000),  # µs stop-shaping slow end (Pico)
+    "feed_stall_threshold": (0, 255),
     "sort_home_backoff": (0, 200),   # µsteps
     "sort_home_slow": (100, 5000),   # µs/µstep
     "feed_launch": (0, 200),         # µsteps
@@ -5581,6 +6303,11 @@ _SETTER_CMD = {"feed_speed": "feedspeed", "feed_steps": "feedsteps",
                "motor_standby": "automotorstandbytimeout",
                "camera_led": "cameraledlevel",
                "sort_accel": "sortaccel",
+               "sort_decel": "sortdecel",
+               "feed_accel": "feedaccel",
+               "feed_decel_rate": "feeddec",
+               "stall_guard": "sg",
+               "feed_stall_threshold": "sgfeed",
                "sort_home_backoff": "sorthomebackoff",
                "sort_home_slow": "sorthomeslow",
                "feed_launch": "feedlaunch",
@@ -5601,6 +6328,11 @@ _GETCONFIG_KEY = {"feed_speed": "FeedMotorSpeed", "feed_steps": "FeedCycleSteps"
                   "motor_standby": "AutoMotorStandbyTimeout",
                   "camera_led": "CameraLEDLevel",
                   "sort_accel": "SortAccelFactor",
+                  "sort_decel": "SortDecelFactor",
+                  "feed_accel": "FeedAccelFactor",
+                  "feed_decel_rate": "FeedDecelFactor",
+                  "stall_guard": "StallGuardEnabled",
+                  "feed_stall_threshold": "FeedStallThreshold",
                   "sort_home_backoff": "SortHomeBackoff",
                   "sort_home_slow": "SortHomeSlowDelay",
                   "feed_launch": "FeedLaunchSteps",
@@ -5637,11 +6369,23 @@ def save_machine_settings(update):
             if k not in update:
                 continue
             if k == "firmware":
-                m[k] = update[k] if update[k] in ("stock", "ss2") else "stock"
+                m[k] = (update[k] if update[k] in ("stock", "ss2", "pico")
+                        else "stock")
+            elif k == "board":
+                m[k] = str(update[k] or "")[:40]
+            elif k == "led_color":
+                c = str(update[k] or "").strip().lstrip("#").lower()
+                m[k] = "#" + c if len(c) == 6 and all(
+                    ch in "0123456789abcdef" for ch in c) else "#ffffff"
             elif k in _MACHINE_BOOLS:
                 m[k] = bool(update[k])
             elif k == "slots_enabled":
                 m[k] = sorted({int(s) for s in (update[k] or [])})
+            elif k in ("feed_current", "sort_current"):
+                lo, hi = MACHINE_BOUNDS[k]
+                if m.get("firmware") == "pico" or update.get("firmware") == "pico":
+                    hi = 1600            # onboard TMC2209s, actively cooled
+                m[k] = min(max(int(update[k]), lo), hi)
             elif k == "slot_positions":
                 m[k] = ([min(max(int(v), 0), SLOTPOS_MAX)
                          for v in update[k]][:MAX_SLOTS]
@@ -5655,6 +6399,12 @@ def save_machine_settings(update):
                     except (TypeError, ValueError):
                         return None
                 m[k] = ([_cap(v) for v in update[k]][:MAX_SLOTS]
+                        if isinstance(update[k], list) else None)
+            elif k == "bin_colors":
+                # only the fixed palette is legal — red/blue stay the
+                # reserved meanings and never arrive here from the UI
+                m[k] = ([(v if v in BIN_PALETTE else None)
+                         for v in update[k]][:MAX_SLOTS]
                         if isinstance(update[k], list) else None)
             else:
                 m[k] = _clamp_machine(k, update[k])
@@ -5689,14 +6439,29 @@ def _console_request(line, predicate, timeout=3.0):
 
 def _apply_machine_settings(settings):
     applied = 0
+    fw = str(machine_settings().get("firmware", "stock"))
+    pico_only = {"sort_decel", "feed_accel", "feed_decel_rate",
+                 "stall_guard", "feed_stall_threshold"}
     fork_only = {"sort_accel", "sort_home_backoff", "sort_home_slow",
                  "feed_launch", "feed_decel", "arm_dwell", "slot_positions"}
-    on_stock = not str(machine_settings().get("firmware", "stock")).startswith("ss")
+    on_stock = not (fw.startswith("ss") or fw == "pico")
     for key, cmd in _SETTER_CMD.items():
         if on_stock and key in fork_only:
             continue
+        if fw != "pico" and key in pico_only:
+            continue
         if key in settings and settings[key] is not None and _console_request(
                 f"{cmd}:{int(settings[key])}", lambda l: l.strip() == "ok", timeout=2.0):
+            applied += 1
+    # the ring color is a Pico-only command; the fork board has no RGB
+    if settings.get("led_color") and             machine_settings().get("board") == "SKR Pico":
+        c = str(settings["led_color"]).lstrip("#")
+        try:
+            r, g, b = (int(c[i:i + 2], 16) for i in (0, 2, 4))
+        except ValueError:
+            r = g = b = 255
+        if _console_request(f"ledcolor:{r},{g},{b}",
+                            lambda l: l.strip() == "ok", timeout=2.0):
             applied += 1
     # the per-slot table goes LAST: the firmware's sortsteps setter (pushed
     # above) refills the whole table, clobbering any earlier slotpos
@@ -5757,10 +6522,15 @@ def api_machine_settings_post():
     if body.get("preview"):
         # push to the board WITHOUT persisting — the camera page's live
         # LED tuning; the saved value comes back on Save/Revert/reconnect
-        if body.get("camera_led") is None:
-            return jsonify({"error": "preview supports camera_led only"}), 400
-        led = min(max(int(body["camera_led"]), 0), 255)
-        applied = (_apply_machine_settings({"camera_led": led})
+        push = {}
+        if body.get("camera_led") is not None:
+            push["camera_led"] = min(max(int(body["camera_led"]), 0), 255)
+        if body.get("led_color") is not None:
+            push["led_color"] = str(body["led_color"])
+        if not push:
+            return jsonify({"error":
+                            "preview supports camera_led / led_color"}), 400
+        applied = (_apply_machine_settings(push)
                    if _console["transport"] is not None else 0)
         return jsonify({"ok": True, "preview": True, "applied": applied})
     m = save_machine_settings(body)
@@ -5769,6 +6539,8 @@ def api_machine_settings_post():
         cleared, moved = _sanitize_bins_for_slots(m["slots_enabled"])
     # push only what changed — a slider drag shouldn't re-send every setter
     push = {k: m[k] for k in body if k in _SETTER_CMD}
+    if "led_color" in body:
+        push["led_color"] = m["led_color"]
     if "air_drop" in body:
         # the mod needs ~30ms of notification delay (brass starts falling
         # before the blast); without the mod that delay is pure dead time
@@ -5924,6 +6696,18 @@ if __name__ == "__main__":
     if _gpu_supported():
         gpu_status["supported"] = True
         threading.Thread(target=_gpu_probe, daemon=True).start()
+    # AP-mode fallback watchdog (machine only — needs nmcli): a box that
+    # can't find any known network raises its own so it stays reachable
+    import shutil as _sh_main
+    if sys.platform.startswith("linux") and _sh_main.which("nmcli"):
+        threading.Thread(target=_ap_watchdog, daemon=True).start()
+    _power_init()   # relay pin: firmly low on first boot, untouched after
+    # warm the code-digest cache off the critical path: the first digest
+    # after a restart hashes the whole tree (seconds from a Pi's SD),
+    # and that cold hit used to land on whoever asked first — a fleet
+    # probe's timeout budget would blow and gray the card as unreachable
+    threading.Thread(target=lambda: codesync.digest(ROOT),
+                     daemon=True).start()
     # dataset location now follows the active caliber/model (see calibers/)
     # bind-retry: after a code-update self-restart the outgoing process can
     # hold the port for a beat — ride it out instead of dying silently

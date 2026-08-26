@@ -229,6 +229,17 @@
   .machBar .mst { display: flex; gap: 9px; align-items: center;
     font-weight: 700; }
   .numRow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .msTile { border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 14px; background: var(--card, transparent); }
+  .msTile h4 { margin: 0 0 6px; font-size: 11.5px; text-transform: uppercase;
+    letter-spacing: .07em; color: var(--brass); }
+  .msTileRow { display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(185px, 1fr)); gap: 2px 20px; }
+  /* labels wrap to different line counts — anchor every input to a shared
+     baseline at the bottom of the row instead of letting long labels push */
+  .msTileRow > div { display: flex; flex-direction: column;
+    justify-content: flex-end; }
+  .msTileRow > div > label { flex: 1; }
   .numB { font-size: 16px; font-weight: 800; min-width: 44px; height: 44px;
     display: flex; align-items: center; justify-content: center;
     border-radius: 9px; cursor: pointer; border: 1px solid var(--line);
@@ -254,6 +265,108 @@
   #topBar { position: sticky; top: 0; z-index: 600;
     transition: transform .18s ease; }
   #topBar.hid { transform: translateY(-100%); }
+  /* ------- the report modal: summary + per-bin views ------- */
+  #repModal { display: none; position: fixed; inset: 0; z-index: 990;
+    background: rgba(10,12,16,.72); overflow-y: auto; }
+  .repMBox { background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; width: min(1060px, 94vw); margin: 5vh auto 7vh;
+    padding: 18px 22px; box-shadow: 0 16px 60px rgba(0,0,0,.6); }
+  .repHead { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .repHead h2 { margin: 0; font-size: 17px; color: var(--brass); }
+  .repVitals { display: flex; gap: 30px; margin: 16px 2px 6px; flex-wrap: wrap; }
+  .repVitals .v b { display: block; font-size: 30px; font-weight: 800;
+    line-height: 1.05; }
+  .repVitals .v span { font-size: 11px; color: var(--dim);
+    text-transform: uppercase; letter-spacing: .05em; }
+  .repBins { display: grid; gap: 10px; margin-top: 14px;
+    grid-template-columns: repeat(auto-fill, minmax(235px, 1fr)); }
+  .rbt { background: var(--panel2); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 13px; cursor: pointer; display: flex;
+    gap: 11px; align-items: center; }
+  .rbt:hover { border-color: var(--brass); }
+  .rbt.um { border-color: var(--um); }
+  .rbt .lbl { font-size: 12.5px; font-weight: 600; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+  .rbt .lbl small { display: block; color: var(--dim); font-weight: 400; }
+  .rbt .cnt { margin-left: auto; font-size: 21px; font-weight: 800; }
+  .numB2 { font-size: 12.5px; font-weight: 800; color: var(--bg);
+    background: var(--brass); border-radius: 6px; padding: 1px 9px; flex: none; }
+  .repBanner { display: flex; gap: 12px; align-items: baseline;
+    background: var(--brass); color: var(--bg); border-radius: 8px;
+    padding: 9px 15px; margin-top: 14px; flex-wrap: wrap; }
+  .repBanner b { font-size: 17px; letter-spacing: .5px; }
+  .repBanner span { font-size: 12.5px; font-weight: 600;
+    color: rgba(0,0,0,.62); }
+  .repPager { display: flex; gap: 6px; justify-content: center;
+    margin-top: 14px; flex-wrap: wrap; }
+  #repZoom { display: none; position: fixed; inset: 0; z-index: 1200;
+    background: rgba(10,12,16,.85); align-items: center;
+    justify-content: center; cursor: zoom-out; }
+  #repZoom img { max-width: 92vw; max-height: 92vh; border-radius: 10px;
+    box-shadow: 0 20px 80px rgba(0,0,0,.8); }
+  .revCard img { cursor: zoom-in; }
+  /* report-modal case grids: 75%-size thumbs, and the modal grows with
+     the window so the column count follows the space available (the
+     column count itself is set inline per render — see repRender) */
+  #repModal .repMBox { width: min(1660px, 94vw); }
+  #repModal .revGrid { grid-template-columns:
+    repeat(auto-fill, minmax(157px, 1fr)); gap: 9px; }
+  #repModal .revCard { padding: 7px; }
+  #repModal .revCard .why { font-size: 11.5px; margin: 4px 0; }
+  #repModal .revCard .revStamp { min-width: 0; font-size: 12px;
+    padding: 3px 7px; margin-bottom: 4px; }
+  #repModal .revCard .ghost { font-size: 12px; padding: 3px 10px; }
+  #repModal .revCard .caseAct { flex-wrap: wrap; }
+  #dsModal { display: none; position: fixed; inset: 0; z-index: 990;
+    background: rgba(10,12,16,.72); overflow-y: auto; }
+  /* same width behavior as the report/batch modals; two TILES inside —
+     exemplars on top, the paginated images below. Cells hold a fixed
+     square footprint so a page flip swaps content without the layout
+     collapsing mid-render — that collapse is what used to clamp the
+     scroll position and yank the view back to the top. */
+  #dsModal .repMBox { width: min(1660px, 94vw); }
+  #dsExCard, #dsImgCard { background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 14px; }
+  #dsModal .thumbGrid .cell img { width: 100%; aspect-ratio: 1 / 1;
+    object-fit: cover; display: block; }
+  #dsModal h3 { margin: 14px 0 6px; font-size: 13px; color: var(--dim);
+    text-transform: uppercase; letter-spacing: .05em; }
+  #batchModal { display: none; position: fixed; inset: 0; z-index: 990;
+    background: rgba(10,12,16,.72); overflow-y: auto; }
+  /* batch review grid: 85%-size thumbs, box grows with the window —
+     the column count is set inline per render (see renderBatchM) */
+  #batchModal .repMBox { width: min(1660px, 94vw); }
+  #batchModal .revGrid { grid-template-columns:
+    repeat(auto-fill, minmax(178px, 1fr)); gap: 10px; }
+  #batchModal .revCard .why { font-size: 12px; }
+  /* hopper census pills */
+  .cenPill { background: var(--panel2); border: 1px solid #2c5e3c;
+    border-radius: 999px; padding: 4px 8px 4px 14px; display: flex;
+    gap: 9px; align-items: center; font-size: 13px; font-weight: 600; }
+  .cenPill b { background: var(--bg); border-radius: 999px;
+    padding: 1px 10px; font-size: 12.5px; color: var(--green); }
+  .cenPill.q { border-color: var(--line); color: var(--dim); }
+  .cenPill.q b { color: var(--dim); }
+  .bcCaseImg { width: 280px; height: 280px; border-radius: 10px;
+    border: 1px solid var(--line); display: block; object-fit: cover; }
+  .bcName { font-size: 24px; font-weight: 800; margin-top: 8px; }
+  /* batch group tiles */
+  .bgt { background: var(--panel2); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 14px; cursor: pointer;
+    display: flex; gap: 12px; align-items: center; }
+  .bgt:hover { border-color: var(--brass); }
+  .bgt .lbl { font-weight: 700; font-size: 14px; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+  .bgt .lbl small { display: block; color: var(--dim); font-weight: 400;
+    font-size: 11.5px; }
+  .bgt .cnt { margin-left: auto; font-size: 22px; font-weight: 800;
+    flex: none; }
+  .bgt.sug { border-color: #5a4a26; }
+  .bgt.sug .lbl { color: var(--amber); }
+  .bgt.clu .lbl { color: var(--dim); }
+  .bgt.done { opacity: .6; cursor: default; }
+  .bgt.done .lbl { color: var(--green); }
   .thumbGrid .cell { position: relative; }
   .thumbGrid img { width: 100%; border-radius: 6px; border: 1px solid var(--line);
                    display: block; }
@@ -290,7 +403,8 @@
   }
   .binSlot { display: flex; flex-direction: column; gap: 8px; min-height: 148px;
     border: 1px solid var(--line); border-radius: 11px; padding: 12px 14px;
-    background: var(--panel2); transition: box-shadow .25s, border-color .25s; }
+    background: var(--panel2); transition: box-shadow .25s, border-color .25s;
+    position: relative; }
   .binSlot.um { border-color: var(--um); }
   .binSlot.of { border-color: var(--blue); }
   .binSlot.drop { border-color: var(--brass);
@@ -315,15 +429,17 @@
   #binList.locked .binAdd, #binList.locked .binRm { display: none; }
   #sortBar { display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
     min-height: 44px; }
-  #sortBar .sgStat { display: flex; flex-direction: column; line-height: 1.15; }
-  #sortBar .sgStat b { font-size: 24px; }
-  #sortBar .sgStat span { font-size: 11px; color: var(--dim);
-    text-transform: uppercase; letter-spacing: .7px; }
+  #sortBar .sgStat, #batchRunBar .sgStat { display: flex;
+    flex-direction: column; line-height: 1.15; }
+  #sortBar .sgStat b, #batchRunBar .sgStat b { font-size: 24px; }
+  #sortBar .sgStat span, #batchRunBar .sgStat span { font-size: 11px;
+    color: var(--dim); text-transform: uppercase; letter-spacing: .7px; }
   #sortBar .sgRight { margin-left: auto; display: flex; gap: 10px;
     align-items: center; }
-  #sortBar .sgLive { display: flex; gap: 8px; align-items: center;
-    font-weight: 600; font-size: 13.5px; }
-  #sortBar .sgLive .dot { width: 9px; height: 9px; border-radius: 50%; }
+  #sortBar .sgLive, #batchRunBar .sgLive { display: flex; gap: 8px;
+    align-items: center; font-weight: 600; font-size: 13.5px; }
+  #sortBar .sgLive .dot, #batchRunBar .sgLive .dot { width: 9px;
+    height: 9px; border-radius: 50%; }
   .binSlot .binHead { display: flex; gap: 10px; align-items: baseline;
     font-weight: 600; }
   .binHead .num { font-size: 12.5px; font-weight: 800; color: var(--bg);
@@ -369,7 +485,19 @@
     border-radius: 6px; background: var(--panel2); margin-bottom: 4px; font-size: 13px; }
   .recentRow img { width: 34px; height: 34px; object-fit: cover; border-radius: 4px; }
   .recentRow .cat { flex: 1; font-weight: 600; }
-  .recentRow.rej .cat { color: var(--amber); }
+  .recentRow.rej { background: #2a1e20; }
+  .recentRow.rej .cat { color: var(--um); }
+  .recentRow .rcConf { font-size: 12px; color: var(--amber);
+    min-width: 34px; text-align: right; }
+  .recentRow .rcConf.hi { color: var(--green); }
+  /* bin color swatches — pops off a slot card's number badge */
+  .colorPop { position: absolute; top: 36px; left: 10px; background: var(--panel);
+    border: 1px solid var(--brass); border-radius: 10px; padding: 10px 12px;
+    box-shadow: 0 10px 34px rgba(0,0,0,.6); z-index: 5; }
+  .colorPop .sw { display: flex; gap: 8px; }
+  .colorPop .s { width: 26px; height: 26px; border-radius: 7px; cursor: pointer;
+    border: 2px solid transparent; }
+  .colorPop .s.sel { border-color: #fff; }
   .revGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
              gap: 12px; margin-top: 10px; }
   /* compact set-aside tray: groups tile side by side, thumbs stay small */
@@ -513,11 +641,25 @@
               title="restarts the SortIQ service (~10s) — first fix for a wedged app or camera">Restart app</button>
       <button class="ghost danger" id="btnRebootPi"
               title="full reboot (~1 min) — for USB or system-level weirdness the app restart doesn't cure">Reboot Pi</button>
+      <button class="ghost danger" id="btnShutdownPi"
+              title="clean shutdown — wait for the green activity LED to stop (~10s), then it's safe to cut power">Shut down Pi</button>
       <span class="muted" id="sysMsg" style="font-size:12px"></span>
     </div>
     <div class="muted" style="font-size:11.5px; margin-top:6px">
       Refused while a sorting run or training is active. The page
       reconnects by itself when the machine is back.
+    </div>
+    <div style="border-top:1px solid var(--line); margin-top:12px; padding-top:12px">
+      <div class="ctlRow" style="flex-wrap:wrap">
+        <button class="ghost" id="btnUpdCheck">Check for updates</button>
+        <span id="updState" style="font-size:12.5px"></span>
+      </div>
+      <div id="updOffer" style="display:none; margin-top:8px">
+        <div id="updName" style="font-weight:700; color:var(--brass)"></div>
+        <div class="muted" id="updNotes" style="font-size:12px; margin:4px 0 8px;
+             white-space:pre-wrap; max-height:160px; overflow-y:auto"></div>
+        <button class="primary" id="btnUpdApply">Update &amp; restart</button>
+      </div>
     </div>
     <div class="ctlRow" style="margin-top:12px; justify-content:flex-end">
       <button class="ghost" onclick="$('sysModal').style.display='none'">Close</button>
@@ -547,6 +689,14 @@
           no training run needed. Train this model's own recognizer later for
           full accuracy. (Unchecked: nothing can be recognized until a first
           training completes.)</span></span>
+      </label>
+    </div>
+    <div id="nmStarterRow" style="margin-top:10px; display:none">
+      <label style="display:flex; gap:8px; align-items:flex-start; cursor:pointer">
+        <input type="checkbox" id="nmStarter" checked style="margin:3px 0 0">
+        <span style="font-size:12.5px"><b>Start with the community recognizer</b>
+          <span class="muted">— downloads the published 9mm starter so the
+          new model sorts out of the box. Train its own recognizer later.</span></span>
       </label>
     </div>
     <div class="msg" id="nmMsg"></div>
@@ -607,7 +757,7 @@
 <div id="conDock" style="display:none">
   <div id="conDockBar">
     <span class="dot" id="conDockDot"></span>
-    <b style="font-size:12.5px">CS7.2 monitor</b>
+    <b style="font-size:12.5px" id="conDockTitle">Board monitor</b>
     <span class="muted" style="font-size:11px">drag to move</span>
     <span style="flex:1"></span>
     <button id="conDockMin" title="collapse">–</button>
@@ -755,19 +905,6 @@
         <div class="card">
           <h2>Recent saves <span class="muted">(click one to fix a mistake)</span></h2>
           <div class="recentStrip" id="recentStrip"><span class="muted">nothing saved yet this session</span></div>
-          <div id="recentPreview" style="display:none; margin-top:10px">
-            <img id="recentPrevCrop" class="thumb" style="max-width:260px" alt="model crop">
-          </div>
-          <div id="recentFix" style="display:none; margin-top:10px" class="ctlRow">
-            <span style="font-size:13.5px" id="recentFixLbl"></span>
-            <input list="classList" id="recentFixTo" autocomplete="off"
-              spellcheck="false" placeholder="type a class&hellip;"
-              style="max-width:180px">
-            <button class="ghost" id="btnRecentMove">Move</button>
-            <button class="ghost" id="btnRecentDelete" style="color:var(--red)">Delete</button>
-            <button class="ghost" id="btnRecentCancel">Cancel</button>
-          </div>
-          <div class="msg" id="recentMsg"></div>
         </div>
       </div>
     </div>
@@ -775,17 +912,33 @@
 
   <!-- ----------------------- batch capture view ---------------------- -->
   <div id="colBatch" style="display:none">
+    <!-- the capture bar: idle / capturing states share one card -->
     <div class="card">
-      <h2>Batch capture</h2>
-      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
-        <button id="btnBatchStart">Start batch capture</button>
-        <button id="btnBatchStop" class="ghost" style="display:none">Stop</button>
-        <select id="batchRunSel" style="display:none; max-width:230px"
-                title="review an earlier batch — capture runs stay on disk for the newest 5 runs"></select>
-        <span class="muted" id="batchStatus"></span>
+      <div id="batchIdle" style="display:flex; gap:14px; align-items:center; flex-wrap:wrap; min-height:44px">
+        <span style="font-weight:700; font-size:17px">Batch capture</span>
+        <span style="flex:1"></span>
+        <select id="batchRunSel" style="display:none; max-width:250px"></select>
+        <button class="ghost" id="btnBatchReview" style="display:none">Review</button>
+        <button id="btnBatchStart" style="background:var(--green);
+          border-color:var(--green); color:var(--bg); font-weight:700;
+          border-radius:7px; padding:8px 18px; border:1px solid;
+          font:inherit">▶ Start batch capture</button>
       </div>
+      <div id="batchRunBar" style="display:none; gap:22px; align-items:center; flex-wrap:wrap; min-height:44px">
+        <div class="sgStat"><b id="bcCount">0</b><span>captured</span></div>
+        <div class="sgStat"><b id="bcRate">—</b><span>rate</span></div>
+        <span style="flex:1"></span>
+        <div class="sgLive" id="bcLive" style="color:var(--green)">
+          <span class="dot" id="bcDot" style="background:var(--green); box-shadow:0 0 8px var(--green)"></span>
+          <span id="bcRunId">CAPTURING</span></div>
+        <button id="btnBatchStop" style="background:var(--red);
+          border-color:var(--red); color:#fff; font-weight:600;
+          border-radius:7px; padding:8px 18px; border:1px solid;
+          font:inherit">■ Stop</button>
+      </div>
+      <div class="muted" id="batchStatus" style="margin-top:6px"></div>
       <div id="batchExcBar" class="ctlRow" style="display:none; position:fixed;
-           bottom:18px; left:50%; transform:translateX(-50%); z-index:900;
+           bottom:18px; left:50%; transform:translateX(-50%); z-index:996;
            background:var(--panel); border:1px solid var(--brass);
            border-radius:10px; padding:10px 16px;
            box-shadow:0 8px 30px rgba(0,0,0,.55)">
@@ -799,7 +952,20 @@
         <button class="ghost danger" id="btnBatchExcDiscard">Discard</button>
       </div>
     </div>
-    <div id="batchGroups" style="margin-top:12px"></div>
+    <!-- capturing: the live card mirrors the Sort page — current case
+         big on the left, the hopper census where recent cases would be -->
+    <div class="card" id="batchLive" style="display:none">
+      <div style="display:flex; gap:30px; flex-wrap:wrap">
+        <div>
+          <h3 style="margin:0 0 10px">Current case</h3>
+          <div id="bcCase"></div>
+        </div>
+        <div style="flex:1; min-width:300px">
+          <h3 style="margin:0 0 10px">Hopper census</h3>
+          <div id="bcCensus" style="display:flex; flex-wrap:wrap; gap:8px"></div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- -------------------------- setup view --------------------------- -->
@@ -844,6 +1010,15 @@
             <label>Brightness <b id="vLedLevel"></b></label>
             <input type="range" id="ledLevel" min="0" max="255" step="5">
             <div class="muted" id="ledHint" style="font-size:11.5px"></div>
+          </div>
+          <div class="ctl" id="ledColorRow" style="display:none">
+            <label>Color <b id="vLedColor"></b></label>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+              <input type="color" id="ledColor" value="#ffffff"
+                     style="width:56px; height:30px; padding:2px; border:1px solid var(--line); border-radius:6px; background:var(--panel)">
+              <span id="ledSwatches"></span>
+            </div>
+            <div class="muted" style="font-size:11.5px">tint the ring — some headstamps read better under a warm or red cast</div>
           </div>
           <h3>Digital zoom <span class="muted">(applies to saved training images too)</span></h3>
           <div class="ctl"><label>Zoom <b id="vZoomF"></b></label>
@@ -1156,29 +1331,12 @@
       <div id="dupResults"></div>
     </div>
   </div>
-  <div class="card" id="dsExCard" style="display:none">
-    <div style="display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px">
-      <h2 style="margin:0">Exemplars <span class="muted" id="dsExCount"></span></h2>
-      <div style="display:flex; gap:12px; align-items:center">
-        <button class="ghost" style="padding:3px 10px" id="btnGalRebuild"
-          title="re-pick exemplars from the current photos + pins — takes a couple of minutes">rebuild gallery</button>
-        <span class="muted" id="galRebuildStatus" style="font-size:12px"></span>
-      </div>
-    </div>
-    <div class="muted" style="font-size:12px; margin-top:4px">
-      The images actually doing the matching for this class — ★ auto-picked
-      by coverage, 📌 pinned by you. Click a badge to pin or unpin; changes
-      take effect at the next gallery rebuild.
-    </div>
-    <div id="dsExThumbs" class="thumbGrid"></div>
-  </div>
-  <div class="card">
-    <h2>Images</h2>
-    <div id="dsHint" class="muted">Pick a class above — its images open here.</div>
+  <!-- the class modal: banner on top, exemplars, then every image
+       paginated — clicking a class card opens it (no more page-bottom
+       gallery) -->
+  <div id="dsModal" onclick="if(event.target===this) dsModalClose()">
+    <div class="repMBox">
     <div id="dsGallery" style="display:none">
-      <!-- the class's identity banner — same brass band as the run
-           report's bin sections; rename/delete live here, with the
-           images they affect, not on every row of the class grid -->
       <div style="display:flex; gap:14px; align-items:center; flex-wrap:wrap;
            background:var(--brass); color:var(--bg); border-radius:8px;
            padding:8px 16px">
@@ -1199,17 +1357,33 @@
           border-color:rgba(20,23,28,.45); background:none"
           id="dsGalleryClose">close</button>
       </div>
-      <div id="dsBulkBar" style="display:none; margin-top:8px" class="ctlRow">
-        <b id="dsSelCount" style="color:var(--brass)">0 selected</b>
-        <input list="classList" id="dsBulkTo" autocomplete="off"
-               spellcheck="false" placeholder="type a class&hellip;"
-               style="max-width:180px">
-        <button class="ghost" id="btnBulkMove">Move selected</button>
-        <button class="ghost danger" id="btnBulkDelete">Delete selected</button>
+      <div id="dsExCard" style="display:none; margin-top:12px">
+        <div style="display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px">
+          <h3 style="margin:0">Exemplars <span class="muted" id="dsExCount"
+            style="text-transform:none; letter-spacing:0"></span></h3>
+          <div style="display:flex; gap:12px; align-items:center">
+            <button class="ghost" style="padding:3px 10px" id="btnGalRebuild"
+              title="re-pick exemplars from the current photos + pins — ★ auto-picked, 📌 pinned; click a badge to pin or unpin">rebuild gallery</button>
+            <span class="muted" id="galRebuildStatus" style="font-size:12px"></span>
+          </div>
+        </div>
+        <div id="dsExThumbs" class="thumbGrid"></div>
       </div>
-      <div class="muted" id="dsGalleryHint" style="margin-top:6px">Click a thumbnail to open it.</div>
-      <div id="dsThumbs" class="thumbGrid"></div>
-      <div id="dsPager" class="ctlRow" style="margin-top:10px; justify-content:center"></div>
+      <div id="dsImgCard" style="margin-top:12px">
+        <h3 style="margin:0">All images</h3>
+        <div id="dsBulkBar" style="display:none; margin-top:8px" class="ctlRow">
+          <b id="dsSelCount" style="color:var(--brass)">0 selected</b>
+          <input list="classList" id="dsBulkTo" autocomplete="off"
+                 spellcheck="false" placeholder="type a class&hellip;"
+                 style="max-width:180px">
+          <button class="ghost" id="btnBulkMove">Move selected</button>
+          <button class="ghost danger" id="btnBulkDelete">Delete selected</button>
+        </div>
+        <div class="muted" id="dsGalleryHint" style="display:none"></div>
+        <div id="dsThumbs" class="thumbGrid"></div>
+        <div id="dsPager" class="ctlRow" style="margin-top:10px; justify-content:center"></div>
+      </div>
+    </div>
     </div>
   </div>
   <div id="dsImgModal" style="display:none; position:fixed; inset:0; z-index:1000;
@@ -1361,20 +1535,13 @@
   </div>
 
   <div class="card">
-    <h2>Reject review — turn failures into training data</h2>
+    <h2>Run reports</h2>
     <div class="muted" style="margin-bottom:8px">
       Every rejected case's photos are saved. Label the good ones (they're the
       images the model finds hardest — the most valuable training data there is)
       or discard the junk.
     </div>
-    <div class="ctlRow">
-      <select id="revRun" style="max-width:320px"></select>
-      <button class="ghost" id="btnRevLoad">Load rejects</button>
-      <button class="ghost" id="btnRepView"
-        title="the picked run's full per-bin report, every section at once">View report</button>
-    </div>
-    <div id="repView"></div>
-    <div id="revGrid" class="revGrid"></div>
+    <div id="runReports" class="repBins" style="margin-top:6px"></div>
     <div class="msg" id="revMsg"></div>
   </div>
 </section>
@@ -1385,12 +1552,14 @@
        form lives inline; connected, it folds into a summary line. -->
   <div class="card">
     <div class="machBar">
+      <button class="ghost" id="btnPower" style="display:none; font-weight:700"
+              title="switches the sorter board's 24V through the IoT Relay (GPIO 25)">&#x23FB; Power</button>
       <span class="mst" id="machState" style="color:var(--dim)">
         <span class="dot" id="machDot" style="background:var(--dim)"></span>
         OFFLINE</span>
       <span id="machConnForm" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; flex-shrink:0">
         <select id="conMode" style="width:200px">
-          <option value="serial" selected>CS7.2 board (serial)</option>
+          <option value="serial" selected>Sorter board (serial)</option>
           <option value="sim">Simulator (virtual)</option>
         </select>
         <span id="conPortWrap">
@@ -1462,73 +1631,104 @@
     <div class="card">
       <div class="ctlRow" style="margin-bottom:6px; flex-wrap:wrap">
         <h2 style="margin:0">Machine settings</h2>
+        <span id="msBoard" class="pill" style="display:none; font-weight:700"></span>
         <select id="msFirmware" style="max-width:220px">
           <option value="stock">Stock CS7.2</option>
           <option value="ss2">SortIQ fork (SS2 — pipelined feed)</option>
+          <option value="pico">SortIQ-Pico (SKR Pico board)</option>
         </select>
         <span class="muted" style="font-size:11.5px">firmware auto-detected on
         connect (stock hides the fork-only tuning) · settings are stored on
         the Pi and pushed to the board — saving while connected applies
         immediately</span>
       </div>
-      <h3>Motion tuning <span class="muted" style="font-weight:normal; font-size:11.5px">— the knobs you tune with brass running</span></h3>
-      <div class="msGrid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:2px 24px">
-        <div><label>Feed motor speed (1–100) <span class="muted">— cruise across the camera port</span></label>
-          <input type="number" id="msFeedSpeed" min="1" max="100"></div>
-        <div><label>Sort motor speed (1–100) <span class="muted">— arm cruise between slots</span></label>
-          <input type="number" id="msSortSpeed" min="1" max="100"></div>
-        <div class="forkOnly"><label>Sort accel start delay (µs) <span class="muted">— bigger = gentler arm launch</span></label>
-          <input type="number" id="msSortAccel" min="100" max="5000" step="50"></div>
-        <div class="forkOnly"><label>Homing backoff (µsteps) <span class="muted">— arm retreat past the sensor; 16 = 1 full step</span></label>
-          <input type="number" id="msHomeBackoff" min="0" max="200"></div>
-        <div class="forkOnly"><label>Homing creep delay (µs/µstep) <span class="muted">— slower = more repeatable edge</span></label>
-          <input type="number" id="msHomeSlow" min="100" max="5000" step="50"></div>
-        <div class="forkOnly"><label>Feed launch ramp (µsteps) <span class="muted">— must finish before the camera port</span></label>
-          <input type="number" id="msFeedLaunch" min="0" max="200"></div>
-        <div class="forkOnly"><label>Arm dwell (ms) <span class="muted">— extra hold before every arm move; slow tumblers get exactly this much longer to clear</span></label>
-          <input type="number" id="msArmDwell" min="0" max="1000" step="10"></div>
-        <div><label>Slot drop delay (ms) <span class="muted">— minimum spacing between arm moves; below the sorting cycle (~800ms) it never fires — use Arm dwell to add real clearance</span></label>
-          <input type="number" id="msDropDelay" min="0" max="3000" step="50"></div>
-        <div><label>Notification delay (ms) <span class="muted">— raise in steps of 20 if images blur</span></label>
-          <input type="number" id="msNotifDelay" min="0" max="1000" step="10"></div>
-      </div>
-      <label class="inline forkOnly" style="display:flex; gap:6px; align-items:center; margin-top:8px; color:var(--dim); font-size:12.5px">
-        <input type="checkbox" id="msFeedDecel" style="accent-color:var(--brass)">
-        Feed stop as decel ramp <span class="muted">(off = stock dead stop)</span></label>
-      <label class="inline" style="display:flex; gap:6px; align-items:center; margin-top:8px; color:var(--dim); font-size:12.5px">
-        <input type="checkbox" id="msAirDrop" style="accent-color:var(--brass)">
-        AirDrop mod <span class="muted">(air-blast brass ejection — leave off unless the mod is installed;
-        enabling restores the ~30ms notification delay the blast needs)</span></label>
-      <div class="msGrid" style="margin-top:6px; display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:2px 24px">
-        <div class="airField"><label>Air pre-delay (ms) <span class="muted">— brass starts falling before the blast</span></label>
-          <input type="number" id="msAirPre" min="0" max="500" step="10"></div>
-        <div class="airField"><label>Air blast length (ms)</label>
-          <input type="number" id="msAirSignal" min="0" max="500" step="10"></div>
-        <div class="airField"><label>AirDrop drop delay (ms) <span class="muted">— used instead of Slot drop delay while the mod is on</span></label>
-          <input type="number" id="msAirPost" min="0" max="3000" step="10"></div>
-      </div>
-      <details style="margin-top:12px">
-        <summary style="color:var(--dim); font-size:12.5px">Machine constants — set once per mechanical build</summary>
-        <div class="muted" style="font-size:11.5px; margin:4px 0 6px">
-          Leave at defaults unless you know your machine — wrong currents
-          overheat motors or skip steps. Every value is clamped to a safe
-          range on save, so experimenting can't damage anything — and
-          <b>Reset to defaults</b> below always brings back the
-          bench-proven setup.
+      <h3>Motion tuning <span class="muted" style="font-weight:normal; font-size:11.5px">— the knobs you tune with brass running; every value is clamped to a safe range on save</span></h3>
+      <div style="display:flex; flex-direction:column; gap:10px; margin-top:6px">
+
+        <div class="msTile">
+          <h4>Feed wheel</h4>
+          <div class="msTileRow">
+            <div><label>Speed (1–100) <span class="muted">— cruise past the camera</span></label>
+              <input type="number" id="msFeedSpeed" min="1" max="100"></div>
+            <div><label>Current (mA)</label>
+              <input type="number" id="msFeedCurrent" min="300" max="1200" step="50"></div>
+            <div class="picoOnly"><label>Accel (µs) <span class="muted">— bigger = gentler launch</span></label>
+              <input type="number" id="msFeedAccel" min="100" max="5000" step="50"></div>
+            <div class="picoOnly"><label>Decel (µs) <span class="muted">— bigger = softer stop</span></label>
+              <input type="number" id="msFeedDecRate" min="100" max="5000" step="50"></div>
+            <div class="forkOnly"><label>Launch ramp (µsteps) <span class="muted">— ends before the camera port</span></label>
+              <input type="number" id="msFeedLaunch" min="0" max="200"></div>
+            <div><label>Cycle steps <span class="muted">— blind travel before the seek</span></label>
+              <input type="number" id="msFeedSteps" min="30" max="200"></div>
+            <div><label>Homing offset (steps) <span class="muted">— seating travel / decel length</span></label>
+              <input type="number" id="msFeedHome" min="0" max="30"></div>
+          </div>
+          <label class="inline forkOnly" style="display:flex; gap:6px; align-items:center; margin-top:6px; color:var(--dim); font-size:12.5px">
+            <input type="checkbox" id="msFeedDecel" style="accent-color:var(--brass)">
+            Stop as decel ramp <span class="muted">(off = stock dead stop)</span></label>
         </div>
-        <div class="msGrid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:2px 24px">
-          <div><label>Feed cycle steps <span class="muted">— blind travel before the homing seek</span></label>
-            <input type="number" id="msFeedSteps" min="30" max="200"></div>
-          <div><label>Feed current (mA)</label>
-            <input type="number" id="msFeedCurrent" min="300" max="1200" step="50"></div>
-          <div><label>Sort current (mA)</label>
-            <input type="number" id="msSortCurrent" min="300" max="1200" step="50"></div>
-          <div><label>Feed homing offset (steps) <span class="muted">— seating travel; also the decel-ramp length</span></label>
-            <input type="number" id="msFeedHome" min="0" max="30"></div>
-          <div><label>Motor standby (s) <span class="muted">— idle time before motors power down</span></label>
-            <input type="number" id="msStandby" min="0" max="600"></div>
+
+        <div class="msTile">
+          <h4>Sort arm</h4>
+          <div class="msTileRow">
+            <div><label>Speed (1–100) <span class="muted">— cruise between slots</span></label>
+              <input type="number" id="msSortSpeed" min="1" max="100"></div>
+            <div><label>Current (mA)</label>
+              <input type="number" id="msSortCurrent" min="300" max="1200" step="50"></div>
+            <div class="forkOnly"><label>Accel (µs) <span class="muted">— bigger = gentler launch</span></label>
+              <input type="number" id="msSortAccel" min="100" max="5000" step="50"></div>
+            <div class="picoOnly"><label>Decel (µs) <span class="muted">— bigger = softer landing</span></label>
+              <input type="number" id="msSortDecel" min="100" max="5000" step="50"></div>
+            <div class="forkOnly"><label>Homing backoff (µsteps) <span class="muted">— retreat past the sensor</span></label>
+              <input type="number" id="msHomeBackoff" min="0" max="200"></div>
+            <div class="forkOnly"><label>Homing creep (µs/µstep) <span class="muted">— slower = repeatable edge</span></label>
+              <input type="number" id="msHomeSlow" min="100" max="5000" step="50"></div>
+            <div class="forkOnly"><label>Arm dwell (ms) <span class="muted">— extra hold; clears slow tumblers</span></label>
+              <input type="number" id="msArmDwell" min="0" max="1000" step="10"></div>
+          </div>
         </div>
-      </details>
+
+        <div class="msTile">
+          <h4>Cycle timing</h4>
+          <div class="msTileRow">
+            <div><label>Slot drop delay (ms) <span class="muted">— minimum spacing between arm moves</span></label>
+              <input type="number" id="msDropDelay" min="0" max="3000" step="50"></div>
+            <div><label>Notification delay (ms) <span class="muted">— raise by 20s if images blur</span></label>
+              <input type="number" id="msNotifDelay" min="0" max="1000" step="10"></div>
+            <div><label>Motor standby (s) <span class="muted">— idle time before power-down</span></label>
+              <input type="number" id="msStandby" min="0" max="3600"></div>
+          </div>
+        </div>
+
+        <div class="msTile picoOnly">
+          <h4>Jam detection (StallGuard)</h4>
+          <div class="ctlRow" style="gap:18px; flex-wrap:wrap; align-items:flex-end">
+            <label class="inline" style="display:flex; gap:6px; align-items:center; margin:0; color:var(--text); font-size:13px">
+              <input type="checkbox" id="msSg" style="accent-color:var(--brass)">
+              Enabled</label>
+            <div><label>Feed stall threshold <span class="muted">— higher = more sensitive; 0 = off</span></label>
+              <input type="number" id="msSgFeed" min="0" max="255" style="width:110px"></div>
+            <span class="muted" style="font-size:11.5px">feed wheel only — the sort arm is
+              guarded by its slot-0 position check until the firmware rewrite</span>
+          </div>
+        </div>
+
+        <div class="msTile">
+          <h4>AirDrop mod</h4>
+          <label class="inline" style="display:flex; gap:6px; align-items:center; margin:0 0 4px; color:var(--dim); font-size:12.5px">
+            <input type="checkbox" id="msAirDrop" style="accent-color:var(--brass)">
+            Enabled <span class="muted">(air-blast ejection — leave off unless installed; restores the ~30ms notification delay the blast needs)</span></label>
+          <div class="msTileRow">
+            <div class="airField"><label>Pre-delay (ms) <span class="muted">— brass falls before the blast</span></label>
+              <input type="number" id="msAirPre" min="0" max="500" step="10"></div>
+            <div class="airField"><label>Blast length (ms)</label>
+              <input type="number" id="msAirSignal" min="0" max="500" step="10"></div>
+            <div class="airField"><label>Drop delay (ms) <span class="muted">— replaces Slot drop delay while on</span></label>
+              <input type="number" id="msAirPost" min="0" max="3000" step="10"></div>
+          </div>
+        </div>
+
+      </div>
       <div style="margin-top:12px; display:flex; gap:8px; align-items:center">
         <button class="primary" id="btnMsSave">Save</button>
         <button class="ghost" id="btnMsRead">Read from board</button>
@@ -1568,11 +1768,30 @@
         <button class="ghost" id="btnConRaw">Send</button>
       </div>
       <div class="muted" style="margin-top:8px; font-size:12px">
-        Speaks the CS7.2 firmware protocol — for hardware bring-up.
+        Speaks the sorter board's serial protocol — for hardware bring-up.
       </div>
     </div>
   </details>
 </section>
+
+<!-- the run-report modal: summary of bins, or one bin's cases —
+     rejects included (they're part of the run's story) -->
+<div id="repModal" onclick="if(event.target===this) repClose()">
+  <div class="repMBox">
+    <div id="repMBody"></div>
+    <div class="msg" id="repMMsg"></div>
+  </div>
+</div>
+<div id="repZoom" onclick="this.style.display='none'"><img id="repZoomImg"></div>
+
+<!-- batch review modal: the capture run's groups as tiles, one group's
+     cases on drill-in — the pull-out bar floats above it -->
+<div id="batchModal" onclick="if(event.target===this) batchMClose()">
+  <div class="repMBox">
+    <div id="batchMBody"></div>
+    <div class="msg" id="batchMMsg"></div>
+  </div>
+</div>
 
 <!-- ================================ DOCS ================================ -->
 <section id="docs">
@@ -1796,6 +2015,27 @@ async function switchModel(cartridge, model) {
   } catch (e) { alert("Switch failed: " + e.message); await refresh(); }
 }
 
+// published community recognizer: fetched once per page load; available
+// only when the build pins a digest AND the profile has no model yet
+window._starter = null;
+(async () => {
+  try { window._starter = await api("/api/models/starter"); }
+  catch { window._starter = { available: false }; }
+})();
+
+async function installStarter(report, btn) {
+  if (btn) btn.disabled = true;
+  report({ text: "downloading the starter (this can take a minute)…", ok: true });
+  try {
+    const j = await postJson("/api/models/starter", {});
+    report({ text: `installed — ${j.classes} classes ready to sort`, ok: true });
+    await refresh();
+  } catch (e) {
+    report({ text: e.message, ok: false });
+    if (btn) btn.disabled = false;
+  }
+}
+
 function openModelModal() {
   const opts = ['<option value="">Empty (no images)</option>'];
   for (const [c, ms] of Object.entries(STATE.profiles || {}))
@@ -1805,12 +2045,18 @@ function openModelModal() {
   $("nmCartridge").value = STATE.cartridge || "";
   $("nmName").value = "";
   // recognizer hand-me-down: only offered when the active model actually
-  // has a live embedding to lend
-  const hasEmbed = !!(STATE.models && STATE.models.embed);
+  // has a live embedding to lend; with none to lend, offer the published
+  // community starter instead (when this build pins one)
+  const hasEmbed = !!(STATE.models && STATE.models.embed
+                      && STATE.models.embed.exists);
   $("nmSeedEmbedRow").style.display = hasEmbed ? "" : "none";
   $("nmSeedEmbed").checked = hasEmbed;
   $("nmSeedEmbedSrc").textContent =
     `${STATE.cartridge || "?"} / ${STATE.model || "?"}`;
+  const offerStarter = !hasEmbed
+    && !!(window._starter && window._starter.available);
+  $("nmStarterRow").style.display = offerStarter ? "" : "none";
+  $("nmStarter").checked = offerStarter;
   $("nmMsg").textContent = "";
   $("modelModal").style.display = "flex";
 }
@@ -1830,6 +2076,12 @@ $("nmCreate").onclick = async () => {
   try {
     await postJson("/api/model/create", body);
     camStateStale();
+    // the starter lands in the NEW model (create activates it first)
+    if ($("nmStarterRow").style.display !== "none" && $("nmStarter").checked) {
+      $("nmMsg").textContent = "downloading the starter recognizer…";
+      const j = await postJson("/api/models/starter", {});
+      $("nmMsg").textContent = `starter installed — ${j.classes} classes`;
+    }
     $("modelModal").style.display = "none";
     await refresh();
   } catch (e) { $("nmMsg").textContent = e.message; }
@@ -1846,7 +2098,6 @@ let colPred = null;       // last model prediction {stamp, conf, confident}
 let colBusy = false;      // a feed/capture/save round-trip is in flight
 const colSession = { saved: 0, skipped: 0 };
 const colRecent = [];     // this session's saves: {stamp, index, thumb}
-let recentFixIdx = null;
 let MACH = { connected: false, mode: null };
 
 // refresh() fires after every save/move/delete — rebuilding every
@@ -1918,7 +2169,7 @@ function renderDatasetMgr() {
   // where Rename/Delete now live (86 red Delete buttons was 85 too many)
   $("dsMgr").innerHTML = labels.length
     ? labels.map(l => `<div class="clsCard${dsCur.label === l
-          && $("dsGallery").style.display !== "none"
+          && $("dsModal").style.display === "block"
           ? '" style="border-color:var(--brass)' : ""}"
           onclick="dsView('${l.replace(/'/g, "\\'")}', 0, true)">
         <div class="top"><span class="name" title="${l}"
@@ -2362,9 +2613,7 @@ async function dsRename(label) {
   try {
     const j = await postJson("/api/dataset/rename", { from: label, to });
     msg("dsMsg", `Renamed ${label} → ${to} (${j.moved} images moved) — crops rebuilt`, true);
-    $("dsGallery").style.display = "none";
-    $("dsHint").style.display = "";
-    dsCloseDetail();
+    dsModalClose();
     refresh();
   } catch (e) { msg("dsMsg", e.message, false); }
 }
@@ -2378,8 +2627,10 @@ function dsPageSize() {
   const grid = $("dsThumbs");
   let w = grid.clientWidth;
   if (!w) {
-    const card = grid.closest(".card");
-    w = card ? card.clientWidth - 32 : 900;
+    // first open: the modal is still display:none while the page is
+    // fetched, so nothing inside measures — derive the width the box
+    // WILL have (min(1660px, 94vw) minus its padding)
+    w = Math.min(1660, window.innerWidth * 0.94) - 44;
   }
   return Math.max(Math.floor((w + 10) / 150), 1) * 4;
 }
@@ -2439,7 +2690,6 @@ async function dsView(label, page = 0, scrollTo = false) {
     dsCur = { label, page, total: j.total };
     updateBulkBar();
     $("dsGallery").style.display = "";
-    $("dsHint").style.display = "none";
     // NOTE: no dsCloseDetail() here — the detail modal overlays the
     // page, so any dsView while it's open is the walk refreshing the
     // grid underneath (after a Move/Delete); closing it killed the walk
@@ -2470,10 +2720,11 @@ async function dsView(label, page = 0, scrollTo = false) {
       ${nums}
       <button class="ghost" ${page >= pages - 1 ? "disabled" : ""}
         onclick="dsView('${esc}', ${page + 1})">next ›</button>` : "";
-    // the View button's only visible effect used to happen below the
-    // fold — bring the gallery to the user on the initial click (page
-    // flips deliberately don't yank the scroll position)
-    if (scrollTo) $("dsGallery").scrollIntoView({ behavior: "smooth", block: "start" });
+    if (scrollTo) {                     // initial open: raise the modal
+      $("dsModal").style.display = "block";
+      $("dsModal").scrollTop = 0;
+      renderDatasetMgr();               // paint the open-class highlight
+    }
   } catch (e) { msg("dsMsg", e.message, false); }
 }
 
@@ -2575,9 +2826,6 @@ function dsThumbClick(index) {
 function updateBulkBar() {
   const on = $("dsMulti").checked;
   $("dsBulkBar").style.display = on ? "" : "none";
-  $("dsGalleryHint").textContent = on
-    ? "Click thumbnails to select them, then move or delete the whole selection."
-    : "Click a thumbnail to open it.";
   $("dsSelCount").textContent = `${dsSel.size} selected`;
 }
 $("dsMulti").onchange = () => {
@@ -2615,12 +2863,12 @@ document.querySelector('[data-tab="dataset"]').addEventListener(
 // rename/delete moved onto the class banner — they act on the open class
 $("dsBtnRename").onclick = () => dsCur.label && dsRename(dsCur.label);
 $("dsBtnDelete").onclick = () => dsCur.label && dsReset(dsCur.label);
-$("dsGalleryClose").onclick = () => {
-  $("dsGallery").style.display = "none";
-  $("dsExCard").style.display = "none";
-  $("dsHint").style.display = "";
+function dsModalClose() {
+  $("dsModal").style.display = "none";
   dsCloseDetail();
-};
+  renderDatasetMgr();          // drop the open-class highlight
+}
+$("dsGalleryClose").onclick = dsModalClose;
 
 // every class picker is an <input list="classList"> — type-to-filter
 // over one shared datalist (86 classes outgrew native selects, and a
@@ -2783,9 +3031,7 @@ async function dsReset(label) {
       body: JSON.stringify({ label }) });
     msg("dsMsg", `Deleted ${label} (${j.removed} files)` +
         (j.class_removed ? " — class and bin assignment removed as well" : ""), true);
-    $("dsGallery").style.display = "none";
-    $("dsHint").style.display = "";
-    dsCloseDetail();
+    dsModalClose();
     refresh();
   } catch (e) { msg("dsMsg", e.message, false); }
 }
@@ -2802,9 +3048,13 @@ function chipItems() {
 function renderChips() {
   const q = $("chipFind").value.trim().toUpperCase();
   const all = chipItems();
-  const chip = i =>
-    `<button class="chip${i.n === colSel ? " sel" : ""}" data-name="${i.n}">` +
-    `${i.n}<span class="cnt">${i.c}</span></button>`;
+  // counts wear the dataset tier tints — red under the training floor,
+  // amber once the novelty gate arms, green when well-fed
+  const chip = i => {
+    const t = classTier(i.c);
+    return `<button class="chip${i.n === colSel ? " sel" : ""}" data-name="${i.n}">`
+      + `${i.n}<span class="cnt"${t ? ` style="color:${t}"` : ""}>${i.c}</span></button>`;
+  };
   // top row: the biggest classes as instant selects (hidden while filtering)
   const top = [...all].sort((a, b) => b.c - a.c || a.n.localeCompare(b.n))
     .filter(i => i.c > 0).slice(0, TOP_CHIPS);
@@ -2880,7 +3130,8 @@ function renderMachChip() {
   const c = $("machChip");
   if (MACH.connected) {
     c.className = "pill ok";
-    c.textContent = `machine: ${MACH.mode === "serial" ? "CS7.2 serial" : "simulator"}`;
+    c.textContent = `machine: ${MACH.mode === "serial"
+      ? (lastBoardSeen || "board") + " serial" : "simulator"}`;
   } else {
     c.className = "pill bad";
     c.textContent = "machine: not connected";
@@ -3058,74 +3309,21 @@ document.addEventListener("keydown", e => {
 });
 
 /* ------------------- recent saves: undo / relabel -------------------- */
+// a click opens the standard image detail modal (same as the Dataset
+// page) — full-size photo, Move/Delete, arrow-key walk from that image
 function renderRecent() {
   $("recentStrip").innerHTML = colRecent.length
     ? colRecent.map((r, i) =>
-        `<button class="rc${recentFixIdx === i ? " sel" : ""}" data-i="${i}">` +
+        `<button class="rc" data-i="${i}">` +
         `${r.thumb ? `<img src="${r.thumb}">` : ""}` +
         `<span class="lb">${r.stamp} #${r.index}</span></button>`).join("")
     : `<span class="muted">nothing saved yet this session</span>`;
   document.querySelectorAll("#recentStrip .rc").forEach(b =>
-    b.onclick = () => openRecentFix(+b.dataset.i));
+    b.onclick = () => {
+      const r = colRecent[+b.dataset.i];
+      dsDetail(r.stamp, r.index);
+    });
 }
-
-function openRecentFix(i) {
-  recentFixIdx = i;
-  const r = colRecent[i];
-  $("recentFix").style.display = "";
-  $("recentFixLbl").textContent = `${r.stamp} #${r.index} →`;
-  $("recentFixTo").value = "";
-  msg("recentMsg", "");
-  // expanded review image: the session thumb right away (it's the same
-  // crop, just small), the full-size crop swapped in once fetched
-  $("recentPreview").style.display = r.thumb ? "" : "none";
-  $("recentPrevCrop").src = r.thumb || "";
-  api(`/api/dataset/pair?label=${encodeURIComponent(r.stamp)}&index=${r.index}`)
-    .then(j => {
-      if (recentFixIdx !== i || !j.head_crop) return;   // closed or reselected meanwhile
-      $("recentPrevCrop").src = j.head_crop;
-      $("recentPreview").style.display = "";
-    }).catch(() => {});                        // thumb stays — good enough
-  renderRecent();
-}
-
-function closeRecentFix() {
-  recentFixIdx = null;
-  $("recentFix").style.display = "none";
-  $("recentPreview").style.display = "none";
-  renderRecent();
-}
-$("btnRecentCancel").onclick = closeRecentFix;
-
-$("btnRecentMove").onclick = async () => {
-  const r = colRecent[recentFixIdx];
-  if (!r) return;
-  try {
-    const to = await dsResolveTarget($("recentFixTo"));
-    if (!to) return;
-    const j = await postJson("/api/dataset/move",
-      { label: r.stamp, index: r.index, to });
-    const m = /^(.*) #(\d+)$/.exec(j.moved_to);
-    if (m) { r.stamp = m[1]; r.index = +m[2]; }
-    msg("recentMsg", `Moved to ${j.moved_to}`, true);
-    closeRecentFix();
-    refresh();
-  } catch (e) { msg("recentMsg", e.message, false); }
-};
-
-$("btnRecentDelete").onclick = async () => {
-  const r = colRecent[recentFixIdx];
-  if (!r) return;
-  try {
-    await postJson("/api/dataset/delete", { label: r.stamp, index: r.index });
-    colRecent.splice(recentFixIdx, 1);
-    colSession.saved = Math.max(colSession.saved - 1, 0);
-    msg("recentMsg", `Deleted ${r.stamp} #${r.index}`, true);
-    closeRecentFix();
-    renderSession();
-    refresh();
-  } catch (e) { msg("recentMsg", e.message, false); }
-};
 
 /* ---------------------- capture / setup toggle ----------------------- */
 function setColView(v) {
@@ -3161,36 +3359,60 @@ function fmtRunId(id) {
 async function batchSync() {
   clearTimeout(batchTimer);
   try {
-    // brief=1: this poller only reads counters — the full status hauls
-    // ~200KB of recent-case thumbnails per tick, twice a second when
-    // the Sort page's poller is also alive
-    const s = await api("/api/run/status?brief=1");
+    const here = $("collect").classList.contains("active")
+                 && colView === "batch" && !document.hidden;
+    // full status only while the live card is on screen — it carries the
+    // recent-case thumbs the census view needs; off-tab the poller only
+    // watches for run-end, so brief=1 skips the ~200KB payload
+    const s = await api(here ? "/api/run/status"
+                             : "/api/run/status?brief=1");
+    if (s.running && !s.capture) {
+      // a SORT run owns the machine — that's the Sort page's story
+      $("batchIdle").style.display = "flex";
+      $("batchRunBar").style.display = "none";
+      $("batchLive").style.display = "none";
+      $("btnBatchStart").disabled = true;
+      $("batchStatus").textContent =
+        "a sort run is in progress — batch capture waits its turn";
+      batchTimer = setTimeout(batchSync, here ? 2500 : 5000);
+      return;
+    }
+    $("btnBatchStart").disabled = false;
     if (s.running) {
       batchRun = s.run_id;
-      $("btnBatchStart").style.display = "none";
-      $("btnBatchStop").style.display = "";
-      $("batchRunSel").style.display = "none";
-      $("batchStatus").textContent =
-        `capturing… ${s.sorted} cases so far`;
-      // keep watching for run-end even off-tab, just less eagerly
-      const here = $("collect").classList.contains("active")
-                   && colView === "batch" && !document.hidden;
+      $("batchIdle").style.display = "none";
+      $("batchRunBar").style.display = "flex";
+      $("batchLive").style.display = "";
+      $("bcCount").textContent = s.sorted;
+      $("bcRate").textContent = s.rate ? `${Math.round(s.rate * 60)}/min` : "—";
+      const col = s.stopping ? "var(--amber)" : "var(--green)";
+      $("bcLive").style.color = col;
+      $("bcDot").style.background = col;
+      $("bcDot").style.boxShadow = `0 0 8px ${col}`;
+      $("bcRunId").textContent = s.stopping
+        ? "STOPPING — capturing what's already in the wheel" : "CAPTURING";
+      $("btnBatchStop").disabled = !!s.stopping;
+      $("btnBatchStop").style.opacity = s.stopping ? ".35" : "";
+      $("batchStatus").textContent = "";
+      if (here) renderBatchLive(s);
       batchTimer = setTimeout(batchSync, here ? 1500 : 5000);
       return;
     }
-    $("btnBatchStart").style.display = "";
-    $("btnBatchStop").style.display = "none";
+    $("batchIdle").style.display = "flex";
+    $("batchRunBar").style.display = "none";
+    $("batchLive").style.display = "none";
     // batch history picker: CAPTURE runs only — sorting runs report on
-    // the Sort page, batch reviews live here. Older unreviewed batches
-    // stay reachable until the runs/ retention window drops them.
+    // the Sort page, batch reviews live here. Five newest, matching the
+    // per-kind retention window; older unreviewed batches stay
+    // reachable until it drops them.
     const r = await api("/api/runs");
-    const caps = (r.runs || []).filter(x => x.capture);
+    const caps = (r.runs || []).filter(x => x.capture).slice(0, 5);
     const sel = $("batchRunSel");
     if (!caps.length) {
       sel.style.display = "none";
+      $("btnBatchReview").style.display = "none";
       batchRun = null;
       $("batchStatus").textContent = "no batch captures on disk yet";
-      $("batchGroups").innerHTML = "";
       return;
     }
     if (!batchRun || !caps.some(c => c.run === batchRun))
@@ -3200,23 +3422,60 @@ async function batchSync() {
          ${fmtRunId(c.run)}${c.run === caps[0].run ? " (latest)" : ""} —
          ${c.cases_left ? `${c.cases_left} to review` : "reviewed ✓"}</option>`).join("");
     sel.style.display = caps.length > 1 ? "" : "none";
-    $("batchStatus").textContent = "loading groups…";
-    await loadBatchGroups(batchRun);
+    $("btnBatchReview").style.display = "";
+    const cur = caps.find(c => c.run === batchRun);
+    $("batchStatus").textContent = cur.cases_left
+      ? `${cur.cases_left} case${cur.cases_left === 1 ? "" : "s"} waiting for review`
+      : "fully reviewed ✓";
   } catch (e) { $("batchStatus").textContent = e.message; }
+}
+
+// the live card mirrors the Sort page: the case in the nest big on the
+// left, the hopper census — what this batch is made of so far — beside it
+function renderBatchLive(s) {
+  const rec = s.recent || [];
+  const last = rec[rec.length - 1];
+  if (last) {
+    // "known" means the same thing here as in the census below — a
+    // CONFIDENT read. A below-the-bar guess shows as unrecognized with
+    // the guess as a footnote, so the card never disagrees with a pill.
+    const known = last.category !== "unmatched";
+    const sub = known && last.stamp_conf
+      ? ` · ${Math.round(last.stamp_conf * 100)}%`
+      : !known && last.stamp && last.stamp_conf
+      ? ` · looks like ${last.stamp} ${Math.round(last.stamp_conf * 100)}%`
+      : "";
+    $("bcCase").innerHTML =
+      `<img class="bcCaseImg" src="${last.thumb}">
+       <div class="bcName"${known ? "" : ' style="color:var(--dim)"'}>${
+         known ? last.category : "unrecognized"}</div>
+       <div class="muted">#${last.n}${sub}</div>`;
+  } else {
+    $("bcCase").innerHTML =
+      `<div class="muted" style="width:280px">waiting for the first case…</div>`;
+  }
+  const counts = Object.entries(s.counts || {});
+  const unk = counts.find(([k]) => k === "unmatched");
+  const pills = counts.filter(([k]) => k !== "unmatched")
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `<span class="cenPill">${k}<b>${v}</b></span>`);
+  if (unk) pills.push(
+    `<span class="cenPill q">unrecognized<b>${unk[1]}</b></span>`);
+  $("bcCensus").innerHTML = pills.join("")
+    || `<span class="muted">census builds as cases feed</span>`;
 }
 
 $("batchRunSel").onchange = () => {
   batchRun = $("batchRunSel").value;
+  window._batchGroups = null;        // groups belong to the old batch
   window._batchExc = new Set();      // pulled-out picks don't cross batches
-  $("batchStatus").textContent = "loading groups…";
-  loadBatchGroups(batchRun)
-    .catch(e => { $("batchStatus").textContent = e.message; });
+  batchSync();
 };
 
 $("btnBatchStart").onclick = async () => {
   try {
     await postJson("/api/run/start", { mode: "serial", capture: true });
-    $("batchGroups").innerHTML = "";
+    window._batchGroups = null;
     batchSync();
   } catch (e) { $("batchStatus").textContent = e.message; }
 };
@@ -3227,11 +3486,9 @@ $("btnBatchStop").onclick = async () => {
 
 async function loadBatchGroups(run) {
   const j = await api(`/api/runs/${run}/groups`);
-  $("batchStatus").textContent =
-    `${j.total} cases captured — confirm the groups below (click a case to pull it out of its group)`;
   window._batchGroups = j.groups;
   window._batchExc = window._batchExc || new Set();
-  renderBatchGroups();
+  renderBatchM();
 }
 
 // resolved cases leave by LOCAL re-render — the groups endpoint
@@ -3243,78 +3500,187 @@ function batchDropCases(ns) {
     .map(g => g.resolved ? g
          : Object.assign({}, g, { cases: g.cases.filter(c => !gone.has(c.n)) }))
     .filter(g => g.resolved || g.cases.length);
-  renderBatchGroups();
+  renderBatchM();
 }
 
-function renderBatchGroups() {
+/* ---- batch review modal: group tiles, one group's cases on drill-in */
+const batchM = { run: null, view: "summary", gi: 0, page: 0 };
+const BATCH_PER_PAGE = 50;
+
+async function batchMOpen() {
+  if (!batchRun) return;
+  $("batchModal").style.display = "block";
+  $("batchModal").scrollTop = 0;
+  $("batchMMsg").textContent = "";
+  batchM.view = "summary";
+  if (batchM.run !== batchRun || !window._batchGroups) {
+    $("batchMBody").innerHTML =
+      `<div class="muted" style="padding:30px 10px">grouping the captured
+       cases — the machine embeds and clusters every unknown, this can
+       take a moment on a big batch…</div>`;
+    try {
+      await loadBatchGroups(batchRun);
+      batchM.run = batchRun;
+    } catch (e) {
+      $("batchMBody").innerHTML =
+        `<div class="muted" style="padding:30px 10px">${e.message}</div>`;
+    }
+  } else renderBatchM();
+}
+$("btnBatchReview").onclick = batchMOpen;
+
+function batchMClose() {
+  $("batchModal").style.display = "none";
+  batchSync();          // the idle bar's cases-left count moved
+}
+
+function batchMGroup(i) {
+  batchM.view = "group";
+  batchM.page = 0;
+  // group indices SHIFT when pull-out resolves empty another group out
+  // of the list — anchor the open group by its member case numbers
+  // (those never change) and re-locate it on every render
+  batchM.members = new Set((window._batchGroups[i].cases || [])
+    .map(c => c.n));
+  batchM.keepVal = null;
+  renderBatchM();
+  $("batchModal").scrollTop = 0;
+}
+function batchMBack() {
+  batchM.view = "summary";
+  batchM.keepVal = null;
+  renderBatchM();
+}
+function batchMPage(p) { batchM.page = p; renderBatchM(); }
+
+// review actions report inside the modal when it's up, else on the bar
+function bMsg(text, ok) {
+  if ($("batchModal").style.display === "block") msg("batchMMsg", text, ok);
+  else $("batchStatus").textContent = text;
+}
+
+function batchGroupTitle(g) {
+  if (g.kind === "class") return g.label;
+  if (g.kind === "suggest") return `Looks like ${g.label}`;
+  return "Unrecognized cluster";
+}
+
+function renderBatchM() {
   const groups = window._batchGroups || [];
-  // a re-render must not eat half-made choices on OTHER cards: remember
-  // each group's dropdown pick and typed name, keyed by member case
-  // (indices shift when groups empty out, case numbers never do)
-  const kept = {};
-  document.querySelectorAll("#batchGroups input.revStamp").forEach(inp => {
-    const v = inp.value;
-    inp.closest(".card").querySelectorAll(".revCard").forEach(cc =>
-      kept[cc.id.slice(4)] = v);
-  });
-  $("batchGroups").innerHTML = groups.map((g, i) => {
-    if (g.resolved)          // filed/discarded groups keep their receipt
-      return `<div class="card" id="bg_${i}" style="margin-top:10px">
-        <div class="muted" style="padding:6px">${g.resolved}</div></div>`;
-    // who's crowding this pile: if one runner-up class dominates, name
-    // it in the header — "high % but R-P right behind" in one glance
-    const crowdCounts = {};
-    g.cases.forEach(c => { if (c.runner)
-      crowdCounts[c.runner] = (crowdCounts[c.runner] || 0) + 1; });
-    const crowdTop = Object.entries(crowdCounts).sort((a, b) => b[1] - a[1])[0];
-    const crowd = g.kind === "suggest" && crowdTop
-        && crowdTop[1] >= g.cases.length / 2
-      ? ` <span class="muted" style="font-weight:normal; font-size:11.5px">— crowded by ${crowdTop[0]} (margin too thin to auto-file)</span>`
-      : "";
-    const label = g.kind === "class"
-      ? `${g.label} — ${g.cases.length}${g.well_fed
-          ? ` <span class="muted" style="font-weight:normal; font-size:11.5px">— class well-fed (500+): File keeps only novel looks</span>` : ""}`
-      : g.kind === "suggest"
-      ? `Looks like ${g.label} — ${g.cases.length} below-the-bar case${
-          g.cases.length === 1 ? "" : "s"}${crowd}`
-      : `Unrecognized cluster — ${g.cases.length} same-looking case${
-          g.cases.length === 1 ? "" : "s"}`;
-    return `<div class="card" id="bg_${i}" style="margin-top:10px">
-      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
-        <h3 style="margin:0">${label}</h3>
-        <span style="flex:1"></span>
-        <input list="classList" class="revStamp" id="bgSel_${i}"
-          autocomplete="off" spellcheck="false"
-          value="${g.kind !== "cluster" && g.label ? g.label : ""}"
-          placeholder="class — type a new name to create it"
-          style="max-width:220px">
-        ${g.well_fed
-          ? `<button class="ghost" onclick="batchFile(${i})">File novel</button>
-             <button class="ghost" onclick="batchFile(${i}, false, true)">File all</button>`
-          : `<button class="ghost" onclick="batchFile(${i})">File all</button>`}
-        <button class="ghost danger" onclick="batchFile(${i}, true)">Discard all</button>
+  const open = groups.filter(g => !g.resolved);
+  const left = open.reduce((a, g) => a + g.cases.length, 0);
+  const head = `
+    <div class="repHead">
+      <div>
+        <h2 style="margin:0">Batch review</h2>
+        <div class="muted">${fmtRunId(batchRun)} — ${left
+          ? `${left} case${left === 1 ? "" : "s"} to review`
+          : "all reviewed ✓"}</div>
       </div>
-      <div class="revGrid" style="margin-top:8px">${g.cases.map(c => `
-        <div class="revCard${window._batchExc.has(c.n) ? " exc" : ""}" id="bgc_${c.n}"
-             onclick="batchToggleCase(${c.n})" style="cursor:pointer"
-             title="click to remove/restore this case — removed cases regroup for separate filing">
-          <img src="${c.thumb}">
-          <div class="why">#${c.n}${c.conf
-            ? ` · ${Math.round(c.conf * 100)}%` : ""}${
-            g.kind !== "class" && c.runner && c.conf
-            ? `<br><span style="color:var(--dim)">vs ${c.runner} ${
-                Math.round(c.runner_sim * 100)}%</span>` : ""}</div>
-        </div>`).join("")}</div>
+      <span style="flex:1"></span>
+      ${batchM.view === "group"
+        ? `<button class="ghost" onclick="batchMBack()">← All groups</button>`
+        : ""}
+      <button class="ghost" onclick="batchMClose()">Close</button>
     </div>`;
-  }).join("") || `<div class="muted">nothing captured yet</div>`;
+
+  if (batchM.view === "summary") {
+    const tiles = groups.map((g, i) => {
+      if (g.resolved)
+        return `<div class="bgt done"><div class="lbl">✓
+          <small>${g.resolved}</small></div></div>`;
+      const cls = g.kind === "suggest" ? " sug"
+                : g.kind === "cluster" ? " clu" : "";
+      const sub = g.kind === "class" ? "recognized"
+                : g.kind === "suggest" ? "below the bar"
+                : "same-looking unknowns";
+      return `<div class="bgt${cls}" onclick="batchMGroup(${i})">
+        <div class="lbl">${batchGroupTitle(g)}<small>${sub}</small></div>
+        <div class="cnt">${g.cases.length}</div></div>`;
+    }).join("");
+    $("batchMBody").innerHTML = head + `
+      <div style="display:grid; gap:10px; margin-top:14px;
+           grid-template-columns:repeat(auto-fill, minmax(230px, 1fr))">
+        ${tiles || `<div class="muted">nothing captured yet</div>`}</div>`;
+    updateBatchExcBar();
+    return;
+  }
+
+  // drill-in: one group's cases, the familiar review card
+  const i = groups.findIndex(g => !g.resolved
+    && g.cases.some(c => batchM.members.has(c.n)));
+  const g = groups[i];
+  if (!g) { batchMBack(); return; }
+  batchM.members = new Set(g.cases.map(c => c.n));
+  // a re-render must not eat a half-made choice: snapshot the typed
+  // class pick before the DOM is rebuilt — unless the caller just
+  // consumed it (a File that regrouped pull-outs into a fresh pile)
+  const keptInp = document.querySelector("#batchMBody input.revStamp");
+  if (keptInp && !batchM.skipSnap) batchM.keepVal = keptInp.value;
+  batchM.skipSnap = false;
+  // who's crowding this pile: if one runner-up class dominates, name
+  // it in the header — "high % but R-P right behind" in one glance
+  const crowdCounts = {};
+  g.cases.forEach(c => { if (c.runner)
+    crowdCounts[c.runner] = (crowdCounts[c.runner] || 0) + 1; });
+  const crowdTop = Object.entries(crowdCounts).sort((a, b) => b[1] - a[1])[0];
+  const note = g.kind === "class" && g.well_fed
+    ? "class well-fed (500+): File keeps only novel looks"
+    : g.kind === "suggest" && crowdTop && crowdTop[1] >= g.cases.length / 2
+    ? `crowded by ${crowdTop[0]} (margin too thin to auto-file)`
+    : "";
+  // a page holds WHOLE rows (same treatment as the report modal):
+  // column count from the modal's real width, page size the nearest
+  // multiple of it — no ragged row with more cases waiting behind it
+  const GAP = 10, COL_MIN = 178;
+  const avail = $("batchMBody").clientWidth || 1000;
+  const cols = Math.max(1, Math.floor((avail + GAP) / (COL_MIN + GAP)));
+  const perPage = cols * Math.max(1, Math.round(BATCH_PER_PAGE / cols));
+  const pages = Math.ceil(g.cases.length / perPage);
+  if (batchM.page >= pages) batchM.page = Math.max(0, pages - 1);
+  const slice = g.cases.slice(batchM.page * perPage,
+                              (batchM.page + 1) * perPage);
+  const pager = pages > 1 ? `<div class="repPager">
+      <button class="ghost" ${batchM.page ? "" : "disabled"}
+        onclick="batchMPage(${batchM.page - 1})">‹ Prev</button>
+      <span class="muted">page ${batchM.page + 1} of ${pages}</span>
+      <button class="ghost" ${batchM.page < pages - 1 ? "" : "disabled"}
+        onclick="batchMPage(${batchM.page + 1})">Next ›</button>
+    </div>` : "";
+  $("batchMBody").innerHTML = head + `
+    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+         margin-top:14px">
+      <h3 style="margin:0">${batchGroupTitle(g)} — ${g.cases.length}${note
+        ? ` <span class="muted" style="font-weight:normal; font-size:11.5px">— ${note}</span>` : ""}</h3>
+      <span style="flex:1"></span>
+      <input list="classList" class="revStamp" id="bgSel_${i}"
+        autocomplete="off" spellcheck="false"
+        value="${g.kind !== "cluster" && g.label ? g.label : ""}"
+        placeholder="class — type a new name to create it"
+        style="max-width:220px">
+      ${g.well_fed
+        ? `<button class="ghost" onclick="batchFile(${i})">File novel</button>
+           <button class="ghost" onclick="batchFile(${i}, false, true)">File all</button>`
+        : `<button class="ghost" onclick="batchFile(${i})">File all</button>`}
+      <button class="ghost danger" onclick="batchFile(${i}, true)">Discard all</button>
+    </div>
+    <div class="revGrid" style="margin-top:10px; grid-template-columns:
+         repeat(${cols}, minmax(0,1fr))">${slice.map(c => `
+      <div class="revCard${window._batchExc.has(c.n) ? " exc" : ""}" id="bgc_${c.n}"
+           onclick="batchToggleCase(${c.n})" style="cursor:pointer"
+           title="click to remove/restore this case — removed cases regroup for separate filing">
+        <img src="${c.thumb}" loading="lazy">
+        <div class="why">#${c.n}${c.conf
+          ? ` · ${Math.round(c.conf * 100)}%` : ""}${
+          g.kind !== "class" && c.runner && c.conf
+          ? `<br><span style="color:var(--dim)">vs ${c.runner} ${
+              Math.round(c.runner_sim * 100)}%</span>` : ""}</div>
+      </div>`).join("")}</div>
+    ${pager}`;
   updateBatchExcBar();
-  groups.forEach((g, i) => {
-    const inp = $(`bgSel_${i}`);
-    if (!inp) return;
-    const k = g.cases.length ? kept[g.cases[0].n] : null;
-    if (k != null) inp.value = k;  // survivor choices win over defaults —
-                                   // including a deliberately CLEARED one
-  });
+  if (batchM.keepVal != null)
+    $(`bgSel_${i}`).value = batchM.keepVal;  // survivor choice wins over
+                                 // the default — including a CLEARED one
 }
 
 function batchToggleCase(n) {
@@ -3356,10 +3722,9 @@ async function batchExcResolve(discard) {
     const j = await postJson(`/api/runs/${batchRun}/cases/bulk_resolve`, body);
     window._batchExc.clear();
     batchDropCases(ns);
-    $("batchStatus").textContent = discard
-      ? `discarded ${j.discarded}` : bulkFiledMsg(j);
+    bMsg(discard ? `discarded ${j.discarded}` : bulkFiledMsg(j), true);
     refresh();
-  } catch (e) { $("batchStatus").textContent = e.message; }
+  } catch (e) { bMsg(e.message, false); }
 }
 $("btnBatchExcFile").onclick = () => batchExcResolve(false);
 $("btnBatchExcDiscard").onclick = () => batchExcResolve(true);
@@ -3369,7 +3734,7 @@ async function batchFile(i, discard, fileAll) {
   const exc = window._batchExc || new Set();
   const ns = g.cases.map(c => c.n).filter(n => !exc.has(n));
   if (!ns.length) {
-    $("batchStatus").textContent = "every case in that group is removed — restore some first";
+    bMsg("every case in that group is removed — restore some first", false);
     return;
   }
   const body = { ns, action: discard ? "discard" : "save" };
@@ -3381,8 +3746,7 @@ async function batchFile(i, discard, fileAll) {
     // name creates the class as it files, UNKNOWN sets aside
     const v = classVal($(`bgSel_${i}`));
     if (!v) {
-      $("batchStatus").textContent =
-        "pick a class or type a new name first (or Discard all)";
+      bMsg("pick a class or type a new name first (or Discard all)", false);
       return;
     }
     body.stamp = v;
@@ -3396,34 +3760,35 @@ async function batchFile(i, discard, fileAll) {
     const j = await postJson(`/api/runs/${batchRun}/cases/bulk_resolve`, body);
     // a pull-out resolve may have re-rendered (cloned groups, shifted
     // indices) while this request was in flight — re-locate the group
-    // by a member case before touching the DOM or the cache
+    // by a member case before touching the cache
     const probe = ns[0];   // a case IN this resolve can't be pulled out —
                            // g.cases[0] could be, and would mis-probe
     const ni = window._batchGroups.findIndex(
-      x => x.cases.some(c => c.n === probe));
+      x => !x.resolved && x.cases.some(c => c.n === probe));
     const gg = ni >= 0 ? window._batchGroups[ni] : g;
     gg.resolved = discard ? `discarded ${j.discarded}` : bulkFiledMsg(j);
-    const card = ni >= 0 && $(`bg_${ni}`);
-    if (card) card.innerHTML =
-      `<div class="muted" style="padding:6px">${gg.resolved}</div>`;
-    else renderBatchGroups();
+    bMsg(gg.resolved, true);
     refresh();          // dataset counts move on Collect/Train tabs
     // removed cases stay unresolved — regroup them into their own LOCAL
-    // card so each can be filed (or discarded) on its own terms (the
+    // group so each can be filed (or discarded) on its own terms (the
     // server round-trip here re-embedded and re-clustered the whole run)
     const left = gg.cases.filter(c => exc.has(c.n));
     if (left.length) {
       left.forEach(c => exc.delete(c.n));
-      $("batchStatus").textContent =
-        `${gg.resolved} — ${left.length} pulled-out case${
-          left.length === 1 ? "" : "s"} regrouped below`;
+      bMsg(`${gg.resolved} — ${left.length} pulled-out case${
+          left.length === 1 ? "" : "s"} regrouped as a new pile`, true);
       gg.cases = left;
-      delete gg.resolved;              // the receipt moved to the status line
+      delete gg.resolved;          // the receipt moved to the message line
       gg.kind = "cluster";
       gg.label = null;
-      renderBatchGroups();
+      batchM.keepVal = null;       // the typed pick was consumed by the file
+      batchM.skipSnap = true;      // …and must not be re-read off the old DOM
+      batchM.members = new Set(left.map(c => c.n));   // stay on the pile
+      renderBatchM();
+    } else {
+      batchMBack();                // group done — back to the tile wall
     }
-  } catch (e) { $("batchStatus").textContent = e.message; }
+  } catch (e) { bMsg(e.message, false); }
 }
 
 /* live crop previews follow whatever case is in the nest right now */
@@ -3460,16 +3825,19 @@ const livePreviewNow = debounce(livePreviewTick, 200);
    Dragging still drives the live preview, which reads slider values
    directly, so tuning stays visual; Save applies + persists the lot. */
 let camBase = null;                    // last saved values
+let lastBoardSeen = "";                // board name from machine settings
 
 function camCurrent() {
-  return { led: +$("ledLevel").value, zf: +$("zoomF").value,
+  return { led: +$("ledLevel").value, color: $("ledColor").value,
+           zf: +$("zoomF").value,
            zx: +$("zoomX").value, zy: +$("zoomY").value,
            frac: +$("pocketFrac").value, rim: +$("rimScale").value };
 }
 function camIsDirty() {
   if (!camBase) return false;
   const c = camCurrent();
-  return Object.keys(camBase).some(k => Math.abs(c[k] - camBase[k]) > 1e-9);
+  return Object.keys(camBase).some(k => typeof c[k] === "string"
+    ? c[k] !== camBase[k] : Math.abs(c[k] - camBase[k]) > 1e-9);
 }
 function camDirtyUi() {
   const d = camIsDirty();
@@ -3486,6 +3854,8 @@ $("btnCamSave").onclick = async () => {
   try {
     if (c.led !== b.led)
       await postJson("/api/machine/settings", { camera_led: c.led });
+    if (c.color !== b.color)
+      await postJson("/api/machine/settings", { led_color: c.color });
     if (c.zf !== b.zf || c.zx !== b.zx || c.zy !== b.zy)
       await api("/api/camera/settings", { method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -3508,6 +3878,7 @@ $("btnCamSave").onclick = async () => {
 $("btnCamRevert").onclick = () => {
   if (!camBase) return;
   $("ledLevel").value = camBase.led; $("vLedLevel").textContent = camBase.led;
+  $("ledColor").value = camBase.color; $("vLedColor").textContent = camBase.color;
   $("zoomF").value = camBase.zf; $("zoomX").value = camBase.zx;
   $("zoomY").value = camBase.zy; showZoomVals();
   $("pocketFrac").value = camBase.frac;
@@ -3547,7 +3918,8 @@ async function camPreviewReset() {     // view + board back to saved values
   if (camBase) {
     try {
       await postJson("/api/machine/settings",
-                     { preview: true, camera_led: camBase.led });
+                     { preview: true, camera_led: camBase.led,
+                       led_color: camBase.color });
     } catch {}
   }
 }
@@ -3673,8 +4045,28 @@ async function loadCamSettings() {
   } catch (e) { camMsg(e.message); }
   try {                       // the light ring is a firmware setting
     const m = await api("/api/machine/settings");
-    $("ledLevel").value = m.settings.camera_led;
-    $("vLedLevel").textContent = m.settings.camera_led;
+    const pico = (m.settings.board || "") === "SKR Pico";
+    if (pico) {                     // the Pico ring is ~3x the old one:
+      $("ledLevel").max = 100;      // full range is blinding — 100 is the
+      $("ledLevel").step = 1;       // practical ceiling, and step 1 gives
+    }                               // real control at the dim end
+    $("ledLevel").value = Math.min(m.settings.camera_led, +$("ledLevel").max);
+    $("vLedLevel").textContent = $("ledLevel").value;
+    $("ledColorRow").style.display = pico ? "" : "none";
+    $("ledColor").value = m.settings.led_color || "#ffffff";
+    $("vLedColor").textContent = $("ledColor").value;
+    if (pico && !$("ledSwatches").childElementCount) {
+      const SW = [["#ffffff","white"], ["#ffd9a0","warm"], ["#ff3b30","red"],
+                  ["#34c759","green"], ["#0a84ff","blue"], ["#ffcc00","amber"]];
+      $("ledSwatches").append(...SW.map(([hex, name]) => {
+        const b = document.createElement("button");
+        b.className = "ghost"; b.title = name;
+        b.style.cssText = "width:24px; height:24px; padding:0; border-radius:50%; " +
+                          "border:1px solid var(--line); background:" + hex;
+        b.onclick = () => { $("ledColor").value = hex; $("ledColor").oninput(); };
+        return b;
+      }));
+    }
     $("ledHint").textContent = m.connected
       ? "applies to the board when you press Save"
       : "Save stores it — applies when the machine connects";
@@ -3711,6 +4103,17 @@ $("ledLevel").oninput = () => {
   $("vLedLevel").textContent = $("ledLevel").value;
   camDirtyUi();
   pushLedPreview();
+};
+const pushLedColorPreview = debounce(async () => {
+  try {
+    await postJson("/api/machine/settings",
+                   { preview: true, led_color: $("ledColor").value });
+  } catch {}
+}, 200);
+$("ledColor").oninput = () => {
+  $("vLedColor").textContent = $("ledColor").value;
+  camDirtyUi();
+  pushLedColorPreview();
 };
 
 function showZoomVals() {
@@ -3885,12 +4288,25 @@ function renderReadiness() {
       <span class="st">${right}</span></div>`;
   }
   const ready = nTrainable >= 2;
+  // a fresh install with nothing to train on gets offered the published
+  // community recognizer — sorting before the first photo is collected
+  const starter = window._starter && window._starter.available
+    && !(((STATE.models || {}).embed || {}).exists)
+    ? `<div class="ctlRow" style="margin-top:10px">
+         <span style="font-size:13.5px"><b>Community starter recognizer</b>
+         <span class="muted">— a trained 9mm model, sorts out of the box</span></span>
+         <button class="ghost" id="btnStarterGet">Download &amp; install</button>
+         <span class="msg" id="starterMsg"></span></div>`
+    : "";
   box.innerHTML = strip + rows + (ready
     ? `<div class="muted" style="margin-top:4px"><b>${nTrainable}</b> classes in the
        training pass.</div>`
     : `<div class="msg err" style="margin-top:4px">Not enough to train: need at least
        2 classes with ${MIN_PER_CLASS}+ images each.
-       Add images via the Collect tab (or Test → “Add to training data”).</div>`);
+       Add images via the Collect tab (or Test → “Add to training data”).</div>`
+      + starter);
+  if ($("btnStarterGet")) $("btnStarterGet").onclick = () =>
+    installStarter(t => msg("starterMsg", t.text, t.ok), $("btnStarterGet"));
 }
 
 /* ------------------------- remote training (trainer PC) --------------- */
@@ -4856,7 +5272,8 @@ function renderTestBin(bin) {
 let lastRunStatus = null;
 
 function binCountFor(i) {
-  const bc = (lastRunStatus && lastRunStatus.bin_counts) || {};
+  const bc = (lastRunStatus && !lastRunStatus.capture
+              && lastRunStatus.bin_counts) || {};
   return bc[i] || bc[String(i)] || 0;
 }
 // one slot's bins entry -> list of stamps (tolerates legacy string/null)
@@ -4938,7 +5355,16 @@ function renderBins() {
     if (!group.length) div.classList.add("emptybin");
     const cnt0 = binCountFor(i);
     const cap = (STATE.bin_sizes || [])[i] || 0;
-    div.innerHTML = `<div class="binHead"><span class="num">${i}</span>${lbl}</div>
+    // custom bin color rides the badge inline (um/of/empty keep their
+    // CSS colors — red and blue stay reserved, empty stays hollow).
+    // Eligible badges open the swatch picker on click.
+    const tint = !isUM && !isOF && group.length
+      && (STATE.bin_colors || [])[i];
+    const numHtml = !isUM && !isOF && group.length
+      ? `<span class="num binTint" data-slot="${i}" style="cursor:pointer${
+          tint ? `; background:${tint}` : ""}">${i}</span>`
+      : `<span class="num">${i}</span>`;
+    div.innerHTML = `<div class="binHead">${numHtml}${lbl}</div>
       <div class="binChips">${chips}<span class="addGhost"
         data-slot="${i}">+ add</span></div>
       <div class="sgCount" id="binCount${i}"
@@ -4966,6 +5392,10 @@ function renderBins() {
   list.querySelectorAll(".capIn").forEach(inp => {
     inp.onkeydown = e => { if (e.key === "Enter") inp.blur(); };
     inp.onblur = () => saveBinSize(inp);
+  });
+  list.querySelectorAll(".binTint").forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    binColorPop(+b.dataset.slot);
   });
   list.querySelectorAll(".addGhost").forEach(g => g.onclick = () => {
     const inp = g.closest(".binSlot").querySelector(".binAdd");
@@ -5047,8 +5477,10 @@ $("flSharp").onchange = () => saveFloors();
 // the report's table of contents
 function renderBinStats() {
   const s = renderBins._live || lastRunStatus;
-  const bc = (s && s.bin_counts) || {};
-  const bsc = (s && s.bin_stamp_counts) || {};
+  // a batch capture's counts (everything riding the catch-all) never
+  // dress the bin cards — those cases review on the Collect page
+  const bc = (s && !s.capture && s.bin_counts) || {};
+  const bsc = (s && !s.capture && s.bin_stamp_counts) || {};
   const maxC = Math.max(1, ...Object.values(bc));
   // "finished" = a loaded report is on offer. It must survive a server
   // restart (run/status blank, report preloaded by the greet handler),
@@ -5093,29 +5525,12 @@ function renderBinStats() {
       // a bin earns its link from the live count OR from the loaded
       // report itself — the latter keeps reports reachable after a
       // server restart, when every live count reads zero
-      const hasRep = !!(pollRun._repHtml && pollRun._repHtml[i]);
+      const rd = pollRun._repData;
+      const hasRep = !!(rd && rd.cases.some(c => c.bin === i));
       if (finished && (cnt || isUM || hasRep)) {
         v.style.display = "";
-        if (isUM) {
-          // rejects review AND the classified riders' report section —
-          // riders (no_bin_mapping without an OVERFLOW bin, classes
-          // mapped here on purpose) are not rejects and live only in
-          // the report
-          v.innerHTML = `<span class="umRej">review rejects ›</span>${
-            hasRep ? `<span style="color:var(--dim); font-weight:400">
-              &nbsp;·&nbsp;</span><span class="umRode">view bin ›</span>` : ""}`;
-          v.onclick = null;
-          v.querySelector(".umRej").onclick = () => {
-            $("repView").innerHTML = "";
-            $("btnRevLoad").click();
-            $("revGrid").scrollIntoView({ behavior: "smooth" });
-          };
-          const rode = v.querySelector(".umRode");
-          if (rode) rode.onclick = () => showBinReport(i);
-        } else {
-          v.textContent = "view cases ›";
-          v.onclick = () => showBinReport(i);
-        }
+        v.textContent = isUM ? "review rejects ›" : "view cases ›";
+        v.onclick = () => repOpen(pollRun._repRun, "bin", i);
       } else v.style.display = "none";
     }
   });
@@ -5137,24 +5552,51 @@ function renderBinStats() {
 function renderSortBar(s) {
   const bar = $("sortBar");
   if (!bar) return;
+  // batch captures belong to the Collect page — the Sort page never
+  // wears their tally (live OR finished). Running: say who has the
+  // machine; finished: plain idle, ready to sort.
+  if (s && s.capture) {
+    if (s.running) {
+      bar.innerHTML = `
+        <span style="font-weight:600; font-size:17px">Sort</span>
+        <span class="muted" style="font-size:12.5px">batch capture in
+          progress — the live view is on the Collect page</span>
+        <div class="sgRight">
+          <div class="sgLive" style="color:var(--green)">
+            <span class="dot" style="background:var(--green);
+              box-shadow:0 0 8px var(--green)"></span>
+            CAPTURING · ${s.run_id}</div>
+        </div>`;
+      return;
+    }
+    s = null;                      // finished capture = idle sort page
+  }
   // report-derived stats only decorate the bar when the cached report is
-  // THIS run's (and never a batch capture's tally)
-  const rs = (s && !s.capture
-              && (!s.run_id || pollRun._repRun === s.run_id))
+  // THIS run's
+  const rs = (s && (!s.run_id || pollRun._repRun === s.run_id))
     ? pollRun._repStats : null;
   if (s && s.running) {
+    // a pending stop must LOOK taken the moment it's pressed — the loop
+    // finishes the case (or the whole end-of-brass flush) first, and
+    // that silence read as an ignored button in the field
+    const live = s.stopping
+      ? `<div class="sgLive" style="color:var(--amber)">
+          <span class="dot" style="background:var(--amber); box-shadow:0 0 8px var(--amber)"></span>
+          STOPPING — sorting what's already in the wheel</div>`
+      : `<div class="sgLive" style="color:var(--green)">
+          <span class="dot" style="background:var(--green); box-shadow:0 0 8px var(--green)"></span>
+          SORTING · ${s.run_id}</div>`;
     bar.innerHTML = `
       <div class="sgStat"><b>${s.sorted}</b><span>sorted</span></div>
       <div class="sgStat"><b style="color:var(--amber)">${s.rejected}</b><span>unmatched</span></div>
       <div class="sgStat"><b>${s.jams}</b><span>jams</span></div>
       <div class="sgStat"><b>${s.rate}<span style="font-size:13px; color:var(--dim)">/s</span></b><span>rate</span></div>
       <div class="sgRight">
-        <div class="sgLive" style="color:var(--green)">
-          <span class="dot" style="background:var(--green); box-shadow:0 0 8px var(--green)"></span>
-          SORTING · ${s.run_id}</div>
+        ${live}
         <button style="background:var(--red); border-color:var(--red);
           color:#fff; font:inherit; font-weight:600; border-radius:7px;
-          padding:8px 18px; border:1px solid"
+          padding:8px 18px; border:1px solid${s.stopping
+            ? "; opacity:.35" : ""}" ${s.stopping ? "disabled" : ""}
           onclick="$('btnRunStop').click()">■ Stop</button>
       </div>`;
   } else if (s && s.run_id) {
@@ -5168,8 +5610,9 @@ function renderSortBar(s) {
       <div class="sgStat"><b>${s.jams}</b><span>jams</span></div>${extra}
       <div class="sgRight">
         <span class="muted" style="font-size:12.5px">${s.run_id} · finished</span>
+        <button class="ghost" onclick="repOpen('${s.run_id}', 'summary')">Report</button>
         ${s.rejected ? `<button class="ghost" style="color:var(--amber)"
-          onclick="$('btnRevLoad').click(); $('revGrid').scrollIntoView({behavior:'smooth'})"
+          onclick="repOpen('${s.run_id}', 'bin', ${STATE.unmatched_bin ?? 0})"
           >Review rejects (${s.rejected})</button>` : ""}
         <button style="background:var(--green); border-color:var(--green);
           color:var(--bg); font:inherit; font-weight:700; border-radius:7px;
@@ -5189,6 +5632,44 @@ function renderSortBar(s) {
           onclick="$('btnRunStart').click()">▶ Start</button>
       </div>`;
   }
+}
+
+// bin badge colors: six to pick from (red and blue stay reserved for
+// UNMATCHED and OVERFLOW), clicking the selected swatch clears back to
+// brass. Machine-scoped like bin sizes — the color names a tray on the
+// table. Mirrors the server's BIN_PALETTE.
+const BIN_PALETTE = ["#e8d44d", "#4cc46a", "#a78bfa",
+                     "#f08c3a", "#3fc8c8", "#e879b9"];
+
+function binColorPop(i) {
+  const was = document.querySelector(".colorPop");
+  const reopen = was && +was.dataset.slot === i;
+  if (was) was.remove();
+  if (reopen) return;                       // badge re-click = toggle shut
+  if ($("binList").classList.contains("locked")) return;
+  const cur = (STATE.bin_colors || [])[i] || null;
+  const pop = document.createElement("div");
+  pop.className = "colorPop";
+  pop.dataset.slot = i;
+  pop.innerHTML = `<div class="sw">${BIN_PALETTE.map(c =>
+    `<span class="s${c === cur ? " sel" : ""}" data-c="${c}"
+       style="background:${c}"></span>`).join("")}</div>`;
+  pop.onclick = e => e.stopPropagation();
+  pop.querySelectorAll(".s").forEach(s => s.onclick = () =>
+    saveBinColor(i, s.dataset.c === cur ? null : s.dataset.c));
+  document.querySelector(`.binSlot[data-bin="${i}"]`).appendChild(pop);
+  setTimeout(() => document.addEventListener("click",
+    () => pop.remove(), { once: true }));
+}
+
+async function saveBinColor(i, color) {
+  const colors = STATE.bins.map((_, k) =>
+    k === i ? color : (STATE.bin_colors || [])[k] || null);
+  try {
+    await postJson("/api/machine/settings", { bin_colors: colors });
+    STATE.bin_colors = colors;
+  } catch (e) { msg("clMsg", e.message, false); }
+  renderBins();
 }
 
 // bin size = physical capacity in cases. Machine-scoped (it describes the
@@ -5335,11 +5816,13 @@ async function pollRun() {
   // a new LIVE run instantly retires the previous run's cached report —
   // its stats and sections must never dress the new run's tally
   if (s.running && s.run_id !== pollRun._repRun) {
-    pollRun._repHtml = pollRun._repStats = pollRun._repSim = null;
+    pollRun._repData = pollRun._repStats = pollRun._repSim = null;
     pollRun._repRun = null;
   }
   const recentKey = last ? s.recent.map(r => r.n).join() : "";
-  if (last && recentKey !== pollRun._key) {
+  // capture-run cases never paint the Sort page's live panels — the
+  // Collect page's census card is their home
+  if (last && !s.capture && recentKey !== pollRun._key) {
     pollRun._key = recentKey;
     $("runLast").className = "";
     $("runLast").innerHTML = `<div class="runCase ${classified(last) ? "" : "rej"}">
@@ -5357,15 +5840,22 @@ async function pollRun() {
         </div>
       </div></div>`;
     $("runRecent").className = "";
-    $("runRecent").innerHTML = [...s.recent].reverse().map(r =>
-      `<div class="recentRow ${classified(r) ? "" : "rej"}">
+    $("runRecent").innerHTML = [...s.recent].reverse().map(r => {
+      const ok = classified(r);
+      const conf = ok && r.stamp_conf
+        ? `<span class="rcConf${r.stamp_conf >= 0.95 ? " hi" : ""}">${
+            Math.round(r.stamp_conf * 100)}%</span>`
+        : `<span class="rcConf"></span>`;
+      return `<div class="recentRow ${ok ? "" : "rej"}">
         ${r.thumb ? `<img src="${r.thumb}">` : ""}
         <span class="muted">#${r.n}</span>
-        <span class="cat">${caseLabel(r)}</span>
-        <span class="muted">bin ${r.bin}</span></div>`).join("");
+        <span class="cat">${caseLabel(r)}</span>${conf}
+        <span class="numB2" style="background:${binBadgeColor(r.bin)}">${
+          r.bin}</span></div>`;
+    }).join("");
   }
 
-  if (s.slots && s.slots.length) {
+  if (s.slots && s.slots.length && !s.capture) {
     // live counts on the bin cards (jumbo number appears with count)
     s.slots.forEach(sl => {
       const c = $("binCount" + sl.slot);
@@ -5432,7 +5922,11 @@ async function pollRun() {
         margin-top:4px">feed homing: last ${s.feed_stats.LastHomingSteps}
         µsteps · worst ${s.feed_stats.MaxHomingSteps} ·
         ${s.feed_stats.FeedCycles} cycles</div>` : "";
-    if (s.end_reason === "out_of_brass") {
+    if (s.capture) {
+      // a finished BATCH capture never announces itself here — its
+      // story (census, review) lives on the Collect page
+      banner.style.display = "none";
+    } else if (s.end_reason === "out_of_brass") {
       banner.style.display = "";
       banner.innerHTML = (s.flushed
         ? `🔔 <b>Out of brass</b> — run ended automatically after
@@ -5461,104 +5955,46 @@ async function pollRun() {
   }
 }
 
-/* ---- reject review ---- */
+/* ---- run reports ---- */
 async function loadRuns() {
   try {
     const j = await api("/api/runs");
     // SORTING runs only — batch-capture runs review as grouped cards on
-    // the Collect page (its own picker), never as a sort report
-    const runs = j.runs.filter(r => !r.capture);
-    $("revRun").innerHTML = runs.length
-      ? runs.map(r => `<option value="${r.run}">${r.run}${r.mode === "sim" ? " (SIM)" : ""} — ${r.rejects} unreviewed rejects</option>`).join("")
-      : `<option value="">no sorting runs yet</option>`;
+    // the Collect page (its own picker), never as a sort report. Five
+    // newest, matching the per-kind retention window.
+    const runs = j.runs.filter(r => !r.capture).slice(0, 5);
+    $("runReports").innerHTML = runs.length ? runs.map(r => {
+      const ds = r.dur_s;
+      const dur = !ds ? null
+        : ds >= 3600 ? `${Math.floor(ds / 3600)}h ${Math.floor(ds % 3600 / 60)}m`
+        : ds >= 60 ? `${Math.floor(ds / 60)}m`
+        : `${Math.round(ds)}s`;
+      const bits = [r.total != null ? `${r.total} case${r.total === 1 ? "" : "s"}` : null,
+                    dur, r.mode === "sim" ? "SIM" : null]
+        .filter(Boolean).join(" · ");
+      const right = r.rejects
+        ? `<span class="cnt" style="color:var(--amber); line-height:1.05;
+             text-align:right">${r.rejects}<small style="display:block;
+             font-size:9px; font-weight:600; color:var(--dim);
+             letter-spacing:.07em">TO REVIEW</small></span>`
+        : `<span class="cnt" style="color:var(--green); font-size:17px">✓</span>`;
+      return `<div class="rbt" onclick="repOpen('${r.run}', 'summary')">
+        <span class="lbl">${fmtRunId(r.run)}<small>${bits || "—"}</small></span>
+        ${right}</div>`;
+    }).join("") : `<div class="muted">no sorting runs yet</div>`;
   } catch {}
 }
-$("btnRevLoad").onclick = () => loadRejects();
 let lastReportShown = null;
 
-async function loadReport(runId) {
-  const run = runId || $("revRun").value;
+async function loadReport(run) {
   if (!run) return;
   try {
     const j = await api(`/api/runs/${run}/report`);
-    // pure DATA loader — paints nothing. An open reject review (typed,
-    // unsaved corrections in revGrid) must survive a report refresh.
-    const reasonRow = Object.entries(j.reasons).sort((a, c) => c[1] - a[1])
-      .map(([r, n]) => `${REASONS[r] || r}: <b>${n}</b>`).join(" · ");
-    const byBin = {};
-    const repHtml = {};
-    j.cases.forEach(c => (byBin[c.bin] = byBin[c.bin] || []).push(c));
-    const caseCard = c => `
-        <div class="revCard" id="case_${c.n}">
-          ${c.thumb ? `<img src="${c.thumb}">` : ""}
-          <div class="why">#${c.n} · ${c.stamp || "?"} · ${Math.round(c.conf * 100)}%</div>
-          <div class="caseAct" style="display:flex; gap:6px">${c.filed
-            ? `<span class="pill ok">filed ✓</span>`
-            : `<input list="classList" class="revStamp" style="flex:1"
-                 autocomplete="off" spellcheck="false"
-                 value="${c.stamp || ""}">
-               <button class="ghost" style="padding:2px 10px"
-                 onclick="caseResolve('${run}', ${c.n})">File</button>`}
-          </div>
-        </div>`;
-    // a shared slot (several classes deliberately mapped to one bin,
-    // plus unmatched overflow) sub-groups its cases by class: mapped
-    // classes first, then the unassigned riders — single-class bins
-    // keep the flat grid
-    const grids = Object.entries(byBin).map(([b, cs]) => {
-      const byCls = {};
-      cs.forEach(c => {
-        const s = c.stamp || "?";
-        (byCls[s] = byCls[s] || []).push(c);
-      });
-      const raw = (STATE.bins || [])[+b];
-      const mapped = new Set(binClasses(raw));
-      const isUMb = binGroup(raw).includes("UNMATCHED");
-      const isOFb = binGroup(raw).includes("OVERFLOW");
-      // the reject-reason breakdown rides the catch-all bin's section —
-      // that's where the rejected cases it explains actually live
-      const reasons = isUMb && reasonRow ? `
-        <div class="muted" style="margin:8px 0 2px; font-size:12.5px">
-          reject reasons — ${reasonRow}</div>` : "";
-      const names = Object.keys(byCls).sort((a, z) =>
-        (mapped.has(z) - mapped.has(a)) || (byCls[z].length - byCls[a].length)
-        || a.localeCompare(z));
-      // a scroll-stopping banner, not a small h3: each bin section
-      // starts with a brass-edged band naming the bin and its mapping
-      const head = `
-        <div id="repBin${b}" style="margin-top:26px; padding:10px 14px; background:var(--brass);
-             border-radius:7px; color:var(--bg);
-             display:flex; gap:12px; align-items:baseline; flex-wrap:wrap">
-          <span style="font-size:18px; font-weight:800;
-                letter-spacing:.5px">BIN ${b}</span>
-          <span style="font-size:13px; font-weight:600;
-                color:rgba(0,0,0,.62)">${cs.length} classified</span>
-          <span style="flex:1"></span>
-          <span style="font-size:12px; font-weight:600;
-                color:rgba(0,0,0,.62)">slot holds: ${
-            binGroup(raw).length
-              ? binGroup(raw).map(binEntryLabel).join(", ")
-              : "nothing mapped"}</span>
-        </div>`;
-      if (names.length < 2)
-        return (repHtml[b] = head + reasons
-          + `<div class="revGrid">${cs.map(caseCard).join("")}</div>`);
-      return (repHtml[b] = head + reasons + names.map(s => `
-        <div class="muted" style="margin:8px 0 2px; font-size:12.5px">
-          <b style="color:var(--text)">${s}</b> ×${byCls[s].length}${
-          mapped.has(s) ? ""
-          : isOFb ? ` — no bin of its own, routed here`
-          : ` — no slot of its own, rode the Unmatched bin`}</div>
-        <div class="revGrid">${byCls[s].map(caseCard).join("")}</div>`).join(""));
-    }).join("");
-    // no monolithic report page: the slot cards are the report's
-    // entry points — cache each bin's section, paint on demand.
+    // pure DATA loader — the modal renders views from this on demand.
     // _repRun tags the cache so stale runs can never dress a new tally.
-    pollRun._repHtml = repHtml;
+    pollRun._repData = j;
     pollRun._repRun = run;
     pollRun._repSim = j.mode === "sim";
-    void grids;
-    // the top bar's finished-state stats ride the report data
     const confs = j.cases.map(c => c.conf).filter(c => c != null).sort((a, b) => a - b);
     const dur = j.duration_s;
     pollRun._repStats = {
@@ -5569,64 +6005,258 @@ async function loadReport(runId) {
     };
     if (lastRunStatus) renderSortBar(lastRunStatus);
     renderBinStats();
+    if (repM.open && repM.run === run) repRender();
     return true;
   } catch (e) { msg("revMsg", e.message, false); return false; }
 }
 
-// the picked run's FULL report — every bin section stacked, on demand.
-// Historical runs' only complete view (the cards always serve the
-// newest run); explicit user gesture, so painting over repView is fine
-$("btnRepView").onclick = async () => {
-  const run = $("revRun").value;
-  if (!run) return;
-  if (pollRun._repRun !== run && !(await loadReport(run))) return;
-  $("revGrid").innerHTML = "";
-  const rep = pollRun._repHtml || {};
-  const keys = Object.keys(rep).sort((a, b) => a - b);
-  $("repView").innerHTML = (pollRun._repSim
-    ? `<div class="pill bad" style="margin-top:10px">SIMULATION — synthetic cases</div>` : "")
-    + (keys.length ? keys.map(k => rep[k]).join("")
-       : `<div class="muted" style="margin-top:10px">no classified cases in
-          this run — rejects live behind “Load rejects”</div>`);
-  $("repView").scrollIntoView({ behavior: "smooth", block: "start" });
-};
+/* ---------------------------- report modal --------------------------- */
+// one modal, two views: the run's summary (vitals + a tile per bin) and
+// one bin's cases. Rejects live here too — they're part of the run.
+const repM = { open: false, run: null, view: "summary", bin: 0, page: 0,
+               rejects: null, rejectsRun: null };
+const REP_PER_PAGE = 50;
 
-// paint ONE bin's report section (the slot card's view-cases target)
-function showBinReport(b) {
-  $("revGrid").innerHTML = "";
-  const html = (pollRun._repHtml || {})[b];
-  $("repView").innerHTML = html
-    ? (pollRun._repSim
-       ? `<div class="pill bad" style="margin-top:10px">SIMULATION — synthetic cases</div>` : "") + html
-    : `<div class="muted" style="margin-top:10px">no cases landed in bin ${b} this run</div>`;
-  $("repView").scrollIntoView({ behavior: "smooth", block: "start" });
+function binBadgeColor(i) {
+  const g = binGroup((STATE.bins || [])[i] || []);
+  if (g.includes("UNMATCHED")) return "var(--um)";
+  if (g.includes("OVERFLOW")) return "var(--blue)";
+  return (STATE.bin_colors || [])[i] || "var(--brass)";
 }
 
-async function loadRejects() {
-  const run = $("revRun").value;
-  if (!run) return;
-  try {
-    const j = await api(`/api/runs/${run}/rejects`);
-    $("repView").innerHTML = "";              // report and rejects swap, never stack
-    if (!j.rejects.length) {
-      $("revGrid").innerHTML = "";
-      return msg("revMsg", "No unreviewed rejects in this run.", true);
+async function repOpen(run, view, bin) {
+  repM.open = true;
+  repM.run = run;
+  repM.view = view || "summary";
+  repM.bin = bin ?? 0;
+  repM.page = 0;
+  $("repModal").style.display = "block";
+  msg("repMMsg", "");
+  if (pollRun._repRun !== run) {
+    $("repMBody").innerHTML = `<div class="muted">loading ${run}…</div>`;
+    if (!(await loadReport(run))) { repClose(); return; }
+  }
+  // rejects are keyed to THEIR run, not to whether the report cache
+  // moved: the poller preloads a just-finished run's report, so by the
+  // time the modal opens the cache already points at the new run — the
+  // old key (report-cache changed?) let the PREVIOUS run's rejects
+  // list survive into the new run's report. Field-hit: a 1-reject run
+  // showed no rejects anywhere because the prior run's empty list was
+  // still standing in for them.
+  if (repM.rejects === null || repM.rejectsRun !== run) {
+    try {
+      const rj = await api(`/api/runs/${run}/rejects`);
+      repM.rejects = rj.rejects;
+    } catch { repM.rejects = []; }
+    repM.rejectsRun = run;
+  }
+  repRender();
+}
+
+function repClose() {
+  repM.open = false;
+  $("repModal").style.display = "none";
+}
+
+// the case grids' column counts are measured at render time — follow a
+// window resize with a re-render so rows stay whole
+window.addEventListener("resize", () => {
+  clearTimeout(repRender._rz);
+  repRender._rz = setTimeout(() => {
+    if (repM.open && repM.view === "bin") repRender();
+    if ($("batchModal").style.display === "block" && batchM.view === "group")
+      renderBatchM();
+  }, 200);
+});
+
+function repGoto(view, bin, page) {
+  repM.view = view;
+  if (bin !== undefined) repM.bin = bin;
+  repM.page = page || 0;
+  repRender();
+  $("repModal").scrollTop = 0;
+}
+
+function repZoomCase(run, n, thumb) {
+  const img = $("repZoomImg");
+  img.onerror = () => { img.onerror = null; img.src = thumb; };
+  img.src = `/api/runs/${run}/frame/${n}`;
+  $("repZoom").style.display = "flex";
+}
+
+// header identity for a slot, matching the cards' vocabulary
+function repTileLabel(i) {
+  const g = binGroup((STATE.bins || [])[i] || []);
+  if (g.includes("UNMATCHED")) return "UNMATCHED";
+  if (g.includes("OVERFLOW")) return "OVERFLOW";
+  const parts = g.map(s => s.startsWith(FAM) ? s.slice(FAM.length) : s);
+  if (!parts.length) return "nothing mapped";
+  return parts.length > 2 ? `${parts[0]} +${parts.length - 1}` : parts.join(" · ");
+}
+
+function repRender() {
+  if (!repM.open) return;
+  const d = pollRun._repData;
+  if (!d) return;
+  const simPill = pollRun._repSim
+    ? `<span class="pill bad">SIMULATION — synthetic cases</span>` : "";
+  const head = (inner) => `
+    <div class="repHead">${inner}${simPill}
+      <span style="flex:1"></span>
+      <button class="ghost" style="padding:3px 12px" onclick="repClose()">Close</button>
+    </div>`;
+  if (repM.view === "summary") {
+    const rs = pollRun._repStats || {};
+    const nRej = (repM.rejects || []).length;
+    const byBin = {};
+    d.cases.forEach(c => byBin[c.bin] = (byBin[c.bin] || 0) + 1);
+    const um = STATE.unmatched_bin;
+    const tiles = (STATE.bins || []).map((g, i) => {
+      const isUM = binGroup(g).includes("UNMATCHED");
+      const cnt = (byBin[i] || 0) + (isUM ? nRej : 0);
+      return `
+      <div class="rbt${isUM ? " um" : ""}" onclick="repGoto('bin', ${i})">
+        <span class="numB2" style="background:${binBadgeColor(i)}">${i}</span>
+        <span class="lbl">${repTileLabel(i)}${isUM && nRej
+          ? `<small>${nRej} reject${nRej === 1 ? "" : "s"}</small>` : ""}</span>
+        <span class="cnt">${cnt}</span>
+      </div>`;
+    }).join("");
+    $("repMBody").innerHTML = head(`<h2>Run report</h2>
+        <span class="muted" style="font-size:13px">${repM.run}</span>`) + `
+      <div class="repVitals">
+        <div class="v"><b>${d.total}</b><span>cases</span></div>
+        <div class="v"><b>${rs.dur || "—"}</b><span>duration</span></div>
+        <div class="v"><b>${rs.spc || "—"}<small style="font-size:14px;color:var(--dim)">s</small></b><span>per case</span></div>
+        <div class="v"><b>${rs.medconf || "—"}</b><span>median conf</span></div>
+        <div class="v"><b style="color:${nRej ? "var(--red)" : "var(--text)"}">${nRej}</b><span>rejects</span></div>
+      </div>
+      <div class="repBins">${tiles}</div>`;
+    return;
+  }
+  // ---- one bin ----
+  const b = repM.bin;
+  const raw = (STATE.bins || [])[b];
+  const g = binGroup(raw || []);
+  const isUM = g.includes("UNMATCHED");
+  const isOF = g.includes("OVERFLOW");
+  const mapped = new Set(binClasses(raw));
+  const rank = {};
+  const cs = d.cases.filter(c => c.bin === b);
+  const byCls = {};
+  cs.forEach(c => {
+    const s = c.stamp || "?";
+    (byCls[s] = byCls[s] || []).push(c);
+  });
+  Object.keys(byCls).sort((a, z) =>
+    (mapped.has(z) - mapped.has(a)) || (byCls[z].length - byCls[a].length)
+    || a.localeCompare(z)).forEach((s, k) => rank[s] = k);
+  const ordered = [...cs].sort((a, z) =>
+    (rank[a.stamp || "?"] - rank[z.stamp || "?"]) || (a.n - z.n));
+  // rejects lead the catch-all's list — the run's homework first
+  const items = isUM
+    ? [...(repM.rejects || []).map(r => ({ rej: true, ...r })), ...ordered]
+    : ordered;
+  // a page holds WHOLE rows: column count from the modal's real width
+  // (auto-fill's own formula), page size the nearest multiple of it —
+  // otherwise the page boundary leaves a ragged last row with more
+  // cases sitting right behind it on the next page
+  const GAP = 9, COL_MIN = 157;
+  const avail = $("repMBody").clientWidth || 1000;
+  const cols = Math.max(1, Math.floor((avail + GAP) / (COL_MIN + GAP)));
+  const perPage = cols * Math.max(1, Math.round(REP_PER_PAGE / cols));
+  const pages = Math.max(1, Math.ceil(items.length / perPage));
+  const page = Math.min(repM.page, pages - 1);
+  const slice = items.slice(page * perPage, (page + 1) * perPage);
+  const run = repM.run;
+  let lastSec = null;
+  let body = "";
+  let grid = [];
+  const flush = () => {
+    if (grid.length) body += `<div class="revGrid" style="grid-template-columns:
+      repeat(${cols}, minmax(0,1fr))">${grid.join("")}</div>`;
+    grid = [];
+  };
+  for (const it of slice) {
+    const sec = it.rej ? "__rej" : (it.stamp || "?");
+    if (sec !== lastSec) {
+      flush();
+      if (it.rej) {
+        const reasons = Object.entries(d.reasons || {})
+          .filter(([r]) => !["ok", "no_bin_mapping"].includes(r))
+          .sort((a, z) => z[1] - a[1])
+          .map(([r, n]) => `${REASONS[r] || r}: <b>${n}</b>`).join(" · ");
+        body += `<div class="muted" style="margin:10px 0 2px; font-size:12.5px">
+          <b style="color:var(--um)">rejects</b>${reasons ? " — " + reasons : ""}</div>`;
+      } else if (Object.keys(byCls).length > 1 || isUM) {
+        body += `<div class="muted" style="margin:10px 0 2px; font-size:12.5px">
+          <b style="color:var(--text)">${sec}</b> ×${(byCls[sec] || []).length}${
+          mapped.has(sec) ? ""
+          : isOF ? " — no bin of its own, routed here"
+          : isUM ? " — no slot of its own, rode the Unmatched bin" : ""}</div>`;
+      }
+      lastSec = sec;
     }
-    msg("revMsg", j.total > j.rejects.length
-      ? `Showing the first ${j.rejects.length} of ${j.total} rejects — the rest load as these are resolved.` : "");
-    $("revGrid").innerHTML = j.rejects.map(r => `
-      <div class="revCard" id="rev_${r.n}">
-        <img src="${r.thumb}">
-        <div class="why">#${r.n} · ${rejectWhy(r)}</div>
-        <input list="classList" class="revStamp" autocomplete="off"
-          spellcheck="false" value="${r.stamp || ""}"
-          placeholder="class — or UNKNOWN to set aside">
-        <div style="display:flex; gap:6px">
-          <button class="ghost" style="flex:1" onclick="revResolve('${run}', ${r.n}, true)">Save</button>
-          <button class="ghost danger" onclick="revResolve('${run}', ${r.n}, false)">Discard</button>
-        </div>
-      </div>`).join("");
-  } catch (e) { msg("revMsg", e.message, false); }
+    grid.push(it.rej ? repRejCard(run, it) : repCaseCard(run, it));
+  }
+  flush();
+  if (!items.length)
+    body = `<div class="muted" style="margin-top:12px">no cases landed in bin ${b} this run</div>`;
+  const pager = pages > 1 ? `<div class="repPager">
+      <button class="ghost" ${page <= 0 ? "disabled" : ""}
+        onclick="repGoto('bin', ${b}, ${page - 1})">‹ prev</button>
+      ${Array.from({length: pages}, (_, p) =>
+        pages <= 10 || p === 0 || p === pages - 1 || Math.abs(p - page) <= 1
+        ? `<button class="ghost" ${p === page
+            ? 'disabled style="border-color:var(--brass); color:var(--brass)"' : ""}
+            onclick="repGoto('bin', ${b}, ${p})">${p + 1}</button>` : "").join("")}
+      <button class="ghost" ${page >= pages - 1 ? "disabled" : ""}
+        onclick="repGoto('bin', ${b}, ${page + 1})">next ›</button>
+    </div>` : "";
+  $("repMBody").innerHTML = head(`
+      <button class="ghost" style="padding:3px 12px"
+        onclick="repGoto('summary')">‹ all bins</button>
+      <span class="muted" style="font-size:13px">${run}</span>`) + `
+    <div class="repBanner">
+      <span class="numB2" style="background:${binBadgeColor(b)}; font-size:14px">BIN ${b}</span>
+      <span>${cs.length} classified${isUM ? ` · ${(repM.rejects || []).length} rejects` : ""}</span>
+      <span style="flex:1"></span>
+      <span>slot holds: ${g.length ? g.map(binEntryLabel).join(", ") : "nothing mapped"}</span>
+    </div>` + body + pager;
+}
+
+function repCaseCard(run, c) {
+  const t = c.thumb || "";
+  return `
+    <div class="revCard" id="case_${c.n}">
+      ${t ? `<img src="${t}" loading="lazy"
+              onclick="repZoomCase('${run}', ${c.n}, '${t}')">` : ""}
+      <div class="why">#${c.n} · ${c.stamp || "?"} · ${Math.round(c.conf * 100)}%</div>
+      <div class="caseAct" style="display:flex; gap:6px">${c.filed
+        ? `<span class="pill ok">filed ✓</span>`
+        : `<input list="classList" class="revStamp" style="flex:1"
+             autocomplete="off" spellcheck="false"
+             value="${c.stamp || ""}">
+           <button class="ghost" style="padding:2px 10px"
+             onclick="caseResolve('${run}', ${c.n})">File</button>`}
+      </div>
+    </div>`;
+}
+
+function repRejCard(run, r) {
+  return `
+    <div class="revCard" id="rev_${r.n}">
+      <img src="${r.thumb}" loading="lazy"
+        onclick="repZoomCase('${run}', ${r.n}, '${r.thumb}')">
+      <div class="why">#${r.n} · ${rejectWhy(r)}</div>
+      <input list="classList" class="revStamp" autocomplete="off"
+        spellcheck="false" value="${r.stamp || ""}"
+        placeholder="class — or UNKNOWN to set aside">
+      <div class="caseAct" style="display:flex; gap:6px">
+        <button class="ghost" style="flex:1" onclick="revResolve('${run}', ${r.n}, true)">Save</button>
+        <button class="ghost danger" onclick="revResolve('${run}', ${r.n}, false)">Discard</button>
+      </div>
+    </div>`;
 }
 
 // picker value -> resolve body fields (typed values must be REAL:
@@ -5653,17 +6283,15 @@ async function revResolve(run, n, save) {
   try {
     const j = await postJson(`/api/runs/${run}/rejects/${n}/resolve`, body);
     card.remove();
-    msg("revMsg", save ? `Saved as ${j.saved}` : "Discarded", true);
+    if (repM.rejects) repM.rejects = repM.rejects.filter(r => r.n !== n);
+    msg("repMMsg", save ? `Saved as ${j.saved}` : "Discarded", true);
     if (save) refresh();
     // flicking through cards must feel instant: the dropdown's
     // "N to review" counts refresh in one debounced pass, not with a
     // full runs-directory walk per click
     clearTimeout(revResolve._t);
     revResolve._t = setTimeout(loadRuns, 2500);
-    // the list is served 100 at a time — an empty grid may just mean the
-    // batch is done, so ask again for whatever is still on disk
-    if (!$("revGrid").children.length) loadRejects();
-  } catch (e) { msg("revMsg", e.message, false); }
+  } catch (e) { msg("repMMsg", e.message, false); }
 }
 
 async function caseResolve(run, n) {
@@ -5677,8 +6305,13 @@ async function caseResolve(run, n) {
     const j = await postJson(`/api/runs/${run}/cases/${n}/resolve`, body);
     card.querySelector(".caseAct").innerHTML =
       `<span class="pill ok">filed → ${j.saved}</span>`;
+    const rd = pollRun._repData;
+    if (rd && pollRun._repRun === run) {
+      const c = rd.cases.find(x => x.n === n);
+      if (c) c.filed = true;         // survives re-renders and page flips
+    }
     refresh();
-  } catch (e) { msg("revMsg", e.message, false); }
+  } catch (e) { msg("repMMsg", e.message, false); }
 }
 
 /* ------------------------------ console ----------------------------- */
@@ -5744,11 +6377,27 @@ const MS_FIELDS = { feed_speed: "msFeedSpeed", feed_steps: "msFeedSteps",
   feed_homing_offset: "msFeedHome",
   slot_drop_delay: "msDropDelay", notification_delay: "msNotifDelay",
   motor_standby: "msStandby",
-  sort_accel: "msSortAccel", sort_home_backoff: "msHomeBackoff",
+  sort_accel: "msSortAccel", sort_decel: "msSortDecel",
+  feed_accel: "msFeedAccel", feed_decel_rate: "msFeedDecRate",
+  feed_stall_threshold: "msSgFeed",
+  sort_home_backoff: "msHomeBackoff",
   sort_home_slow: "msHomeSlow", feed_launch: "msFeedLaunch",
   arm_dwell: "msArmDwell",
   air_drop_pre_delay: "msAirPre", air_drop_signal_ms: "msAirSignal",
   air_drop_post_delay: "msAirPost" };
+
+/* typed values must respect the caps the labels promise — snap into the
+   input's min/max the moment the field is left (the server clamps again
+   on save, board-aware, so nothing out of range can ever reach the board) */
+for (const id of [...Object.values(MS_FIELDS), "msSgFeed"]) {
+  const el = $(id);
+  if (!el) continue;
+  el.addEventListener("change", () => {
+    const lo = +el.min, hi = +el.max, v = +el.value;
+    if (Number.isFinite(v)) el.value = Math.min(hi, Math.max(lo, v));
+    else el.value = lo;
+  });
+}
 
 /* AirDrop timing fields only mean something while the mod is on —
    gray + disable them otherwise (values persist; save still sends them) */
@@ -5866,6 +6515,7 @@ async function loadMachineSettings() {
     for (const [k, id] of Object.entries(MS_FIELDS)) $(id).value = j.settings[k];
     $("msInit").checked = !!j.settings.init_on_startup;
     $("msFeedDecel").checked = !!j.settings.feed_decel;
+    $("msSg").checked = j.settings.stall_guard !== false;
     $("msAirDrop").checked = !!j.settings.air_drop;
     syncAirDropFields();
     $("msSortSteps").value = j.settings.sort_steps;   // grid-setup field
@@ -5873,6 +6523,11 @@ async function loadMachineSettings() {
     renderSlotChecks(j.settings.slots_total, j.settings.slots_enabled);
     $("msFirmware").value = j.settings.firmware || "stock";
     applyFirmwareUI($("msFirmware").value);
+    // which board answered on the last connect — CS7.2 or the SKR Pico port
+    const bd = j.settings.board || "";
+    lastBoardSeen = bd;
+    $("msBoard").textContent = bd ? "Board: " + bd : "";
+    $("msBoard").style.display = bd ? "" : "none";
     renderSortBtns(j.settings.slots_total);
     renderSlotCal(j.settings);
   } catch {}
@@ -5880,7 +6535,8 @@ async function loadMachineSettings() {
 $("btnMsSave").onclick = async () => {
   const body = { init_on_startup: $("msInit").checked,
                  feed_decel: $("msFeedDecel").checked,
-                 air_drop: $("msAirDrop").checked };
+                 air_drop: $("msAirDrop").checked,
+                 stall_guard: $("msSg").checked };
   for (const [k, id] of Object.entries(MS_FIELDS)) body[k] = +$(id).value;
   try {
     const j = await postJson("/api/machine/settings", body);
@@ -5908,18 +6564,36 @@ $("btnSlotsSave").onclick = async () => {
   } catch (e) { msg("msSlotsMsg", e.message, false); }
 };
 function applyFirmwareUI(fw) {
+  const iMax = fw === "pico" ? 1600 : 1200;   // StepSticks vs onboard TMC2209
+  $("msFeedCurrent").max = iMax; $("msSortCurrent").max = iMax;
+  const fork = fw.startsWith("ss") || fw === "pico";
   document.querySelectorAll(".forkOnly").forEach(el =>
-    el.style.display = fw.startsWith("ss") ? "" : "none");
+    el.style.display = fork ? "" : "none");
+  document.querySelectorAll(".picoOnly").forEach(el =>
+    el.style.display = fw === "pico" ? "" : "none");
+}
+function firmwareBoardHint(fw, board) {
+  // the board pill is ground truth from the version line — warn when the
+  // selected firmware cannot be what is actually connected
+  if (!board) return "";
+  if (board === "SKR Pico" && fw !== "pico")
+    return "connected board is the SKR Pico — it runs SortIQ-Pico firmware";
+  if (board !== "SKR Pico" && fw === "pico")
+    return "connected board is a CS7.2 — it cannot run SortIQ-Pico firmware";
+  return "";
 }
 $("msFirmware").onchange = async () => {
   const fw = $("msFirmware").value;
   applyFirmwareUI(fw);
   try {
     await postJson("/api/machine/settings", { firmware: fw });
-    msg("msMsg", fw.startsWith("ss")
+    const hint = firmwareBoardHint(fw, lastBoardSeen);
+    msg("msMsg", hint ? hint + " — re-detected on next connect"
+      : fw === "pico" ? "SortIQ-Pico selected — full motion + jam-detection tuning"
+      : fw.startsWith("ss")
       ? "SortIQ fork selected — all tuning available"
         + (fw === "ss2" ? "; runs use the pipelined feed" : "")
-      : "Stock firmware selected — fork-only tuning hidden (re-detected on next connect)", true);
+      : "Stock firmware selected — fork-only tuning hidden (re-detected on next connect)", !hint);
   } catch (e) { msg("msMsg", e.message, false); }
 };
 
@@ -5932,6 +6606,7 @@ $("btnMsDefaults").onclick = async () => {
     if ("feed_steps" in d) $("msFeedSteps").value = d.feed_steps;
     if ("sort_current" in d) $("msSortCurrent").value = d.sort_current;
     $("msFeedDecel").checked = !!d.feed_decel;
+    if (d.stall_guard !== undefined) $("msSg").checked = !!d.stall_guard;
     $("msAirDrop").checked = !!d.air_drop;
     syncAirDropFields();
     msg("msMsg", "Fields reset to the bench-proven defaults — click Save to apply", true);
@@ -5973,6 +6648,13 @@ async function fleetLoad() {
 }
 
 function fleetRender(cards) {
+  const meCard = cards.find(c => c.me) || {};
+  const vnum = v => ((String(v || "").match(/\d+/g) || ["0"]).map(Number)
+    .concat([0, 0, 0]).slice(0, 3));
+  const newerThanMe = v => {
+    const a = vnum(v), b = vnum(meCard.version);
+    return a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+  };
   $("fleetCards").innerHTML = cards.map(c => {
     if (!c.reachable) return `
       <div class="card" style="opacity:.45">
@@ -5988,9 +6670,17 @@ function fleetRender(cards) {
       : `<div class="muted" style="margin-top:4px">idle</div>`;
     const name = c.me
       ? `<b>${c.name}</b> <span class="muted">(this machine)</span>`
-      : `<a href="${c.url}" target="_blank" style="font-weight:700">${c.name}</a>`;
+      : `<a href="${c.url}" style="font-weight:700">${c.name}</a>`;
+    // never offer to push OUR build onto a machine running a NEWER
+    // version — that's a downgrade dressed as an update. Point the
+    // user at the newer machine instead; its own fleet tab offers the
+    // right-direction button.
     const build = c.same_build
       ? `<span class="muted">v${c.version} · ${(c.digest || "").slice(0, 8)}</span>`
+      : newerThanMe(c.version) > 0
+      ? `<span style="color:var(--amber)">v${c.version} · ${(c.digest || "").slice(0, 8)}
+           — newer than this machine: update the fleet from
+           <a href="${c.url}">its page</a> instead</span>`
       : `<span style="color:var(--amber)">v${c.version} · ${(c.digest || "").slice(0, 8)}
            — different build</span>
          <button class="ghost" style="padding:2px 10px"
@@ -6081,7 +6771,11 @@ async function loadNetwork() {
       return;
     }
     $("btnWifiScan").disabled = false;
-    box.innerHTML = j.devices.map(d =>
+    box.innerHTML = (j.hotspot
+      ? `<div style="font-size:13px; margin-bottom:6px; color:var(--amber)">
+           <b>Fallback hotspot ${j.hotspot} is up</b> — no known network was
+           found. Connect the box to a real network below.</div>` : "")
+      + j.devices.map(d =>
       `<div style="font-size:13px; margin-bottom:3px">
          ${d.type === "wifi" ? "Wi-Fi" : "Ethernet"} <span class="muted">${d.device}</span> —
          <b style="color:${d.connection ? "var(--green)" : "var(--dim)"}">${d.connection || "not connected"}</b>
@@ -6130,8 +6824,79 @@ async function sysRestart(what) {
     }, 3000);
   } catch (e) { $("sysMsg").textContent = e.message; }
 }
+$("btnPower").onclick = async () => {
+  const on = $("btnPower").dataset.on === "1";
+  if (on && !confirm("Turn the sorter board power OFF? The machine link drops until you power it back on.")) return;
+  try {
+    const j = await postJson("/api/power", { on: !on });
+    $("btnPower").dataset.on = j.on ? "1" : "0";
+    pollConsole();
+  } catch (e) { alert(e.message); }
+};
 $("btnRestartApp").onclick = () => sysRestart("app");
 $("btnRebootPi").onclick = () => sysRestart("pi");
+$("btnShutdownPi").onclick = async () => {
+  if (!confirm("Shut the Pi down?\n\nWait ~10 s for the green activity LED to stop blinking, then it's safe to cut power. Power-cycle to start it again.")) return;
+  try {
+    await postJson("/api/system/restart", { what: "off" });
+    $("sysMsg").textContent = "shutting down — safe to cut power once the activity LED stops";
+  } catch (e) { $("sysMsg").textContent = e.message; }
+};
+
+/* ---- release self-update: check on click, apply on the user's word ---- */
+$("btnUpdCheck").onclick = async () => {
+  $("updState").textContent = "checking…";
+  $("updOffer").style.display = "none";
+  try {
+    const j = await api("/api/update/check");
+    if (j.git_checkout) {
+      $("updState").textContent =
+        `dev checkout — update with git (latest release: ${j.latest})`;
+      return;
+    }
+    if (!j.update_available) {
+      $("updState").textContent = `up to date — v${j.current} is current`;
+      return;
+    }
+    $("updState").textContent = `running v${j.current}`;
+    $("updName").textContent = `${j.latest}${j.name && j.name !== j.latest
+      ? ` — ${j.name}` : ""} is available`;
+    $("updNotes").textContent = j.notes || "";
+    $("updOffer").style.display = "";
+    $("btnUpdApply").onclick = () => updApply(j.latest);
+  } catch (e) { $("updState").textContent = e.message; }
+};
+
+async function updApply(tag) {
+  if (!confirm(`Update to ${tag}? The app restarts when done (~30s) and `
+               + `the page reconnects on its own.`)) return;
+  $("btnUpdApply").disabled = true;
+  $("updState").textContent = `downloading ${tag}…`;
+  try {
+    const j = await postJson("/api/update/apply", { tag });
+    if (!j.restarting) {
+      $("updState").textContent = "already byte-identical to the release";
+      $("btnUpdApply").disabled = false;
+      return;
+    }
+    $("updState").textContent =
+      `updated ${j.updated} file(s) — restarting…`;
+    $("updOffer").style.display = "none";
+    // same reconnect dance as a restart: don't trust an early 200 (the
+    // OLD process answers for the first seconds)
+    let waited = 0;
+    const poll = setInterval(async () => {
+      waited += 3;
+      try {
+        const r = await fetch("/api/state", { cache: "no-store" });
+        if (r.ok && waited >= 8) { clearInterval(poll); location.reload(); }
+      } catch { /* down — keep waiting */ }
+    }, 3000);
+  } catch (e) {
+    $("updState").textContent = e.message;
+    $("btnUpdApply").disabled = false;
+  }
+}
 $("netModal").addEventListener("click", e => {
   if (e.target === $("netModal")) $("netClose").click();
 });
@@ -6206,6 +6971,15 @@ async function pollConsole() {
   let j = null;
   try { j = await api("/api/console/log"); } catch {}
   const connected = !!(j && j.connected);
+  // board power switch (IoT Relay via GPIO): shown only where the pin exists
+  const pw = j ? j.power : null;
+  if (pw === null || pw === undefined) { $("btnPower").style.display = "none"; }
+  else {
+    $("btnPower").style.display = "";
+    $("btnPower").dataset.on = pw ? "1" : "0";
+    $("btnPower").style.color = pw ? "var(--green)" : "var(--dim)";
+    $("btnPower").innerHTML = pw ? "&#x23FB; Board ON" : "&#x23FB; Power on";
+  }
   $("btnConConnect").classList.toggle("faded", connected);
   $("btnConDisc").classList.toggle("faded", !connected);
   if (connected) syncConMode(j.mode);
@@ -6216,9 +6990,10 @@ async function pollConsole() {
   $("machState").style.color = connected ? "var(--green)" : "var(--dim)";
   $("machState").lastChild.textContent = connected ? " CONNECTED" : " OFFLINE";
   $("machConnForm").style.display = connected ? "none" : "flex";
+  $("conDockTitle").textContent = (j && j.board ? j.board : "Board") + " monitor";
   $("machMeta").textContent = !connected ? ""
     : j.mode === "serial"
-    ? `CS7.2 board · ${$("conPort").value.trim() || "/dev/ttyUSB0"} · 9600`
+    ? `${j.board || "CS7.2"} board · ${j.port || $("conPort").value.trim() || "/dev/ttyUSB0"} · 9600`
     : "Simulator (virtual CS7.2)";
   const html = connected
     ? j.log.map(l =>

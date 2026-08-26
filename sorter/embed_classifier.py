@@ -46,6 +46,15 @@ class EmbedClassifier:
         self.interp = _load_interpreter(model_path)
         self.inp = self.interp.get_input_details()[0]
         self.out = self.interp.get_output_details()[0]
+        # ONE interpreter serves every consumer — the run loop, dataset
+        # scans, batch-review clustering, the novelty gate, the Test
+        # page. Concurrent invokes trip tflite's internal-reference
+        # check (field-hit twice), so the invoke is serialized here at
+        # the source. Endpoint-level guards still refuse the heavy
+        # overlaps for UX; this lock is the correctness backstop for
+        # every path they can't cover.
+        import threading
+        self._invoke_lock = threading.Lock()
         g = np.load(gallery_path, allow_pickle=False)
         vec = g["g_vec"].astype(np.float32)
         self.g_vec = vec / np.linalg.norm(vec, axis=1, keepdims=True)
@@ -128,9 +137,10 @@ class EmbedClassifier:
         h, w = self.inp["shape"][1], self.inp["shape"][2]
         x = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         x = cv2.resize(x, (w, h)).astype(np.float32) / 255.0
-        self.interp.set_tensor(self.inp["index"], x[None, ...])
-        self.interp.invoke()
-        v = self.interp.get_tensor(self.out["index"])[0].astype(np.float32)
+        with self._invoke_lock:
+            self.interp.set_tensor(self.inp["index"], x[None, ...])
+            self.interp.invoke()
+            v = self.interp.get_tensor(self.out["index"])[0].astype(np.float32)
         return v / (np.linalg.norm(v) or 1.0)
 
     def predict(self, img_bgr, exclude_path=None):
