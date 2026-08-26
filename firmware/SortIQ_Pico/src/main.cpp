@@ -750,8 +750,8 @@ void setup() {
   engine.init();
   feedSt = engine.stepperConnectToPin(FEED_STEP);
   sortSt = engine.stepperConnectToPin(SORT_STEP);
-  if (feedSt) { feedSt->setDirectionPin(FEED_DIR, false); feedApplyMotion(); }
-  if (sortSt) { sortSt->setDirectionPin(SORT_DIR, false); sortApplyMotion(); }
+  if (feedSt) { feedSt->setDirectionPin(FEED_DIR, true); feedApplyMotion(); }
+  if (sortSt) { sortSt->setDirectionPin(SORT_DIR, true); sortApplyMotion(); }
   // FastAccelStepper's PIO claim stomps GPIO 0's pin mux (UART0 TX = the
   // Pi machine link) on this core — bisected on the bench: TX died at the
   // first stepperConnectToPin, RX untouched. Hand the pins back to UART.
