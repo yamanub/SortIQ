@@ -2922,10 +2922,13 @@ def api_shadow_remove():
 # digest or nothing is installed. Re-pinned each time a new starter ships.
 STARTER_URL = ("https://github.com/yamanub/SortIQ/releases/download/"
                "v1.4/starter_9mm.tar.gz")
-# the v5 pair (99.9% closed-set, 86 classes) packaged 2026-08-18; the
-# exact file to upload as the v1.4 release asset — re-pin if repackaged
-STARTER_SHA256 = ("e40d5abec51e4649c44790cf177d8f4ae70617deb"
-                  "33ec8540a25bf53dee9ba9c")
+# UNPINNED for the v1.4 release (owner's call — held for later). The v5
+# pair (99.9% closed-set, 86 classes, packaged 2026-08-18) lives at
+# Documents\SortIQ-release-assets\starter_9mm.tar.gz with digest
+# e40d5abec51e4649c44790cf177d8f4ae70617deb33ec8540a25bf53dee9ba9c —
+# re-pin that digest here and attach the asset to a release to publish.
+# With no pin the Train tab hides the starter card entirely.
+STARTER_SHA256 = ""
 
 
 @app.get("/api/models/starter")

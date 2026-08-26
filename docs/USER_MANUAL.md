@@ -226,6 +226,11 @@ sorting from 3 photos with no retraining at all.
 
 ### The community starter recognizer
 
+> **Not yet published** — this feature ships in the app but the
+> downloadable model is held back for a future release; the Train tab
+> hides the card until one is pinned. The section below describes how it
+> works when available.
+
 A fresh install doesn't have to start blind. Each release publishes a
 **starter**: a trained 9mm recognizer + gallery (80+ common headstamps)
 that sorts out of the box — turn on **auto-assign** and run brass
