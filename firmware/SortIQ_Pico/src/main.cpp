@@ -210,6 +210,21 @@ void sortApplyMotion() {
 
 void sortStartHoming() {
   if (!sortAxis || !motorPower) { sortState = S_IDLE; sortHomed = sortAxis ? false : true; return; }
+  // 1.x stage-0 parity: an arm at rest ON the flag IS home — accept the
+  // position without motion. 1.x re-homes this way at every slot-0 arrival
+  // and at boot; the edge-finding dance here made the arm visibly back off
+  // the flag after a reboot, which the machine has never done. Precision
+  // cost is bounded by the flag width, same as 1.x, and the flag audit's
+  // 240-ustep tolerance already absorbs it.
+  if (digitalRead(SORT_HOME) == LOW) {
+    sortFlagPos = (long)sortSt->getCurrentPosition() -
+                  (long)sortHomingOffset * USTEP;
+    sortHomed = true; sortSlot = 0;
+    lastSortArrive = millis();
+    sortApplyMotion();
+    sortState = S_IDLE;
+    return;
+  }
   sortHomed = false;
   sortSt->setSpeedInHz(4000);
   sortSt->setAcceleration(accFToSS2(sortAccF));
@@ -345,7 +360,23 @@ long feedClearStart = 0;
 bool feedDebug = false;
 long feedArmAt = 0;
 uint32_t feedEdgeLatUs = 0;
+// Predictive creep: braking from cruise inside the small offset is
+// physically impossible (bench: ~25 full steps of forward rotor slip at
+// speed 96 — 1.x commanded the same stop and simply never knew). 2.0
+// learns the tab pitch, ramps down to a creep BEFORE the predicted edge,
+// and takes the edge at creep speed: an exact, slip-free stop.
+long feedPrevEdge = LONG_MIN;
+long feedPitchEst = 0;                             // EMA of tab pitch, usteps
+long feedCreepAt = 0;
+bool feedCreeping = false;
+#define FEED_CREEP_HZ 4000
+#define FEED_CREEP_RAMP 200000
+// lead covers the FAS step queue (~300 usteps at cruise), the ramp-down
+// distance, and tab placement jitter
+#define FEED_CREEP_LEAD 450
+volatile uint32_t feedFallCount = 0;               // every falling edge, all cycle
 void feedHomeIsr() {
+  feedFallCount++;
   if (feedEdgeArm && !feedEdgeSeen) { feedEdgeUs = micros(); feedEdgeSeen = true; }
 }
 
@@ -387,28 +418,43 @@ void feedAbort(const __FlashStringHelper *err) {
   host.println(err);
 }
 
-// tab edge in hand (feedEdgeAbs): stop at edge + offset, forward-only
+// tab edge in hand (feedEdgeAbs): ONE deceleration to edge + offset,
+// forward-only. 1.x parity: crisp mode crosses the offset at cruise and
+// dead-stops; decel-over-offset shapes the whole offset down to the
+// feeddecel end speed. Never reverse across the drop port — an overrun
+// stops just past home (bounded; the next cycle re-anchors on its edge).
 void feedFinishHome() {
   feedEdgeArm = false;
   long pos = (long)feedSt->getCurrentPosition();
   long stopAt = feedEdgeAbs + (long)feedHomingOffset * USTEP;
-  lastSeek = feedEdgeInBlind ? 0 : feedEdgeAbs - feedSeekStart;
+  lastSeek = feedEdgeAbs - feedCycleStart - (long)feedSteps * USTEP;
   if (lastSeek < 0) lastSeek = 0;
   if (lastSeek > maxSeek) maxSeek = lastSeek;
-  // never reverse across the drop port: an overrun stops just past home
-  // (bounded, and next cycle re-anchors on a fresh edge)
   long remain = stopAt - pos;
-  if (remain < 32) {
-    // at/past the target (offset 0, or edge passed mid-blind): the 1.x
-    // dead stop — halt the step queue now rather than shape a ramp
-    feedSt->forceStop();
+  int32_t vm = feedSt->getCurrentSpeedInMilliHz();
+  if (vm < 0) vm = -vm;
+  uint32_t v = (uint32_t)(vm / 1000);
+  // learn the pitch ONLY from slip-free edges (taken at creep speed) —
+  // a cruise-taken edge follows a slipped stop and reads short
+  if (feedPrevEdge != LONG_MIN && v <= FEED_CREEP_HZ + 800) {
+    long dp = feedEdgeAbs - feedPrevEdge;
+    if (dp > 600 && dp < 3000)
+      feedPitchEst = feedPitchEst > 0 ? (feedPitchEst * 3 + dp) / 4 : dp;
+  }
+  feedPrevEdge = feedEdgeAbs;
+  if (remain < 16) {
+    feedSt->forceStop();                     // at/past the mark: dead stop
+  } else if (!feedDecelOverOffset) {
+    feedSt->setAcceleration(4000000);        // cruise the offset, dead stop
+    feedSt->moveTo(stopAt);
   } else {
-    uint32_t hz = speedToHz(feedSpeedSet);
-    uint32_t a = feedDecelOverOffset ? accFToSS2(feedDecF) : 500000;
-    uint64_t need = ((uint64_t)hz * hz) / (uint64_t)(2L * remain);
-    need += need / 8;
-    if (need > a) a = (need > 4000000ULL) ? 4000000UL : (uint32_t)need;
-    feedSt->setAcceleration(a);
+    uint32_t vend = (feedDecF > 0) ? (1000000UL / (uint32_t)feedDecF) : 0;
+    uint64_t vv = (uint64_t)v * v;
+    uint64_t ee = (uint64_t)vend * vend;
+    uint64_t a = (vv > ee) ? (vv - ee) / (uint64_t)(2L * remain) : 5000;
+    if (a < 5000) a = 5000;
+    if (a > 4000000ULL) a = 4000000ULL;
+    feedSt->setAcceleration((uint32_t)a);
     feedSt->moveTo(stopAt);
   }
   if (feedDebug) {
@@ -416,8 +462,10 @@ void feedFinishHome() {
     host.print(F(" arm=")); host.print(feedArmAt);
     host.print(F(" edge=")); host.print(feedEdgeAbs);
     host.print(F(" lat=")); host.print(feedEdgeLatUs);
-    host.print(F(" stop=")); host.print(stopAt);
-    host.print(F(" inBlind=")); host.println(feedEdgeInBlind ? 1 : 0);
+    host.print(F(" v=")); host.print(v);
+    host.print(F(" nfall=")); host.print(feedFallCount);
+    host.print(F(" pitch=")); host.print(feedPitchEst);
+    host.print(F(" stop=")); host.println(stopAt);
   }
   feedState = F_OFFSET;
 }
@@ -428,9 +476,27 @@ void feedStartCycle() {                            // after the arm is parked
   feedEdgeArm = false;                             // armed once confirmed clear
   feedCycleStart = (long)feedSt->getCurrentPosition();
   feedClearStart = feedCycleStart;
+  feedSeekStart = feedCycleStart;
   feedSgHits = 0; feedSgGate = 0; feedSgArmPos = -1; feedSgEvalPos = LONG_MIN;
   sgLastN = 0; sgLastSum = 0; sgLastMin = 1023;
-  feedSt->move((long)feedSteps * USTEP);           // blind travel
+  // ONE continuous run to the flag, 1.x-style. The port's blind-move /
+  // stop / re-launch / seek / stop shape put three violent transitions
+  // where 1.x has one, and the motor slipped steps at them (bench: pitch
+  // readings wandering 685-1316 on a wheel proven even to +/-2 steps).
+  // "Blind" is now only a distance during which the edge is not yet
+  // trusted, not a separate move.
+  feedFallCount = 0;
+  feedCreeping = false;
+  long blindEnd = feedCycleStart + (long)feedSteps * USTEP;
+  long bootstrap = blindEnd - FEED_CREEP_LEAD;   // unlearned: creep the seek
+  if (feedPitchEst > 0 && feedPrevEdge != LONG_MIN)
+    feedCreepAt = feedPrevEdge + feedPitchEst - FEED_CREEP_LEAD;
+  else
+    feedCreepAt = bootstrap;
+  if (feedCreepAt < feedCycleStart + 64 || feedCreepAt > blindEnd + 6400)
+    feedCreepAt = bootstrap;                       // stale frame: be safe
+  if (feedCreepAt < feedCycleStart + 64) feedCreepAt = feedCycleStart + 64;
+  feedSt->runForward();
   feedT0 = millis();
   feedState = F_BLIND;
 }
@@ -467,7 +533,14 @@ void feedService() {
       // sampling both false-trips on transient dips 1.x never saw and
       // blocks the loop ~10 ms per read.
       feedEdgeMaybeArm();
-      if (sgEnabled && feedSgThrs > 0 &&
+      if (!feedCreeping &&
+          (long)feedSt->getCurrentPosition() >= feedCreepAt) {
+        feedSt->setAcceleration(FEED_CREEP_RAMP);
+        feedSt->setSpeedInHz(FEED_CREEP_HZ);
+        feedSt->applySpeedAcceleration();          // ramp down while running
+        feedCreeping = true;
+      }
+      if (!feedCreeping && sgEnabled && feedSgThrs > 0 &&
           (feedSt->rampState() & RAMP_STATE_COAST)) {
         // 1.x SG_ARM_STEPS parity: SG_RESULT reads ~0 for the first ~8 full
         // steps after a standstill and DIAG asserts through the settle.
@@ -475,7 +548,7 @@ void feedService() {
         // DIAG once per step pulse, and the loop spins ~10x faster than
         // the step train, which made the gate ~10x too twitchy.
         long pn = (long)feedSt->getCurrentPosition();
-        if (feedSgArmPos < 0) feedSgArmPos = pn + 128;
+        if (feedSgArmPos < 0) feedSgArmPos = pn + 256;
         bool sgArmed = pn >= feedSgArmPos && pn != feedSgEvalPos;
         if (sgArmed) feedSgEvalPos = pn;
         if (sgArmed && digitalRead(FEED_DIAG) == HIGH) { feedSgGate++; }
@@ -498,29 +571,12 @@ void feedService() {
       } else {
         feedSgGate = 0;
       }
-      feedEdgeResolve();                           // tab edge may pass mid-blind
-      if (!feedSt->isRunning()) {                  // blind travel done
-        if (feedEdgeCalced) {                      // edge already found: home now
-          feedEdgeInBlind = true;
-          feedFinishHome();
-          return;
-        }
-        feedSt->setSpeedInHz(speedToHz(feedSpeedSet));
-        feedSt->runForward();                      // seek the leading edge fresh
-        feedSeekStart = (long)feedSt->getCurrentPosition();
-        feedT0 = millis();
-        feedState = F_SEEK;
-      }
-      return;
-    }
-    case F_SEEK: {
-      feedEdgeMaybeArm();
       feedEdgeResolve();
       if (feedEdgeCalced) { feedFinishHome(); return; }
-      long trav = (long)feedSt->getCurrentPosition() - feedSeekStart;
-      if (trav > 400L * USTEP || millis() - feedT0 > 6000) {
+      long trav = (long)feedSt->getCurrentPosition() - feedCycleStart;
+      if (trav > (long)feedSteps * USTEP + 400L * USTEP ||
+          millis() - feedT0 > 8000) {
         feedAbort(F("error:feed overtravel detected"));
-        return;
       }
       return;
     }
@@ -552,6 +608,7 @@ void feedService() {
         if (stopAt < pos + 4) stopAt = pos + 4;  // forward-only
         feedSt->setAcceleration(500000);
         feedSt->moveTo(stopAt);
+        feedPrevEdge = feedEdgeAbs;              // seed the pitch predictor
         feedState = F_IDLE;
         return;
       }
@@ -939,7 +996,14 @@ void setup() {
   engine.init();
   feedSt = engine.stepperConnectToPin(FEED_STEP);
   sortSt = engine.stepperConnectToPin(SORT_STEP);
-  if (feedSt) { feedSt->setDirectionPin(FEED_DIR, true); feedApplyMotion(); }
+  if (feedSt) {
+    feedSt->setDirectionPin(FEED_DIR, true);
+    // short step queue: a mid-run speed change (the pre-edge creep) must
+    // take effect fast — the default 20 ms of pre-planned steps is ~200
+    // usteps of lag at cruise
+    feedSt->setForwardPlanningTimeInMs(5);
+    feedApplyMotion();
+  }
   if (sortSt) { sortSt->setDirectionPin(SORT_DIR, true); sortApplyMotion(); }
   // FastAccelStepper's PIO claim stomps GPIO 0's pin mux (UART0 TX = the
   // Pi machine link) on this core — bisected on the bench: TX died at the
