@@ -305,7 +305,7 @@ void sortService() {
 // FEED axis — cycle state machine (blind travel -> flag seek -> offset)
 // =====================================================================
 enum FeedState { F_IDLE, F_WAIT_SORT, F_WAIT_BRASS, F_DEBOUNCE, F_BLIND,
-                 F_SEEK, F_OFFSET, F_NOTIFY };
+                 F_SEEK, F_OFFSET, F_NOTIFY, F_HOME };
 FeedState feedState = F_IDLE;
 bool forceFeed = false;
 bool slotQueued = true;
@@ -314,6 +314,7 @@ uint32_t feedT0 = 0, waitMsgT = 0;
 long feedSeekStart = 0;
 int feedSgHits = 0, feedSgGate = 0;
 long feedSgArmPos = -1;
+long feedSgEvalPos = LONG_MIN;
 
 // Flag edge by INTERRUPT, not loop polling: the PIO keeps stepping while the
 // CPU services serial or TMC UART, so a polled edge is seen late (or a narrow
@@ -321,21 +322,44 @@ long feedSgArmPos = -1;
 // timestamps the true edge; the service latency-corrects the position with
 // elapsed-time * current-rate.
 //
-// Armed for the WHOLE cycle (blind phase included), and ONLY a falling edge
-// counts — never a level read. A level read on a wheel that stopped inside
-// the tab yields a mid-tab pseudo-edge, and that error carries into the next
-// cycle's start with nothing to reset it (bench: cycles alternating between
-// instant stop, a barely-move, and a full extra pitch). A true leading edge
-// each cycle is an absolute reference; wherever the blind lands, the cycle
-// re-anchors.
+// ONLY a falling edge counts — never a level read. A level read on a wheel
+// that stopped inside the tab yields a mid-tab pseudo-edge, and that error
+// carries into the next cycle's start with nothing to reset it (bench:
+// cycles alternating between instant stop, a barely-move, and a full extra
+// pitch). A true leading edge each cycle is an absolute reference.
+//
+// The ISR is NOT armed at cycle start: a cycle begins parked at/near the
+// tab edge, and launch vibration chatters the opto — a bogus falling edge
+// in the first steps anchors the cycle to the start position and the wheel
+// stops short of the sensor. Arm only after the service has CONFIRMED the
+// wheel clear of the tab (pin HIGH, 10+ full steps into the cycle); from a
+// confirmed-clear wheel, the next falling edge is a real tab entry.
 volatile bool feedEdgeArm = false;
 volatile bool feedEdgeSeen = false;
 volatile uint32_t feedEdgeUs = 0;
 bool feedEdgeCalced = false;
 long feedEdgeAbs = 0;
 bool feedEdgeInBlind = false;
+long feedCycleStart = 0;
+long feedClearStart = 0;
+bool feedDebug = false;
+long feedArmAt = 0;
+uint32_t feedEdgeLatUs = 0;
 void feedHomeIsr() {
   if (feedEdgeArm && !feedEdgeSeen) { feedEdgeUs = micros(); feedEdgeSeen = true; }
+}
+
+static void feedEdgeMaybeArm() {
+  if (feedEdgeArm || feedEdgeCalced) return;
+  long pos = (long)feedSt->getCurrentPosition();
+  // the opto chatters at BOTH tab boundaries; a single HIGH sample can be
+  // exit chatter. Demand 4 full steps of uninterrupted clear before arming.
+  if (digitalRead(FEED_HOME) == LOW) { feedClearStart = pos; return; }
+  if (pos - feedClearStart >= 64 && pos > feedCycleStart + 160) {
+    feedEdgeSeen = false;
+    feedEdgeArm = true;
+    feedArmAt = pos;
+  }
 }
 
 // resolve the ISR timestamp to an absolute edge position ASAP (same ramp
@@ -347,6 +371,7 @@ static void feedEdgeResolve() {
   if (vm < 0) vm = -vm;
   feedEdgeAbs = (long)feedSt->getCurrentPosition() -
                 (long)((uint64_t)lateUs * (uint32_t)(vm / 1000) / 1000000ULL);
+  feedEdgeLatUs = lateUs;
   feedEdgeCalced = true;
 }
 
@@ -373,22 +398,37 @@ void feedFinishHome() {
   // never reverse across the drop port: an overrun stops just past home
   // (bounded, and next cycle re-anchors on a fresh edge)
   long remain = stopAt - pos;
-  if (remain < 8) { remain = 8; stopAt = pos + 8; }
-  uint32_t hz = speedToHz(feedSpeedSet);
-  uint32_t a = feedDecelOverOffset ? accFToSS2(feedDecF) : 500000;
-  uint64_t need = ((uint64_t)hz * hz) / (uint64_t)(2L * remain);
-  need += need / 8;
-  if (need > a) a = (need > 4000000ULL) ? 4000000UL : (uint32_t)need;
-  feedSt->setAcceleration(a);
-  feedSt->moveTo(stopAt);
+  if (remain < 32) {
+    // at/past the target (offset 0, or edge passed mid-blind): the 1.x
+    // dead stop — halt the step queue now rather than shape a ramp
+    feedSt->forceStop();
+  } else {
+    uint32_t hz = speedToHz(feedSpeedSet);
+    uint32_t a = feedDecelOverOffset ? accFToSS2(feedDecF) : 500000;
+    uint64_t need = ((uint64_t)hz * hz) / (uint64_t)(2L * remain);
+    need += need / 8;
+    if (need > a) a = (need > 4000000ULL) ? 4000000UL : (uint32_t)need;
+    feedSt->setAcceleration(a);
+    feedSt->moveTo(stopAt);
+  }
+  if (feedDebug) {
+    host.print(F("fdbg start=")); host.print(feedCycleStart);
+    host.print(F(" arm=")); host.print(feedArmAt);
+    host.print(F(" edge=")); host.print(feedEdgeAbs);
+    host.print(F(" lat=")); host.print(feedEdgeLatUs);
+    host.print(F(" stop=")); host.print(stopAt);
+    host.print(F(" inBlind=")); host.println(feedEdgeInBlind ? 1 : 0);
+  }
   feedState = F_OFFSET;
 }
 
 void feedStartCycle() {                            // after the arm is parked
   feedApplyMotion();
   feedEdgeSeen = false; feedEdgeCalced = false; feedEdgeInBlind = false;
-  feedEdgeArm = true;
-  feedSgHits = 0; feedSgGate = 0; feedSgArmPos = -1;
+  feedEdgeArm = false;                             // armed once confirmed clear
+  feedCycleStart = (long)feedSt->getCurrentPosition();
+  feedClearStart = feedCycleStart;
+  feedSgHits = 0; feedSgGate = 0; feedSgArmPos = -1; feedSgEvalPos = LONG_MIN;
   sgLastN = 0; sgLastSum = 0; sgLastMin = 1023;
   feedSt->move((long)feedSteps * USTEP);           // blind travel
   feedT0 = millis();
@@ -426,15 +466,20 @@ void feedService() {
       // accumulates do we pay for ONE UART confirm read. Continuous UART
       // sampling both false-trips on transient dips 1.x never saw and
       // blocks the loop ~10 ms per read.
+      feedEdgeMaybeArm();
       if (sgEnabled && feedSgThrs > 0 &&
           (feedSt->rampState() & RAMP_STATE_COAST)) {
         // 1.x SG_ARM_STEPS parity: SG_RESULT reads ~0 for the first ~8 full
-        // steps after a standstill and DIAG asserts through the settle
+        // steps after a standstill and DIAG asserts through the settle.
+        // The gate advances per USTEP, not per loop pass — 1.x evaluated
+        // DIAG once per step pulse, and the loop spins ~10x faster than
+        // the step train, which made the gate ~10x too twitchy.
         long pn = (long)feedSt->getCurrentPosition();
         if (feedSgArmPos < 0) feedSgArmPos = pn + 128;
-        bool sgArmed = pn >= feedSgArmPos;
+        bool sgArmed = pn >= feedSgArmPos && pn != feedSgEvalPos;
+        if (sgArmed) feedSgEvalPos = pn;
         if (sgArmed && digitalRead(FEED_DIAG) == HIGH) { feedSgGate++; }
-        else if (feedSgGate > 0) { feedSgGate--; }
+        else if (sgArmed && feedSgGate > 0) { feedSgGate--; }
         if (feedSgGate >= 24) {
           feedSgGate = 0;
           uint16_t r = feedDrv.SG_RESULT();
@@ -469,6 +514,7 @@ void feedService() {
       return;
     }
     case F_SEEK: {
+      feedEdgeMaybeArm();
       feedEdgeResolve();
       if (feedEdgeCalced) { feedFinishHome(); return; }
       long trav = (long)feedSt->getCurrentPosition() - feedSeekStart;
@@ -496,6 +542,25 @@ void feedService() {
         host.println(F("done"));
       }
       return;
+    case F_HOME: {                               // bare home: slow seek, stop
+      feedEdgeMaybeArm();                        // AT the edge, no offset
+      feedEdgeResolve();
+      if (feedEdgeCalced) {
+        feedEdgeArm = false;
+        long pos = (long)feedSt->getCurrentPosition();
+        long stopAt = feedEdgeAbs;
+        if (stopAt < pos + 4) stopAt = pos + 4;  // forward-only
+        feedSt->setAcceleration(500000);
+        feedSt->moveTo(stopAt);
+        feedState = F_IDLE;
+        return;
+      }
+      long trav = (long)feedSt->getCurrentPosition() - feedSeekStart;
+      if (trav > 400L * USTEP || millis() - feedT0 > 8000) {
+        feedAbort(F("error:feed overtravel detected"));
+      }
+      return;
+    }
   }
 }
 
@@ -637,6 +702,7 @@ void handleCommand() {
     host.print(F(" sortState=")); host.print((int)sortState);
     host.print(F(" feedState=")); host.print((int)feedState);
     host.print(F(" flagPos=")); host.print(sortFlagPos);
+    host.print(F(" feedEdge=")); host.print(feedEdgeAbs);
     host.print(F(" txDropPi=")); host.print(outPi.dropped);
     host.print(F(" txDropUsb=")); host.print(outUsb.dropped);
     host.print(F(" rxPi=")); host.print(rxPiBytes);
@@ -680,11 +746,26 @@ void handleCommand() {
     return;
   }
 
+  if (input.startsWith(F("feeddebug:"))) {
+    feedDebug = input.substring(10).toInt() != 0;
+    host.println(F("ok"));
+    return;
+  }
   if (input == "homefeeder") {
     if (!requireMotorPower()) return;
-    // the feed wheel has no absolute home in 2.0: a cycle self-aligns on its
-    // flag; a bare home = one blind+seek without the brass wait or done line
     host.println(F("ok"));
+    if (feedState != F_IDLE) return;             // busy — a cycle owns the wheel
+    if (digitalRead(FEED_HOME) == LOW) return;   // already on the tab: homed
+    feedApplyMotion();
+    feedSt->setSpeedInHz(2500);                  // 1.x homefeeder pace (400 us)
+    feedEdgeSeen = false; feedEdgeCalced = false; feedEdgeInBlind = false;
+    feedEdgeArm = false;
+    feedSeekStart = (long)feedSt->getCurrentPosition();
+    feedCycleStart = feedSeekStart - 160;        // pin verified HIGH at rest:
+    feedClearStart = feedSeekStart - 64;         // credit the standstill, arm at once
+    feedT0 = millis();
+    feedSt->runForward();
+    feedState = F_HOME;
     return;
   }
   if (input == "homesorter") {
