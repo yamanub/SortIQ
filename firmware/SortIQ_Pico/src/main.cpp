@@ -589,8 +589,11 @@ void feedService() {
       }
       feedEdgeResolve();
       if (feedEdgeCalced) { feedFinishHome(); return; }
+      // overtravel: two pitches past the blind with no tab = jammed wheel
+      // skipping under the wedge (the SG tripwire is creep-blind by design)
+      long budget = feedPitchEst > 0 ? 2 * feedPitchEst : 3200;
       long trav = (long)feedSt->getCurrentPosition() - feedCycleStart;
-      if (trav > (long)feedSteps * USTEP + 400L * USTEP ||
+      if (trav > (long)feedSteps * USTEP + budget ||
           millis() - feedT0 > 8000) {
         feedAbort(F("error:feed overtravel detected"));
       }
