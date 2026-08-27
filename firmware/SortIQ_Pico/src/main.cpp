@@ -167,7 +167,9 @@ void applyDriverConfig() {
     d->TCOOLTHRS(sgTcool);
   }
   feedDrv.rms_current(feedCurrent); feedDrv.ihold(8);
-  sortDrv.rms_current(sortCurrent); sortDrv.ihold(16);
+  // sort ihold was 16 (50% hold) for StallGuard-at-rest experiments; SG is
+  // telemetry-only now and the motor sat warm at idle. 8 = same as feed.
+  sortDrv.rms_current(sortCurrent); sortDrv.ihold(8);
   // feed DIAG is the free stall tripwire (fires when SG_RESULT < 2*SGTHRS);
   // sort keeps DIAG quiet — its detector is the flag audit, SG is telemetry
   feedDrv.SGTHRS(feedSgThrs); sortDrv.SGTHRS(0);

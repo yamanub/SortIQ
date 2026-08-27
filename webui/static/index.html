@@ -1709,7 +1709,8 @@
             <div><label>Feed stall threshold <span class="muted">— higher = more sensitive; 0 = off</span></label>
               <input type="number" id="msSgFeed" min="0" max="255" style="width:110px"></div>
             <span class="muted" style="font-size:11.5px">feed wheel only — the sort arm is
-              guarded by its slot-0 position check until the firmware rewrite</span>
+              guarded by the flag audit (position truth), and the arm re-homes
+              after every run; StallGuard cannot see sort-arm jams</span>
           </div>
         </div>
 

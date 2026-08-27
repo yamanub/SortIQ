@@ -5036,6 +5036,19 @@ class RunManager:
                 rj.write_text(json.dumps(meta))
             except (OSError, ValueError):
                 pass
+            # every ended run (finished, stopped, crashed) leaves the sorter
+            # arm re-homed: a jam late in a run can skew the arm's frame
+            # without ever crossing the flag again, and the next run must
+            # not inherit that. The feed re-home is a free no-op when the
+            # wheel already rests on its tab.
+            link = getattr(transport, "link", None)
+            if link is not None:
+                try:
+                    link.write("homesorter\n")
+                    link.write("homefeeder\n")
+                    time.sleep(0.3)      # let the lines hit the wire pre-close
+                except Exception:
+                    pass
             for closer in (transport, camera):
                 try:
                     if closer:
