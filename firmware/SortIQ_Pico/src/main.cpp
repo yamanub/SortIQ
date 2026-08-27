@@ -211,21 +211,20 @@ void sortApplyMotion() {
 void sortStartHoming() {
   if (!sortAxis || !motorPower) { sortState = S_IDLE; sortHomed = sortAxis ? false : true; return; }
   sortHomed = false;
-  // Parked ON the flag (normal after a reboot, or hand-moved near home):
-  // the frame NEEDS the true edge — accepting the resting spot anchors up
-  // to a flag-width off and the flag audit then false-trips on the first
-  // move (bench-reproduced). Measure it with the minimal dance: back off
-  // until the flag releases, creep forward to the edge. The small backward
-  // nudge is the measurement, not a wrong direction.
+  sortSt->setAcceleration(accFToSS2(sortAccF));
+  // Homing geometry (machine-verified): the flag lies BELOW slot 0 in the
+  // count frame. Seek runs DOWN onto the flag; the edge is then measured
+  // by leaving it UPWARD (toward the slots) and creeping back DOWN onto
+  // it — so the frame anchor is the repeatable upper edge, and the flag
+  // zone lies strictly below flagPos (which is what the audit assumes).
+  // Parked ON the flag already (normal after a reboot): skip the seek.
   if (digitalRead(SORT_HOME) == LOW) {
-    sortSt->setAcceleration(accFToSS2(sortAccF));
     sortT0 = millis();
-    sortState = S_BACKOFF_LEAVE;                   // skip the seek: it's here
+    sortState = S_BACKOFF_LEAVE;
     return;
   }
   sortSt->setSpeedInHz(4000);
-  sortSt->setAcceleration(accFToSS2(sortAccF));
-  sortSt->runForward();
+  sortSt->runBackward();
   sortT0 = millis();
   sortState = S_SEEK;
 }
@@ -259,13 +258,13 @@ void sortService() {
     case S_BACKOFF_LEAVE:                          // wait for standstill
       if (!sortSt->isRunning() && millis() - sortT0 > 120) {
         sortSt->setSpeedInHz(1500);
-        sortSt->runBackward();
+        sortSt->runForward();                      // leave the flag UPWARD
         sortT0 = millis(); sortState = S_BACKOFF_RUN;
       }
       return;
     case S_BACKOFF_RUN:
       if (digitalRead(SORT_HOME) != LOW) {         // flag released: margin, stop
-        sortSt->move(-(long)sortHomeBackoff);
+        sortSt->move((long)sortHomeBackoff);
         sortT0 = millis(); sortState = S_APPROACH;
       } else if (millis() - sortT0 > 5000) sortHomingFailed();
       return;
@@ -273,7 +272,7 @@ void sortService() {
       if (!sortSt->isRunning()) {
         long us = sortHomeSlow > 0 ? sortHomeSlow : 1400;   // creep us/ustep
         sortSt->setSpeedInHz((uint32_t)(1000000L / us));
-        sortSt->runForward();
+        sortSt->runBackward();                     // creep DOWN onto the edge
         sortT0 = millis(); sortState = S_HOME_SETTLE;
       } else if (millis() - sortT0 > 4000) sortHomingFailed();
       return;
@@ -285,14 +284,16 @@ void sortService() {
         sortHomed = true; sortSlot = 0;
         lastSortArrive = millis();
         sortApplyMotion();
+        // rest at slot 0 = flag edge + offset, a small UP move off the flag
+        sortSt->moveTo(sortFlagPos + (long)sortHomingOffset * USTEP);
         sortState = S_IDLE;
       } else if (millis() - sortT0 > 6000) sortHomingFailed();
       return;
     case S_MOVING: {
-      // flag audit: the flag may only be seen near its own position
+      // flag audit: the flag zone lies strictly BELOW flagPos (the anchor
+      // is its upper edge) — any sighting well above it means lost steps
       long rel = (long)sortSt->getCurrentPosition() - sortFlagPos;
-      if (digitalRead(SORT_HOME) == LOW && rel > 240 &&
-          rel < slotPosTab[MAX_SLOTS - 1] - 240) {
+      if (digitalRead(SORT_HOME) == LOW && rel > 240) {
         sortSt->forceStop();
         sortStalls++; sortSkips++;
         sortState = S_IDLE; sortHomed = false;     // frame is lost: re-home next
@@ -1009,10 +1010,10 @@ void setup() {
     feedSt->setForwardPlanningTimeInMs(5);
     feedApplyMotion();
   }
-  // sort polarity: 1.x SORT_IN_REVERSE=false => forward (slot moves AND the
-  // homing seek) = DIR LOW; FAS count-up must drive DIR LOW (arg false).
-  // (The feed axis is the opposite — verified on the machine.)
-  if (sortSt) { sortSt->setDirectionPin(SORT_DIR, false); sortApplyMotion(); }
+  // sort polarity: count-up = toward the slots (machine-verified). The
+  // HOMING SEEK runs the other way — down onto the flag from the slot
+  // side — handled by the homing state machine, not the polarity.
+  if (sortSt) { sortSt->setDirectionPin(SORT_DIR, true); sortApplyMotion(); }
   // FastAccelStepper's PIO claim stomps GPIO 0's pin mux (UART0 TX = the
   // Pi machine link) on this core — bisected on the bench: TX died at the
   // first stepperConnectToPin, RX untouched. Hand the pins back to UART.
