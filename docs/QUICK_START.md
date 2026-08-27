@@ -8,6 +8,8 @@ then one evening of collecting + one training run to your first real sort.
 a Raspberry Pi 4 or 5 (5 recommended — twice the inference speed) with a
 64 GB+ SD card, and a Mac or Windows PC on the same network for training.
 No screen or keyboard for the Pi — everything runs in your browser.
+(A Pi 3B does run everything — same accuracy, ~3× slower verdicts — and
+will sort in a pinch, but it's not recommended as the machine's brain.)
 
 ### Recommended hardware (cheap, field-proven)
 
@@ -63,8 +65,11 @@ Details + wiring advice: [PI_SETUP.md](PI_SETUP.md) Part C.
 
 ## Step 4 — Collect your first classes (~1 evening)
 
-A fresh install has no trained model yet, so this first collection is
-manual naming — it gets easier immediately after the first training.
+A fresh install has no trained model yet, so the first collection is
+named by hand — it goes faster than it sounds, and every session after
+this one becomes confirm-clicks. (A downloadable community starter
+recognizer is planned for a future release; when published, the Train
+tab will offer it to fresh installs automatically.)
 
 1. Sort a coffee can of brass **by hand** into 3–6 piles of your most
    common headstamps (FC, WIN, BLAZER…).

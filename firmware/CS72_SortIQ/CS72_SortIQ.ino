@@ -1093,7 +1093,12 @@ void setAccSortDelay(){
 
     if(remaining <= rampSteps){                          //down ramp (mirror)
       if(trapN > 1){
-        trapDelay += (2UL * trapDelay) / (4UL * trapN + 1);
+        // integer-freeze fix (found on the SKR Pico port, same math here):
+        // the increment floors to 0 through the first half of the decel, so
+        // the arm held cruise speed deep into every landing. Never grow by
+        // less than 1.
+        unsigned long trapInc = (2UL * trapDelay) / (4UL * trapN + 1);
+        trapDelay += (trapInc > 0 ? trapInc : 1);
         trapN--;
       }
       if(trapDelay > (unsigned int)accFactor){
@@ -1105,7 +1110,11 @@ void setAccSortDelay(){
 
     if(trapDelay > (unsigned int)sortMotorSpeed && done < (total + 1) / 2){
       trapN++;                                           //up ramp
-      trapDelay -= (2UL * trapDelay) / (4UL * trapN + 1);
+      // integer-freeze fix: the decrement floors to 0 near delay~2*n and the
+      // ramp FREEZES ~45% above cruise — the arm has always run slower than
+      // its setting. Never shrink by less than 1.
+      unsigned long trapDec = (2UL * trapDelay) / (4UL * trapN + 1);
+      trapDelay -= (trapDec > 0 ? trapDec : 1);
       if(trapDelay < (unsigned int)sortMotorSpeed){
         trapDelay = sortMotorSpeed;
       }
@@ -1551,7 +1560,8 @@ void setAccFeedDelay(){
     int done = feedMicroSteps - FeedSteps;
     if(done < feedLaunchSteps && feedTrapDelay > (unsigned int)feedMotorSpeed){
       feedTrapN++;
-      feedTrapDelay -= (2UL * feedTrapDelay) / (4UL * feedTrapN + 1);
+      unsigned long feedDec = (2UL * feedTrapDelay) / (4UL * feedTrapN + 1);
+      feedTrapDelay -= (feedDec > 0 ? feedDec : 1);   //same integer-freeze fix
       if(feedTrapDelay < (unsigned int)feedMotorSpeed){
         feedTrapDelay = feedMotorSpeed;
       }

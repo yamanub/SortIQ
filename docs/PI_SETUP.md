@@ -1,8 +1,11 @@
 # Raspberry Pi setup — from blank SD card to sorting
 
 Total time: ~5 minutes of flashing + ~5 minutes of automated install.
-Tested on a Pi 4 and a Pi 5 (the Pi only runs inference; training
-happens on a PC, see [TRAINER_SETUP.md](TRAINER_SETUP.md)).
+Tested on a Pi 3B, 4, and 5 (the Pi only runs inference; training
+happens on a PC, see [TRAINER_SETUP.md](TRAINER_SETUP.md)). A 3B runs
+the whole app with the same accuracy but ~740 ms verdicts — fine for
+collection, review, and fleet duty, workable for sorting in a pinch;
+use a 4 or 5 as the machine's brain.
 
 ## Part A — flash the card (on your PC/Mac, ~5 min)
 
@@ -103,6 +106,14 @@ cause here).
 
 ## Notes
 
+- **Can't find the Pi on the network?** If the box boots somewhere its
+  known Wi-Fi doesn't reach (new garage, changed router, mistyped
+  password at imaging time), after ~2 minutes it raises its own
+  hotspot: **SortIQ-\<hostname\>**, password **sortbrass**. Join it,
+  open `http://10.42.0.1:5000`, and use the network dialog (header
+  readout → Wi-Fi scan) to put the box on your real network — the
+  hotspot stands down on its own once the join succeeds or an ethernet
+  cable shows up.
 - **The Pi never trains** — by design (inference-only runtime).
   The Train tab on the Pi points you to the trainer PC; set that up with
   [TRAINER_SETUP.md](TRAINER_SETUP.md). Freshly trained models install
