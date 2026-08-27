@@ -825,6 +825,15 @@ void handleCommand() {
     return;
   }
 
+  if (input == "bootloader") {
+    // drop to the UF2 bootloader (RPI-RP2 drive) — reachable over the Pi
+    // UART link so the Pi can flash the board without anyone touching it
+    host.println(F("ok:rebooting to bootloader"));
+    outPi.pump(); outUsb.pump();
+    delay(120);                                    // let the ack leave the wire
+    rp2040.rebootToBootloader();
+    return;
+  }
   if (input.startsWith(F("feeddebug:"))) {
     feedDebug = input.substring(10).toInt() != 0;
     host.println(F("ok"));
