@@ -871,14 +871,21 @@ void handleCommand() {
     if (sortHomed) sortGoTo(s);
     return;
   }
-  if (input.startsWith(F("sorttest:"))) {
+  if (input.startsWith(F("sorttest:"))) {          // 1.x parity: random slots
     if (!requireMotorPower()) return;
-    host.println(F("ok"));
+    host.println(F("testing started"));
     int n = clampi(input.substring(9).toInt(), 1, 100);
     for (int i = 0; i < n && sortHomed; i++) {
-      sortGoTo(i % 2 ? 0 : 7);
-      while (sortState == S_MOVING) sortService();
+      int slot = (int)(rp2040.hwrand32() % 8);
+      host.print(i); host.print(F(" - Sorting to: ")); host.println(slot);
+      sortGoTo(slot);
+      while (sortState == S_MOVING) { sortService(); outPi.pump(); outUsb.pump(); }
     }
+    if (sortHomed) {
+      sortGoTo(0);
+      while (sortState == S_MOVING) { sortService(); outPi.pump(); outUsb.pump(); }
+    }
+    host.println(F("Sort Test Completed"));
     return;
   }
   if (input.startsWith(F("slotpos:"))) {           // slotpos:i:v (usteps)
