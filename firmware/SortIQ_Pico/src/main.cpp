@@ -210,22 +210,19 @@ void sortApplyMotion() {
 
 void sortStartHoming() {
   if (!sortAxis || !motorPower) { sortState = S_IDLE; sortHomed = sortAxis ? false : true; return; }
-  // 1.x stage-0 parity: an arm at rest ON the flag IS home — accept the
-  // position without motion. 1.x re-homes this way at every slot-0 arrival
-  // and at boot; the edge-finding dance here made the arm visibly back off
-  // the flag after a reboot, which the machine has never done. Precision
-  // cost is bounded by the flag width, same as 1.x, and the flag audit's
-  // 240-ustep tolerance already absorbs it.
+  sortHomed = false;
+  // Parked ON the flag (normal after a reboot, or hand-moved near home):
+  // the frame NEEDS the true edge — accepting the resting spot anchors up
+  // to a flag-width off and the flag audit then false-trips on the first
+  // move (bench-reproduced). Measure it with the minimal dance: back off
+  // until the flag releases, creep forward to the edge. The small backward
+  // nudge is the measurement, not a wrong direction.
   if (digitalRead(SORT_HOME) == LOW) {
-    sortFlagPos = (long)sortSt->getCurrentPosition() -
-                  (long)sortHomingOffset * USTEP;
-    sortHomed = true; sortSlot = 0;
-    lastSortArrive = millis();
-    sortApplyMotion();
-    sortState = S_IDLE;
+    sortSt->setAcceleration(accFToSS2(sortAccF));
+    sortT0 = millis();
+    sortState = S_BACKOFF_LEAVE;                   // skip the seek: it's here
     return;
   }
-  sortHomed = false;
   sortSt->setSpeedInHz(4000);
   sortSt->setAcceleration(accFToSS2(sortAccF));
   sortSt->runForward();
@@ -416,6 +413,24 @@ void feedAbort(const __FlashStringHelper *err) {
   feedEdgeArm = false;
   feedState = F_IDLE; forceFeed = false;
   host.println(err);
+}
+
+// bare feed home: slow seek to the tab edge, stop AT it, no offset.
+// A wheel already resting on the tab is home (the feed frame re-anchors
+// every cycle; it does not need the absolute edge at rest).
+void feedStartManualHome() {
+  if (feedState != F_IDLE) return;               // busy — a cycle owns the wheel
+  if (digitalRead(FEED_HOME) == LOW) return;     // already on the tab: homed
+  feedApplyMotion();
+  feedSt->setSpeedInHz(2500);                    // 1.x homefeeder pace (400 us)
+  feedEdgeSeen = false; feedEdgeCalced = false; feedEdgeInBlind = false;
+  feedEdgeArm = false;
+  feedSeekStart = (long)feedSt->getCurrentPosition();
+  feedCycleStart = feedSeekStart - 160;          // pin verified HIGH at rest:
+  feedClearStart = feedSeekStart - 64;           // credit the standstill, arm at once
+  feedT0 = millis();
+  feedSt->runForward();
+  feedState = F_HOME;
 }
 
 // tab edge in hand (feedEdgeAbs): ONE deceleration to edge + offset,
@@ -652,6 +667,7 @@ void checkMotorPower() {
     host.println(F("info:motor power on"));
     sortState = S_UNHOMED; sortHomed = false;
     sortStartHoming();                             // positions unknown: re-home
+    feedStartManualHome();                         // both axes, 1.x boot parity
   } else {
     host.println(F("info:motor power off"));
     sortHomed = false; sortState = S_UNHOMED;
@@ -811,18 +827,7 @@ void handleCommand() {
   if (input == "homefeeder") {
     if (!requireMotorPower()) return;
     host.println(F("ok"));
-    if (feedState != F_IDLE) return;             // busy — a cycle owns the wheel
-    if (digitalRead(FEED_HOME) == LOW) return;   // already on the tab: homed
-    feedApplyMotion();
-    feedSt->setSpeedInHz(2500);                  // 1.x homefeeder pace (400 us)
-    feedEdgeSeen = false; feedEdgeCalced = false; feedEdgeInBlind = false;
-    feedEdgeArm = false;
-    feedSeekStart = (long)feedSt->getCurrentPosition();
-    feedCycleStart = feedSeekStart - 160;        // pin verified HIGH at rest:
-    feedClearStart = feedSeekStart - 64;         // credit the standstill, arm at once
-    feedT0 = millis();
-    feedSt->runForward();
-    feedState = F_HOME;
+    feedStartManualHome();
     return;
   }
   if (input == "homesorter") {
@@ -1004,7 +1009,10 @@ void setup() {
     feedSt->setForwardPlanningTimeInMs(5);
     feedApplyMotion();
   }
-  if (sortSt) { sortSt->setDirectionPin(SORT_DIR, true); sortApplyMotion(); }
+  // sort polarity: 1.x SORT_IN_REVERSE=false => forward (slot moves AND the
+  // homing seek) = DIR LOW; FAS count-up must drive DIR LOW (arg false).
+  // (The feed axis is the opposite — verified on the machine.)
+  if (sortSt) { sortSt->setDirectionPin(SORT_DIR, false); sortApplyMotion(); }
   // FastAccelStepper's PIO claim stomps GPIO 0's pin mux (UART0 TX = the
   // Pi machine link) on this core — bisected on the bench: TX died at the
   // first stepperConnectToPin, RX untouched. Hand the pins back to UART.
@@ -1012,8 +1020,12 @@ void setup() {
   gpio_set_function(1, GPIO_FUNC_UART);
 
   host.println(F("Ready"));
-  if (!motorPower) host.println(F("info:motor power off"));
-  else sortStartHoming();
+  if (!motorPower) {
+    host.println(F("info:motor power off"));
+  } else {
+    sortStartHoming();
+    feedStartManualHome();
+  }
 }
 
 void loop() {
