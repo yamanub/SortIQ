@@ -185,6 +185,7 @@ void fillSlotTab() {
 
 void feedHardStop();
 void sortHardStop();
+void motorsWake();
 
 // ---------------- stats ----------------
 uint32_t feedCycles = 0, feedStalls = 0, sortStalls = 0, sortSkips = 0;
@@ -238,6 +239,7 @@ void sortApplyMotion() {
 
 void sortStartHoming() {
   if (!sortAxis || !motorPower) { sortState = S_IDLE; sortHomed = sortAxis ? false : true; return; }
+  motorsWake();
   if (sortSt->isRunning()) sortHardStop();    // re-home over any motion
   sortHomed = false;
   sortSt->setAcceleration(accFToSS2(sortAccF));
@@ -511,6 +513,37 @@ void sortHardStop() {
   sortSt->stopMove();
 }
 
+// Motor standby (AutoMotorStandbyTimeout, seconds; 0 = never): after the
+// machine sits idle that long, both drivers de-energize so the motors run
+// cool. Any motion request wakes them; the sort frame is treated as lost
+// (a limp arm can be nudged), and the existing self-heal re-homes it.
+uint32_t lastMotionMs = 0;
+bool motorsInStandby = false;
+void motorsWake() {
+  lastMotionMs = millis();
+  if (!motorsInStandby) return;
+  motorsInStandby = false;
+  digitalWrite(FEED_EN, LOW);
+  digitalWrite(SORT_EN, LOW);
+  delay(60);
+  sortHomed = false; sortState = S_UNHOMED;
+  host.println(F("info:motors wake"));
+}
+void checkMotorStandby() {
+  bool busy = feedState != F_IDLE ||
+              (sortState != S_IDLE && sortState != S_UNHOMED) ||
+              feedSt->isRunning() || sortSt->isRunning();
+  if (busy) { lastMotionMs = millis(); return; }
+  if (motorsInStandby || motorStandby <= 0 || !motorPower) return;
+  if (millis() - lastMotionMs > (uint32_t)motorStandby * 1000UL) {
+    motorsInStandby = true;
+    digitalWrite(FEED_EN, HIGH);
+    digitalWrite(SORT_EN, HIGH);
+    sortHomed = false; sortState = S_UNHOMED;
+    host.println(F("info:motor standby"));
+  }
+}
+
 void feedAbort(const __FlashStringHelper *err) {
   feedHardStop();
   feedEdgeArm = false;
@@ -532,6 +565,7 @@ void feedAbort(const __FlashStringHelper *err) {
 // never advance a pocket / drop a case uncommanded.
 void feedStartManualHome(bool deliberate) {
   if (feedState != F_IDLE) return;               // busy — a cycle owns the wheel
+  motorsWake();
   bool onTab = digitalRead(FEED_HOME) == LOW;
   if (onTab && !deliberate) return;
   feedApplyMotion();
@@ -813,6 +847,7 @@ void feedService() {
 }
 
 void startPipelinedFeed(int slot, bool force) {    // pf / xf:N
+  motorsWake();
   if (feedState != F_IDLE) {
     // recovery paths overlap: the app's HOME (a seconds-long homing dance)
     // is chased by its re-prime xf within ~1s, and blindly overwriting the
@@ -1057,6 +1092,7 @@ void handleCommand() {
     // hand moves by definition.
     bool freeArm = input.substring(8).toInt() != 0;
     host.println(F("ok"));
+    motorsWake();
     if (freeArm) {
       sortHardStop();
       digitalWrite(SORT_EN, HIGH);
@@ -1292,6 +1328,7 @@ void loop() {
   sortService();
   feedService();
   checkMotorPower();
+  checkMotorStandby();
   outPi.pump();
   outUsb.pump();
 }

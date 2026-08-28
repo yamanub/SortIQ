@@ -233,6 +233,9 @@
     padding: 10px 14px; background: var(--card, transparent); }
   .msTile h4 { margin: 0 0 6px; font-size: 11.5px; text-transform: uppercase;
     letter-spacing: .07em; color: var(--brass); }
+  .msTile label .msN { font-weight: 700; color: var(--text); }
+  .msTile label .msH { color: var(--dim); font-size: 11px; }
+  .msTile label[title] { cursor: help; }
   .msTileRow { display: grid;
     grid-template-columns: repeat(auto-fill, minmax(185px, 1fr)); gap: 2px 20px; }
   /* labels wrap to different line counts — anchor every input to a shared
@@ -1666,19 +1669,19 @@
         <div class="msTile">
           <h4>Feed wheel</h4>
           <div class="msTileRow">
-            <div><label>Speed (1–100) <span class="muted">— cruise past the camera</span></label>
+            <div><label title="How fast the feed wheel turns during a cycle. Higher = faster case cycles; too high and the motor can skip under load. 96 is the proven value on this machine."><span class="msN">Speed</span> <span class="muted">(1–100)</span><br><span class="msH">wheel rotation speed</span></label>
               <input type="number" id="msFeedSpeed" min="1" max="100"></div>
-            <div><label>Current (mA)</label>
+            <div><label title="Drive current for the feed motor. More current = more torque and more heat. Raise only if the wheel skips under load; lower if the motor runs hot."><span class="msN">Current</span> <span class="muted">(mA)</span><br><span class="msH">motor drive strength</span></label>
               <input type="number" id="msFeedCurrent" min="300" max="1200" step="50"></div>
-            <div class="picoOnly"><label>Accel (µs) <span class="muted">— bigger = gentler launch</span></label>
+            <div class="picoOnly"><label title="How quickly the wheel comes up to speed at the start of each cycle. Bigger number = gentler, slower launch; smaller = snappier but harder on the motor."><span class="msN">Accel</span><br><span class="msH">bigger = gentler launch</span></label>
               <input type="number" id="msFeedAccel" min="100" max="5000" step="50"></div>
-            <div class="picoOnly"><label>Decel (µs) <span class="muted">— bigger = softer stop</span></label>
+            <div class="picoOnly"><label title="How quickly the wheel brakes into its stop at the position sensor. Bigger number = softer landing; smaller = crisper stop."><span class="msN">Decel</span><br><span class="msH">bigger = softer stop</span></label>
               <input type="number" id="msFeedDecRate" min="100" max="5000" step="50"></div>
-            <div class="forkOnly"><label>Launch ramp (µsteps) <span class="muted">— ends before the camera port</span></label>
+            <div class="ss2Only"><label title="Distance the SS2 firmware spends ramping up to speed at the start of a cycle. Not used by SortIQ-Pico firmware — its Accel setting covers this."><span class="msN">Launch ramp</span><br><span class="msH">SS2 firmware only</span></label>
               <input type="number" id="msFeedLaunch" min="0" max="200"></div>
-            <div><label>Cycle steps <span class="muted">— blind travel before the seek</span></label>
+            <div><label title="How far the wheel turns each cycle before it starts watching for its position sensor. It only needs to get close — the sensor finishes every cycle precisely. Roughly the pocket-to-pocket distance (60 suits this wheel)."><span class="msN">Cycle steps</span><br><span class="msH">wheel travel per case</span></label>
               <input type="number" id="msFeedSteps" min="30" max="200"></div>
-            <div><label>Homing offset (steps) <span class="muted">— seating travel / decel length</span></label>
+            <div><label title="After the sensor trips, the wheel travels this much further before stopping — fine alignment of the pocket over the drop port. 0 = stop exactly at the sensor."><span class="msN">Homing offset</span><br><span class="msH">stop position past the sensor</span></label>
               <input type="number" id="msFeedHome" min="0" max="30"></div>
           </div>
           <label class="inline forkOnly" style="display:flex; gap:6px; align-items:center; margin-top:6px; color:var(--dim); font-size:12.5px">
@@ -1689,24 +1692,24 @@
         <div class="msTile">
           <h4>Sort arm</h4>
           <div class="msTileRow">
-            <div><label>Speed (1–100) <span class="muted">— cruise between slots</span></label>
+            <div><label title="How fast the arm travels between slots. Higher = quicker sorts; too high can skip steps on hard stops."><span class="msN">Speed</span> <span class="muted">(1–100)</span><br><span class="msH">arm travel speed</span></label>
               <input type="number" id="msSortSpeed" min="1" max="100"></div>
-            <div><label>Current (mA)</label>
+            <div><label title="Drive current for the sort motor. More current = more torque and more heat. Raise only if the arm skips; lower if the motor runs hot."><span class="msN">Current</span> <span class="muted">(mA)</span><br><span class="msH">motor drive strength</span></label>
               <input type="number" id="msSortCurrent" min="300" max="1200" step="50"></div>
-            <div class="forkOnly"><label>Accel (µs) <span class="muted">— bigger = gentler launch</span></label>
+            <div class="forkOnly"><label title="How quickly the arm gets moving toward a slot. Bigger number = gentler start; smaller = snappier."><span class="msN">Accel</span><br><span class="msH">bigger = gentler launch</span></label>
               <input type="number" id="msSortAccel" min="100" max="5000" step="50"></div>
-            <div class="picoOnly"><label>Decel (µs) <span class="muted">— bigger = softer landing</span></label>
+            <div class="picoOnly"><label title="How quickly the arm brakes into a slot. Bigger number = softer landing; smaller = crisper."><span class="msN">Decel</span><br><span class="msH">bigger = softer landing</span></label>
               <input type="number" id="msSortDecel" min="100" max="5000" step="50"></div>
-            <div class="forkOnly"><label>Homing backoff (µsteps) <span class="muted">— retreat past the sensor</span></label>
+            <div class="forkOnly"><label title="During homing, after first touching the sensor the arm backs off this far and comes back slowly. Measuring the sensor edge from the same side every time is what makes home repeatable."><span class="msN">Homing backoff</span><br><span class="msH">re-approach distance when homing</span></label>
               <input type="number" id="msHomeBackoff" min="0" max="200"></div>
-            <div class="forkOnly"><label>Homing creep (µs/µstep) <span class="muted">— slower = repeatable edge</span></label>
+            <div class="forkOnly"><label title="Speed of the slow final approach onto the sensor edge during homing. Bigger number = slower and more repeatable. Only affects homing, never sorting moves."><span class="msN">Homing creep</span><br><span class="msH">final approach speed when homing</span></label>
               <input type="number" id="msHomeSlow" min="100" max="5000" step="50"></div>
           </div>
         </div>
 
         <div class="msTile picoOnly">
           <h4>Mid-travel checkpoint</h4>
-          <div class="muted" style="font-size:12px; line-height:1.5; margin:0 0 10px; max-width:620px">
+          <div class="muted" style="font-size:12px; line-height:1.5; margin:0 0 10px">
             Mounts the homing sensor tab <b>mid-arc</b> (between slots 3 and 4) instead
             of at slot&nbsp;0. Every sort move that crosses it verifies the arm's true
             position: lost steps are caught within one move, a dead sensor announces
@@ -1718,9 +1721,9 @@
               <input type="checkbox" id="msMidFlag" style="accent-color:var(--brass)">
               Enabled</label>
             <div id="mtcTune" class="ctlRow" style="display:none; gap:18px; flex-wrap:wrap; align-items:flex-end; margin:0">
-              <div><label>Flag position (µsteps) <span class="muted">— arm parks past slot 0 → raise; short → lower</span></label>
-                <input type="number" id="msFlagOffset" min="0" max="3520" step="16" style="width:120px"></div>
-              <div><label>Flag width (µsteps)</label>
+              <div><label title="How far the sensor tab sits above slot 0 (one slot = 320). Set automatically by the guided setup. Fine-tune after homing: arm parks past slot 0 → raise this; parks short → lower it."><span class="msN">Flag position</span><br><span class="msH">distance from slot 0 to the tab</span></label>
+                <input type="number" id="msFlagOffset" min="0" max="3520" step="16" style="width:110px"></div>
+              <div><label title="The distance the tab blocks the sensor as the arm sweeps past it. The firmware treats the sensor turning on inside this window as normal — and anywhere else as lost steps. Measured at 64 on this machine; change only if the physical tab changes."><span class="msN">Tab width</span><br><span class="msH">how wide the tab is</span></label>
                 <input type="number" id="msFlagWidth" min="32" max="1000" step="8" style="width:100px"></div>
             </div>
           </div>
@@ -1729,13 +1732,13 @@
         <div class="msTile">
           <h4>Cycle timing</h4>
           <div class="msTileRow">
-            <div><label>Slot drop delay (ms) <span class="muted">— minimum spacing between arm moves</span></label>
+            <div><label title="How long the arm stays put at a slot before it may move again — time for the falling case to clear the chute. Too short and a quick next move can throw a case toward the wrong slot."><span class="msN">Slot drop delay</span> <span class="muted">(ms)</span><br><span class="msH">arm rest time at each slot</span></label>
               <input type="number" id="msDropDelay" min="0" max="3000" step="50"></div>
-            <div><label>Notification delay (ms) <span class="muted">— raise by 20s if images blur</span></label>
+            <div><label title="After a feed lands a case, the board waits this long before reporting done — which is the moment the photo is taken. Raise in +20 ms steps if head photos blur (the case is still settling)."><span class="msN">Notification delay</span> <span class="muted">(ms)</span><br><span class="msH">settle time before the photo</span></label>
               <input type="number" id="msNotifDelay" min="0" max="1000" step="10"></div>
-            <div><label>Motor standby (s) <span class="muted">— idle time before power-down</span></label>
+            <div><label title="After this many seconds with no motion the motors de-energize to run cool (0 = never). They re-energize and re-home automatically on the next command."><span class="msN">Motor standby</span> <span class="muted">(s)</span><br><span class="msH">power motors down when idle</span></label>
               <input type="number" id="msStandby" min="0" max="3600"></div>
-            <div class="forkOnly"><label>Arm dwell (ms) <span class="muted">— extra hold; clears slow tumblers</span></label>
+            <div class="forkOnly"><label title="Extra rest added on top of Slot drop delay at every slot — for cases that tumble slowly down long chutes. Usually 0."><span class="msN">Arm dwell</span> <span class="muted">(ms)</span><br><span class="msH">extra hold at each slot</span></label>
               <input type="number" id="msArmDwell" min="0" max="1000" step="10"></div>
           </div>
         </div>
@@ -1746,11 +1749,12 @@
             <label class="inline" style="display:flex; gap:6px; align-items:center; margin:0; color:var(--text); font-size:13px">
               <input type="checkbox" id="msSg" style="accent-color:var(--brass)">
               Enabled</label>
-            <div><label>Feed stall threshold <span class="muted">— higher = more sensitive; 0 = off</span></label>
+            <div><label title="How readily a drop in motor load counts as a jam. Higher trips easier (risking false alarms); lower needs a harder jam. 40 is the proven value; 0 turns load sensing off."><span class="msN">Feed stall threshold</span><br><span class="msH">higher = more sensitive; 0 = off</span></label>
               <input type="number" id="msSgFeed" min="0" max="255" style="width:110px"></div>
-            <span class="muted" style="font-size:11.5px">feed wheel only — the sort arm is
-              guarded by the flag audit (position truth), and the arm re-homes
-              after every run; StallGuard cannot see sort-arm jams</span>
+            <span class="muted" style="font-size:11.5px">watches the feed motor’s load and
+              aborts a cycle when the wheel is blocked; the wheel independently aborts if its
+              position sensor never appears. The sort arm is guarded by its position
+              checkpoints instead — motor load cannot reveal arm jams.</span>
           </div>
         </div>
 
@@ -1758,13 +1762,14 @@
           <h4>AirDrop mod</h4>
           <label class="inline" style="display:flex; gap:6px; align-items:center; margin:0 0 4px; color:var(--dim); font-size:12.5px">
             <input type="checkbox" id="msAirDrop" style="accent-color:var(--brass)">
-            Enabled <span class="muted">(air-blast ejection — leave off unless installed; restores the ~30ms notification delay the blast needs)</span></label>
+            Enabled <span class="muted">— an optional solenoid air valve fires a short blast to knock
+            each case cleanly off the nest into the drop tube. Leave off unless the mod is installed.</span></label>
           <div class="msTileRow">
-            <div class="airField"><label>Pre-delay (ms) <span class="muted">— brass falls before the blast</span></label>
+            <div class="airField"><label title="Time between the case landing and the blast firing — lets the case begin to release naturally so the blast catches it mid-fall."><span class="msN">Pre-delay</span> <span class="muted">(ms)</span><br><span class="msH">wait before the blast</span></label>
               <input type="number" id="msAirPre" min="0" max="500" step="10"></div>
-            <div class="airField"><label>Blast length (ms)</label>
+            <div class="airField"><label title="How long the air valve stays open per case. Longer = stronger push and more air used."><span class="msN">Blast length</span> <span class="muted">(ms)</span><br><span class="msH">how long the valve opens</span></label>
               <input type="number" id="msAirSignal" min="0" max="500" step="10"></div>
-            <div class="airField"><label>Drop delay (ms) <span class="muted">— replaces Slot drop delay while on</span></label>
+            <div class="airField"><label title="The arm’s rest time between moves while AirDrop is on — a blasted case clears the chute faster, so this replaces the normal Slot drop delay."><span class="msN">Drop delay</span> <span class="muted">(ms)</span><br><span class="msH">replaces Slot drop delay while on</span></label>
               <input type="number" id="msAirPost" min="0" max="3000" step="10"></div>
           </div>
         </div>
@@ -6676,6 +6681,8 @@ function applyFirmwareUI(fw) {
     el.style.display = fork ? "" : "none");
   document.querySelectorAll(".picoOnly").forEach(el =>
     el.style.display = fw === "pico" ? "" : "none");
+  document.querySelectorAll(".ss2Only").forEach(el =>
+    el.style.display = fw.startsWith("ss") ? "" : "none");
 }
 function firmwareBoardHint(fw, board) {
   // the board pill is ground truth from the version line — warn when the
