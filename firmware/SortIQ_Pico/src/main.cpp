@@ -183,8 +183,12 @@ void fillSlotTab() {
   for (int i = 0; i < MAX_SLOTS; i++) slotPosTab[i] = (long)i * sortSteps * USTEP;
 }
 
+void feedHardStop();
+void sortHardStop();
+
 // ---------------- stats ----------------
 uint32_t feedCycles = 0, feedStalls = 0, sortStalls = 0, sortSkips = 0;
+uint32_t powerFlaps = 0, restOffTab = 0;
 long lastSeek = 0, maxSeek = 0;
 uint32_t sgLastN = 0, sgLastSum = 0; uint16_t sgLastMin = 1023;
 
@@ -212,7 +216,7 @@ void sortApplyMotion() {
 
 void sortStartHoming() {
   if (!sortAxis || !motorPower) { sortState = S_IDLE; sortHomed = sortAxis ? false : true; return; }
-  if (sortSt->isRunning()) sortSt->forceStop();    // re-home over any motion
+  if (sortSt->isRunning()) sortHardStop();    // re-home over any motion
   sortHomed = false;
   sortSt->setAcceleration(accFToSS2(sortAccF));
   // Homing geometry (machine-verified): the flag lies BELOW slot 0 in the
@@ -235,7 +239,7 @@ void sortStartHoming() {
 }
 
 void sortHomingFailed() {
-  sortSt->forceStop();
+  sortHardStop();
   sortState = S_IDLE; sortHomed = false;
   host.println(F("error:sort homing failed"));
 }
@@ -266,7 +270,7 @@ void sortService() {
       return;
     case S_SEEK:
       if (digitalRead(SORT_HOME) == LOW) {
-        sortSt->forceStop(); sortT0 = millis(); sortState = S_BACKOFF_LEAVE;
+        sortHardStop(); sortT0 = millis(); sortState = S_BACKOFF_LEAVE;
       } else if (millis() - sortT0 > 8000) sortHomingFailed();
       return;
     case S_BACKOFF_LEAVE:                          // wait for standstill
@@ -292,7 +296,7 @@ void sortService() {
       return;
     case S_HOME_SETTLE:
       if (digitalRead(SORT_HOME) == LOW) {         // the repeatable edge
-        sortSt->forceStop();
+        sortHardStop();
         delay(80);                                  // let queued steps drain
         sortFlagPos = (long)sortSt->getCurrentPosition();
         sortHomed = true; sortSlot = 0;
@@ -308,7 +312,7 @@ void sortService() {
       // is its upper edge) — any sighting well above it means lost steps
       long rel = (long)sortSt->getCurrentPosition() - sortFlagPos;
       if (digitalRead(SORT_HOME) == LOW && rel > 240) {
-        sortSt->forceStop();
+        sortHardStop();
         sortStalls++; sortSkips++;
         sortState = S_IDLE; sortHomed = false;     // frame is lost: re-home next
         host.println(F("error:sort stall detected"));
@@ -436,6 +440,14 @@ void feedApplyMotion() {
 void feedHardStop() {
   feedSt->setAcceleration(4000000);
   feedSt->stopMove();
+}
+
+// same disease on the sort axis (field trace: the homing dance's runForward
+// swallowed after a forceStop, position frozen through every retry): the
+// sort never forceStops either.
+void sortHardStop() {
+  sortSt->setAcceleration(4000000);
+  sortSt->stopMove();
 }
 
 void feedAbort(const __FlashStringHelper *err) {
@@ -701,6 +713,7 @@ void feedService() {
     case F_NOTIFY:
       if (millis() - feedT0 >= (uint32_t)notificationDelay) {
         feedCycles++;
+        if (digitalRead(FEED_HOME) == HIGH) restOffTab++;  // stop slipped off tab
         feedState = F_IDLE; forceFeed = false;
         host.println(F("done"));
       }
@@ -774,7 +787,11 @@ bool requireMotorPower() {
 }
 
 void checkMotorPower() {
-  if (feedState != F_IDLE || sortState == S_SEEK || sortState == S_MOVING) return;
+  // poll only at true rest: a glitched TMC read mid-homing used to declare
+  // power lost and strand the arm S_UNHOMED (S_UNHOMED itself must still
+  // poll — it IS the power-off resting state)
+  if (feedState != F_IDLE ||
+      (sortState != S_IDLE && sortState != S_UNHOMED)) return;
   if (millis() - lastPowerPoll < 1000) return;
   lastPowerPoll = millis();
   bool now = driversPresent();
@@ -787,6 +804,7 @@ void checkMotorPower() {
     sortStartHoming();                             // positions unknown: re-home
     feedStartManualHome(false);                    // both axes, 1.x boot parity
   } else {
+    powerFlaps++;
     host.println(F("info:motor power off"));
     sortHomed = false; sortState = S_UNHOMED;
   }
@@ -866,7 +884,7 @@ void handleCommand() {
   if (input == "version") { host.println(F(FIRMWARE_VERSION)); return; }
   if (input == "getconfig") { sendConfig(); return; }
   if (input == "stop") {
-    feedHardStop(); sortSt->forceStop();
+    feedHardStop(); sortHardStop();
     feedEdgeArm = false;
     feedPrevEdge = LONG_MIN; // edge chain broken: don't learn a fake pitch
     feedState = F_IDLE; forceFeed = false;
@@ -905,6 +923,8 @@ void handleCommand() {
     host.print(F(" feedState=")); host.print((int)feedState);
     host.print(F(" flagPos=")); host.print(sortFlagPos);
     host.print(F(" feedEdge=")); host.print(feedEdgeAbs);
+    host.print(F(" fpos=")); host.print((long)feedSt->getCurrentPosition());
+    host.print(F(" flaps=")); host.print(powerFlaps);
     host.print(F(" txDropPi=")); host.print(outPi.dropped);
     host.print(F(" txDropUsb=")); host.print(outUsb.dropped);
     host.print(F(" rxPi=")); host.print(rxPiBytes);
@@ -924,7 +944,9 @@ void handleCommand() {
     return;
   }
   if (input == "feedstats") {
-    host.print(F("{\"LastHomingSteps\":")); host.print(lastSeek);
+    host.print(F("{\"RestOffTab\":")); host.print(restOffTab);
+  host.print(F(",\"PowerFlaps\":")); host.print(powerFlaps);
+  host.print(F(",\"LastHomingSteps\":")); host.print(lastSeek);
     host.print(F(",\"MaxHomingSteps\":")); host.print(maxSeek);
     host.print(F(",\"FeedCycles\":")); host.print(feedCycles);
     host.print(F(",\"FeedStalls\":")); host.print(feedStalls);
