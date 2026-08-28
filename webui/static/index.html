@@ -1701,17 +1701,27 @@
               <input type="number" id="msHomeBackoff" min="0" max="200"></div>
             <div class="forkOnly"><label>Homing creep (µs/µstep) <span class="muted">— slower = repeatable edge</span></label>
               <input type="number" id="msHomeSlow" min="100" max="5000" step="50"></div>
-            <div class="picoOnly" style="flex-basis:100%">
-              <label class="inline" style="display:flex; gap:6px; align-items:center; margin:0; color:var(--text); font-size:13px">
-                <input type="checkbox" id="msMidFlag" style="accent-color:var(--brass)">
-                Mid-travel checkpoint <span class="muted" style="font-size:11.5px">— sensor tab mounted mid-arc; the arm's position is
-                verified every time a move crosses it, and small drift is corrected automatically</span></label>
-              <div id="mtcTune" class="msTileRow" style="display:none; margin-top:6px">
-                <div><label>Flag position (µsteps) <span class="muted">— fine-tune: arm parks past slot 0 → raise, short → lower</span></label>
-                  <input type="number" id="msFlagOffset" min="0" max="3520" step="16"></div>
-                <div><label>Flag width (µsteps)</label>
-                  <input type="number" id="msFlagWidth" min="32" max="1000" step="8"></div>
-              </div>
+          </div>
+        </div>
+
+        <div class="msTile picoOnly">
+          <h4>Mid-travel checkpoint</h4>
+          <div class="muted" style="font-size:12px; line-height:1.5; margin:0 0 10px; max-width:620px">
+            Mounts the homing sensor tab <b>mid-arc</b> (between slots 3 and 4) instead
+            of at slot&nbsp;0. Every sort move that crosses it verifies the arm's true
+            position: lost steps are caught within one move, a dead sensor announces
+            itself, and small drift is corrected automatically. Enabling walks you
+            through the one-time hardware setup — slot calibration is unaffected.
+          </div>
+          <div class="ctlRow" style="gap:18px; flex-wrap:wrap; align-items:flex-end">
+            <label class="inline" style="display:flex; gap:6px; align-items:center; margin:0 0 4px; color:var(--text); font-size:13px">
+              <input type="checkbox" id="msMidFlag" style="accent-color:var(--brass)">
+              Enabled</label>
+            <div id="mtcTune" class="ctlRow" style="display:none; gap:18px; flex-wrap:wrap; align-items:flex-end; margin:0">
+              <div><label>Flag position (µsteps) <span class="muted">— arm parks past slot 0 → raise; short → lower</span></label>
+                <input type="number" id="msFlagOffset" min="0" max="3520" step="16" style="width:120px"></div>
+              <div><label>Flag width (µsteps)</label>
+                <input type="number" id="msFlagWidth" min="32" max="1000" step="8" style="width:100px"></div>
             </div>
           </div>
         </div>
