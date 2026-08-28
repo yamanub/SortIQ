@@ -341,6 +341,9 @@ uint32_t feedT0 = 0, waitMsgT = 0;
 long feedSeekStart = 0;
 int feedSgHits = 0, feedSgGate = 0;
 int feedSortHomeTries = 0;
+bool feedHomeResume = false;      // F_HOME returns to the brass wait
+bool feedRealigned = false;       // one realign per wait
+uint32_t feedWaitStart = 0;
 long feedSgArmPos = -1;
 long feedSgEvalPos = LONG_MIN;
 
@@ -563,11 +566,37 @@ void feedService() {
       }
       return;
     case F_WAIT_BRASS:
+      if (waitMsgT == 0) { waitMsgT = millis(); feedWaitStart = millis(); }
       if (forceFeed || digitalRead(PROX_PIN) == HIGH) {
         feedT0 = millis();
         feedState = forceFeed ? F_BLIND : F_DEBOUNCE;
         if (forceFeed) feedStartCycle();
-      } else if (millis() - waitMsgT > 1000) {
+        return;
+      }
+      // a slip event that misaligns the pocket kills brass STAGING, and
+      // with no cycles running nothing re-anchors — the wheel starves
+      // until the app's end-of-brass flush (field-hit). If the wait drags
+      // and the wheel is NOT resting on its tab, re-home it once: a
+      // misaligned pocket realigns (brass usually stages right after); a
+      // truly dry hopper pays nothing (on-tab home is a no-op).
+      if (!feedRealigned && millis() - feedWaitStart > 3000 &&
+          digitalRead(FEED_HOME) == HIGH) {
+        feedRealigned = true;
+        feedHomeResume = true;
+        host.println(F("info:feed wheel re-aligning"));
+        feedApplyMotion();
+        feedSt->setSpeedInHz(2500);
+        feedEdgeSeen = false; feedEdgeCalced = false; feedEdgeInBlind = false;
+        feedEdgeArm = false;
+        feedSeekStart = (long)feedSt->getCurrentPosition();
+        feedCycleStart = feedSeekStart - 160;
+        feedClearStart = feedSeekStart - 64;
+        feedT0 = millis();
+        feedSt->runForward();
+        feedState = F_HOME;
+        return;
+      }
+      if (millis() - waitMsgT > 1000) {
         host.println(F("waiting for brass"));
         waitMsgT = millis();
       }
@@ -671,7 +700,13 @@ void feedService() {
         feedSt->setAcceleration(500000);
         feedSt->moveTo(stopAt);
         feedPrevEdge = feedEdgeAbs;              // seed the pitch predictor
-        feedState = F_IDLE;
+        if (feedHomeResume) {
+          feedHomeResume = false;
+          feedState = F_WAIT_BRASS;              // back to the brass wait
+          waitMsgT = millis(); feedWaitStart = millis();
+        } else {
+          feedState = F_IDLE;
+        }
         return;
       }
       long trav = (long)feedSt->getCurrentPosition() - feedSeekStart;
@@ -697,6 +732,7 @@ void startPipelinedFeed(int slot, bool force) {    // pf / xf:N
   }
   forceFeed = force;
   feedSortHomeTries = 0;
+  feedRealigned = false; feedHomeResume = false;
   if (sortAxis && sortHomed) sortGoTo(slot);       // arm first (dwell inside)
   qSlot = slot;
   feedState = F_WAIT_SORT; waitMsgT = 0;           // unhomed arm: F_WAIT_SORT

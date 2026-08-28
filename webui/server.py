@@ -4599,6 +4599,20 @@ class RunManager:
                 # adopted link = board already booted; there is no Ready
                 # coming, so don't sit out the full boot-banner timeout
                 transport = Cs72Transport(link, ready_timeout=1.0)
+                # re-assert the SAVED lighting on the adopted link: a board
+                # reboot between the console's last push and this run leaves
+                # firmware-default lighting (field-hit: first cases of a run
+                # blown out white until the operator noticed)
+                try:
+                    ms = machine_settings()
+                    if ms.get("camera_led") is not None:
+                        link.write(f"cameraledlevel:{int(ms['camera_led'])}\n")
+                    lc = (ms.get("led_color") or "").lstrip("#")
+                    if len(lc) == 6:
+                        r, g, b = (int(lc[i:i+2], 16) for i in (0, 2, 4))
+                        link.write(f"ledcolor:{r},{g},{b}\n")
+                except Exception:
+                    pass
                 # capture mode: no flicker probe -> the feed ack IS the
                 # seat time, so the settle carries the whole post-seat
                 # wait that think time covers during sorting (see
