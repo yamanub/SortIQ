@@ -26,7 +26,27 @@ use a 4 or 5 as the machine's brain.
 ## Part B — install SortIQ (one command from your workstation)
 
 The Pi never needs GitHub credentials — the code is pushed to it over
-SSH from your machine (which also makes shipping updates a one-liner):
+SSH from your machine (which also makes shipping updates a one-liner).
+
+**First time only:** clone this repository to your PC/Mac (`git clone
+https://github.com/yamanub/SortIQ.git`, or GitHub's **Code → Download
+ZIP**), and give this machine passwordless SSH to the Pi:
+
+```bash
+ssh-copy-id pisortiq@pisortiq.local   # asks for the Pi password once
+```
+
+Skip `ssh-copy-id` only if you pasted this machine's SSH public key into
+the Imager (the Imager then disables password login, so `ssh-copy-id`
+from a *different* machine won't work — run it from the machine whose
+key you pasted, or log in from that machine and add the new key to
+`~/.ssh/authorized_keys` on the Pi).
+
+The installer also needs passwordless `sudo` on the Pi. An Imager-created
+user has it already; if yours doesn't (the script detects this), it sets
+it up for you, asking for the Pi password once.
+
+Then, from the repo folder:
 
 ```bash
 tools/pi_deploy.sh                  # defaults to pisortiq@pisortiq.local

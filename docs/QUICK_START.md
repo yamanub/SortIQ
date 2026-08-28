@@ -35,7 +35,19 @@ Details: [PI_SETUP.md](PI_SETUP.md) Part A.
 
 ## Step 2 — Install SortIQ (one command, ~5 min)
 
-From this repo on your PC/Mac:
+First time only — get the code onto your PC/Mac and set up SSH:
+
+```bash
+git clone https://github.com/yamanub/SortIQ.git
+cd SortIQ
+ssh-copy-id pisortiq@pisortiq.local   # asks for the Pi password once
+```
+
+(No git? Use GitHub's **Code → Download ZIP** and unzip it instead. The
+`ssh-copy-id` step is what lets the installer log in without a password —
+skip it only if you pasted this machine's SSH key into the Imager.)
+
+Then, from the repo folder:
 
 ```bash
 tools/pi_deploy.sh                  # defaults to pisortiq@pisortiq.local
