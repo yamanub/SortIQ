@@ -449,16 +449,33 @@ void feedAbort(const __FlashStringHelper *err) {
 // bare feed home: slow seek to the tab edge, stop AT it, no offset.
 // A wheel already resting on the tab is home (the feed frame re-anchors
 // every cycle; it does not need the absolute edge at rest).
-void feedStartManualHome() {
+// deliberate=true (the Home feeder button): an on-tab wheel is NOT trusted
+// as aligned — a stop that slipped under brass load can rest misaligned yet
+// still on the wide tab (field-hit: rehome was a silent no-op until the
+// operator dragged the wheel off the tab by hand). A deliberate home rides
+// forward out of the tab and anchors on the NEXT tab's true leading edge —
+// forward-only, advancing one pocket. Automatic homes (boot, run-end, the
+// mid-run realign) stay deliberate=false: on-tab is a no-op so they can
+// never advance a pocket / drop a case uncommanded.
+void feedStartManualHome(bool deliberate) {
   if (feedState != F_IDLE) return;               // busy — a cycle owns the wheel
-  if (digitalRead(FEED_HOME) == LOW) return;     // already on the tab: homed
+  bool onTab = digitalRead(FEED_HOME) == LOW;
+  if (onTab && !deliberate) return;
   feedApplyMotion();
   feedSt->setSpeedInHz(2500);                    // 1.x homefeeder pace (400 us)
   feedEdgeSeen = false; feedEdgeCalced = false; feedEdgeInBlind = false;
   feedEdgeArm = false;
   feedSeekStart = (long)feedSt->getCurrentPosition();
-  feedCycleStart = feedSeekStart - 160;          // pin verified HIGH at rest:
-  feedClearStart = feedSeekStart - 64;           // credit the standstill, arm at once
+  if (onTab) {
+    // must clear this tab before an edge can be trusted: no credits —
+    // the arm logic waits for 4 steps of clean HIGH after the exit
+    host.println(F("info:on tab - advancing to the next tab edge"));
+    feedCycleStart = feedSeekStart;
+    feedClearStart = feedSeekStart;
+  } else {
+    feedCycleStart = feedSeekStart - 160;        // pin verified HIGH at rest:
+    feedClearStart = feedSeekStart - 64;         // credit the standstill, arm at once
+  }
   feedT0 = millis();
   feedSt->runForward();
   feedState = F_HOME;
@@ -761,7 +778,7 @@ void checkMotorPower() {
     host.println(F("info:motor power on"));
     sortState = S_UNHOMED; sortHomed = false;
     sortStartHoming();                             // positions unknown: re-home
-    feedStartManualHome();                         // both axes, 1.x boot parity
+    feedStartManualHome(false);                    // both axes, 1.x boot parity
   } else {
     host.println(F("info:motor power off"));
     sortHomed = false; sortState = S_UNHOMED;
@@ -941,7 +958,7 @@ void handleCommand() {
   if (input == "homefeeder") {
     if (!requireMotorPower()) return;
     host.println(F("ok"));
-    feedStartManualHome();
+    feedStartManualHome(true);   // deliberate: on-tab advances to a true edge
     return;
   }
   if (input == "homesorter") {
@@ -1145,7 +1162,7 @@ void setup() {
     host.println(F("info:motor power off"));
   } else {
     sortStartHoming();
-    feedStartManualHome();
+    feedStartManualHome(false);
   }
 }
 
