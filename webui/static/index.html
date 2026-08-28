@@ -6442,11 +6442,11 @@ async function mtcOpen(enable) {
   $("mtcTitle").textContent = enable ? "Mid-travel checkpoint — set up"
                                      : "Mid-travel checkpoint — disable";
   $("mtcSteps").innerHTML = enable
-    ? "<li>Motor power is now <b>off</b> — the sorter arm turns freely.</li>" +
+    ? "<li>The sorter arm motor is now <b>released</b> — it turns freely.</li>" +
       "<li>Move the arm to the <b>midpoint between slot 3 and slot 4</b>.</li>" +
       "<li>Mount the homing sensor tab so it <b>blocks the sensor beam</b> at this arm position.</li>" +
       "<li>Click <b>Set up</b> — power returns, the machine measures the tab and homes the arm to slot 0.</li>"
-    : "<li>Motor power is now <b>off</b> — the sorter arm turns freely.</li>" +
+    : "<li>The sorter arm motor is now <b>released</b> — it turns freely.</li>" +
       "<li>Move the sensor tab <b>back to its slot-0 position</b>: park the arm at slot 0 and set the tab so it blocks the beam there.</li>" +
       "<li>Click <b>Apply</b> — power returns and the machine homes the classic way.</li>";
   $("mtcBtnApply").textContent = enable ? "Set up" : "Apply";
@@ -6454,20 +6454,20 @@ async function mtcOpen(enable) {
   $("mtcActions").style.display = "";
   $("mtcClose").style.display = "none";
   $("mtcModal").style.display = "flex";
-  $("mtcPwr").textContent = "Cutting motor power…";
-  try { await postJson("/api/power", { on: false }); } catch (e) {}
-  $("mtcPwr").textContent = "Motor power is OFF — the arm moves freely by hand.";
+  $("mtcPwr").textContent = "Releasing the sorter arm…";
+  try { await postJson("/api/console/send", { line: "armfree:1" }); } catch (e) {}
+  $("mtcPwr").textContent = "Sorter arm motor is RELEASED — it moves freely by hand. (Everything else stays powered.)";
 }
 async function mtcCancel() {
   $("mtcModal").style.display = "none";
   mtcReflect(mtcSaved);                       // checkbox back to reality
-  try { await postJson("/api/power", { on: true }); } catch (e) {}
+  try { await postJson("/api/console/send", { line: "armfree:0" }); } catch (e) {}
 }
 async function mtcApply() {
   const body = mtcEnable ? { sort_flag_offset: 1120, sort_flag_width: 64 }
                          : { sort_flag_offset: 0, sort_flag_width: 240 };
   try { await postJson("/api/machine/settings", body); } catch (e) {}
-  try { await postJson("/api/power", { on: true }); } catch (e) {}
+  try { await postJson("/api/console/send", { line: "armfree:0" }); } catch (e) {}
   $("msFlagOffset").value = body.sort_flag_offset;
   $("msFlagWidth").value = body.sort_flag_width;
   mtcReflect(mtcEnable);
@@ -6475,12 +6475,12 @@ async function mtcApply() {
   $("mtcActions").style.display = "none";
   $("mtcDone").style.display = "";
   $("mtcDone").innerHTML = mtcEnable
-    ? "Power is back on and the arm is homing through the new checkpoint — " +
+    ? "The arm is re-energized and homing through the new checkpoint — " +
       "it will park at <b>slot 0</b>. If it rests slightly <b>past</b> slot 0, raise " +
       "<b>Flag position</b>; slightly <b>short</b>, lower it — then press " +
       "<b>Home sorter</b> and re-check. From now on the arm’s position is " +
       "verified on every move that crosses the sensor."
-    : "Power is back on and the machine is homing the classic way (sensor at slot 0).";
+    : "The arm is re-energized and homing the classic way (sensor at slot 0).";
   $("mtcClose").style.display = "";
 }
 document.addEventListener("DOMContentLoaded", () => {

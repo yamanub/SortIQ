@@ -1050,6 +1050,24 @@ void handleCommand() {
     host.println(F("ok"));
     return;
   }
+  if (input.startsWith(F("armfree:"))) {
+    // guided-setup helper: release ONLY the sorter arm so the operator can
+    // position it by hand (feed stays held; fans, ring, board untouched).
+    // armfree:0 re-energizes and re-homes — the frame is unknown after
+    // hand moves by definition.
+    bool freeArm = input.substring(8).toInt() != 0;
+    host.println(F("ok"));
+    if (freeArm) {
+      sortHardStop();
+      digitalWrite(SORT_EN, HIGH);
+      sortHomed = false; sortState = S_UNHOMED;
+    } else {
+      digitalWrite(SORT_EN, LOW);
+      delay(50);
+      sortStartHoming();
+    }
+    return;
+  }
   if (input == "homefeeder" || input == "homefeeder:soft") {
     if (!requireMotorPower()) return;
     host.println(F("ok"));
