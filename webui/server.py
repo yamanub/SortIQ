@@ -4612,7 +4612,11 @@ class RunManager:
                 # SS2 fork: the mechanical cycle runs UNDER inference
                 # (PFEED right after the photo, PSLOT when the slot is
                 # known). Older firmware keeps the sequential SORT path.
-                pipelined = machine_settings().get("firmware") == "ss2"
+                # ss2 AND pico speak the pipelined cycle (pf/ps:); the pico
+                # kind postdates this gate and fell through to the stock
+                # sequential path, which 2.0 doesn't speak — every sort
+                # timed out, HOME, re-prime, forever (first field run).
+                pipelined = machine_settings().get("firmware") in ("ss2", "pico")
             else:
                 from sorter.esp32_sim import VirtualMachine, Esp32Sim
                 from sorter.transport import SimTransport
