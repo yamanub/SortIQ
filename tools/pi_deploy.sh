@@ -17,6 +17,44 @@ set -euo pipefail
 TARGET="${1:-pisortiq@pisortiq.local}"
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 
+# ---- pre-flight: the script needs passwordless SSH and passwordless sudo ----
+# (field-reported #4/#5: a Pi user created with a password, or by adduser,
+# has neither — and the failures mid-script are cryptic. Check both up
+# front and say exactly what to do.)
+echo ">> checking SSH access to $TARGET"
+if ! ssh -o BatchMode=yes -o ConnectTimeout=8 "$TARGET" true 2>/dev/null; then
+  HOST="${TARGET#*@}"
+  cat >&2 <<EOF
+
+Cannot log in to $TARGET without a password. To fix (one time):
+
+  1. Make sure the Pi is booted and reachable:
+         ping $HOST
+     ".local" names need a minute after boot; if the name never resolves,
+     find the Pi's IP address (your router's device list) and re-run:
+         tools/pi_deploy.sh pisortiq@<ip-address>
+
+  2. Install your SSH key on the Pi (asks for the Pi password you set
+     in the Raspberry Pi Imager):
+         ssh-copy-id $TARGET
+     (If the Imager was given an SSH key instead of a password, log in
+     from the machine that key belongs to, or add this machine's key.)
+
+  3. Re-run this script.
+EOF
+  exit 1
+fi
+
+if ! ssh "$TARGET" 'sudo -n true' 2>/dev/null; then
+  echo ">> sudo on the Pi asks for a password (user not set up by the Imager)."
+  echo "   Granting passwordless sudo so installs and updates can run"
+  echo "   unattended — you'll be asked for the Pi user's password ONCE."
+  echo "   (Undo later with: sudo rm /etc/sudoers.d/010-sortiq-nopasswd)"
+  ssh -t "$TARGET" 'echo "$USER ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/010-sortiq-nopasswd >/dev/null && sudo chmod 440 /etc/sudoers.d/010-sortiq-nopasswd'
+  ssh "$TARGET" 'sudo -n true' 2>/dev/null || {
+    echo "!! passwordless sudo still not working — aborting" >&2; exit 1; }
+fi
+
 echo ">> migrating any old ShellSorter install"
 ssh "$TARGET" 'bash -s' <<'MIGRATE'
 set -euo pipefail
