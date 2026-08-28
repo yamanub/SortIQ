@@ -711,7 +711,11 @@ void feedService() {
       if (feedEdgeCalced) {
         feedEdgeArm = false;
         long pos = (long)feedSt->getCurrentPosition();
-        long stopAt = feedEdgeAbs;
+        // park at the OPERATING rest (edge + offset), exactly where a
+        // cycle parks — a bare home used to stop at edge+0, leaving the
+        // wheel 7 steps short of the tuned alignment after every
+        // run-end/boot home ("off home" on inspection, field-hit)
+        long stopAt = feedEdgeAbs + (long)feedHomingOffset * USTEP;
         if (stopAt < pos + 4) stopAt = pos + 4;  // forward-only
         feedSt->setAcceleration(500000);
         feedSt->moveTo(stopAt);
@@ -958,10 +962,13 @@ void handleCommand() {
     host.println(F("ok"));
     return;
   }
-  if (input == "homefeeder") {
+  if (input == "homefeeder" || input == "homefeeder:soft") {
     if (!requireMotorPower()) return;
     host.println(F("ok"));
-    feedStartManualHome(true);   // deliberate: on-tab advances to a true edge
+    // bare "homefeeder" = the operator's button: on-tab advances to a
+    // true edge. ":soft" = automatic callers (run end): on-tab is a
+    // no-op so a run's end never advances a pocket uncommanded.
+    feedStartManualHome(input == "homefeeder");
     return;
   }
   if (input == "homesorter") {

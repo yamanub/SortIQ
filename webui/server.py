@@ -5063,7 +5063,7 @@ class RunManager:
             if link is not None:
                 try:
                     link.write("homesorter\n")
-                    link.write("homefeeder\n")
+                    link.write("homefeeder:soft\n")  # no on-tab pocket advance
                     time.sleep(0.3)      # let the lines hit the wire pre-close
                 except Exception:
                     pass
