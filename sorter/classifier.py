@@ -18,6 +18,11 @@ def _load_interpreter(path):
         except ImportError:
             import tensorflow as tf                           # on the PC
             Interpreter = tf.lite.Interpreter
-    interp = Interpreter(model_path=str(path))
+    import os
+    # default is ONE thread — on the quad-core Pis that left 1.9x on the
+    # table (Pi 4 bench: 352 -> 187 ms/invoke on the shadow embed). Leave
+    # one core for the camera pump + web server.
+    threads = max(2, (os.cpu_count() or 2) - 1)
+    interp = Interpreter(model_path=str(path), num_threads=threads)
     interp.allocate_tensors()
     return interp
