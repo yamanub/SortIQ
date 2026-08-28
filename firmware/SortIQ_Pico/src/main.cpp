@@ -192,7 +192,7 @@ uint32_t sgLastN = 0, sgLastSum = 0; uint16_t sgLastMin = 1023;
 // SORT axis — flag-relative state machine
 // =====================================================================
 enum SortState { S_IDLE, S_UNHOMED, S_SEEK, S_BACKOFF_LEAVE, S_BACKOFF_RUN,
-                 S_APPROACH, S_HOME_SETTLE, S_MOVING };
+                 S_APPROACH, S_HOME_SETTLE, S_MOVING, S_SEEK_ARM };
 SortState sortState = S_UNHOMED;
 long sortFlagPos = 0;                    // absolute ustep position of the flag edge
 bool sortHomed = false;
@@ -226,10 +226,12 @@ void sortStartHoming() {
     sortState = S_BACKOFF_LEAVE;
     return;
   }
-  sortSt->setSpeedInHz(4000);
-  sortSt->runBackward();
+  // FAS swallows a motion command issued in the same breath as a
+  // forceStop (async stop processing, same family as its async position
+  // writes — spike-documented, then forgotten here: the seek 'ran' with
+  // the motor frozen for its whole timeout). Arm the seek lazily.
   sortT0 = millis();
-  sortState = S_SEEK;
+  sortState = S_SEEK_ARM;
 }
 
 void sortHomingFailed() {
@@ -253,6 +255,15 @@ void sortGoTo(int slot) {                          // called only when S_IDLE+ho
 void sortService() {
   switch (sortState) {
     case S_IDLE: case S_UNHOMED: return;
+    case S_SEEK_ARM:                               // standstill + settle first:
+      if (!sortSt->isRunning() && millis() - sortT0 > 150) {
+        sortSt->setSpeedInHz(4000);
+        sortSt->setAcceleration(accFToSS2(sortAccF));
+        sortSt->runBackward();
+        sortT0 = millis();
+        sortState = S_SEEK;
+      } else if (millis() - sortT0 > 4000) sortHomingFailed();
+      return;
     case S_SEEK:
       if (digitalRead(SORT_HOME) == LOW) {
         sortSt->forceStop(); sortT0 = millis(); sortState = S_BACKOFF_LEAVE;
@@ -321,7 +332,7 @@ void sortService() {
 // FEED axis — cycle state machine (blind travel -> flag seek -> offset)
 // =====================================================================
 enum FeedState { F_IDLE, F_WAIT_SORT, F_WAIT_BRASS, F_DEBOUNCE, F_BLIND,
-                 F_SEEK, F_OFFSET, F_NOTIFY, F_HOME };
+                 F_SEEK, F_OFFSET, F_NOTIFY, F_HOME, F_LAUNCH };
 FeedState feedState = F_IDLE;
 bool forceFeed = false;
 bool slotQueued = true;
@@ -413,9 +424,21 @@ void feedApplyMotion() {
   feedSt->setAcceleration(accFToSS2(feedAccF));
 }
 
+// The feed stepper must NEVER forceStop(): with its short forward-planning
+// queue (set for the predictive creep), FAS's forceStop wedges the queue —
+// isRunning() sticks true until reboot and every later cycle dies in
+// F_LAUNCH (bench-bisected: any feed forceStop killed the wheel for the
+// rest of the boot; the sort, on default planning, is unaffected). A
+// max-decel stopMove() is the same near-dead stop through the sane path.
+void feedHardStop() {
+  feedSt->setAcceleration(4000000);
+  feedSt->stopMove();
+}
+
 void feedAbort(const __FlashStringHelper *err) {
-  feedSt->forceStop();
+  feedHardStop();
   feedEdgeArm = false;
+  feedPrevEdge = LONG_MIN;   // edge chain broken: don't learn a fake pitch
   feedState = F_IDLE; forceFeed = false;
   host.println(err);
 }
@@ -463,7 +486,7 @@ void feedFinishHome() {
   }
   feedPrevEdge = feedEdgeAbs;
   if (remain < 16) {
-    feedSt->forceStop();                     // at/past the mark: dead stop
+    feedHardStop();                          // at/past the mark: dead stop
   } else if (!feedDecelOverOffset) {
     feedSt->setAcceleration(4000000);        // cruise the offset, dead stop
     feedSt->moveTo(stopAt);
@@ -516,10 +539,9 @@ void feedStartCycle() {                            // after the arm is parked
   if (feedCreepAt < feedCycleStart + 64 || feedCreepAt > blindEnd + 6400)
     feedCreepAt = bootstrap;                       // stale frame: be safe
   if (feedCreepAt < feedCycleStart + 64) feedCreepAt = feedCycleStart + 64;
-  feedSt->runForward();
   feedT0 = millis();
-  feedState = F_BLIND;
-}
+  feedState = F_LAUNCH;                            // same forceStop-swallow
+}                                                  // guard as the sort seek
 
 void feedService() {
   switch (feedState) {
@@ -553,6 +575,15 @@ void feedService() {
     case F_DEBOUNCE:
       if (digitalRead(PROX_PIN) != HIGH) { feedState = F_WAIT_BRASS; return; }
       if (millis() - feedT0 >= (uint32_t)debounceTime) feedStartCycle();
+      return;
+    case F_LAUNCH:                                 // standstill + settle before
+      if (!feedSt->isRunning() && millis() - feedT0 > 150) {
+        feedSt->runForward();                      // motion: FAS swallows a run
+        feedT0 = millis();                         // issued right on a forceStop
+        feedState = F_BLIND;
+      } else if (millis() - feedT0 > 4000) {
+        feedAbort(F("error:feed overtravel detected"));
+      }
       return;
     case F_BLIND: {
       // feed jam detection, the 1.x two-stage detector: DIAG is a free
@@ -659,8 +690,9 @@ void startPipelinedFeed(int slot, bool force) {    // pf / xf:N
     // state machine left the wheel running into a mangled cycle -> error ->
     // HOME again, forever (the first field run died in this loop). Yield
     // whatever is in flight — every cycle re-anchors on its own edge.
-    feedSt->forceStop();
+    feedHardStop();
     feedEdgeArm = false;
+    feedPrevEdge = LONG_MIN; // edge chain broken: don't learn a fake pitch
     feedState = F_IDLE;
   }
   forceFeed = force;
@@ -774,8 +806,9 @@ void handleCommand() {
   if (input == "version") { host.println(F(FIRMWARE_VERSION)); return; }
   if (input == "getconfig") { sendConfig(); return; }
   if (input == "stop") {
-    feedSt->forceStop(); sortSt->forceStop();
+    feedHardStop(); sortSt->forceStop();
     feedEdgeArm = false;
+    feedPrevEdge = LONG_MIN; // edge chain broken: don't learn a fake pitch
     feedState = F_IDLE; forceFeed = false;
     if (sortState == S_MOVING) {
       sortState = S_IDLE;                          // position frame intact
