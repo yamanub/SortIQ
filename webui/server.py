@@ -5057,14 +5057,21 @@ class RunManager:
             # every ended run (finished, stopped, crashed) leaves the sorter
             # arm re-homed: a jam late in a run can skew the arm's frame
             # without ever crossing the flag again, and the next run must
-            # not inherit that. The feed re-home is a free no-op when the
-            # wheel already rests on its tab.
+            # not inherit that. ORDER IS EVERYTHING: transport.close()
+            # sends its own cleanup "stop", which was killing the homing
+            # we had just started (field-hit: every run ended with the arm
+            # stranded unhomed mid-dance). Quiesce first, then home, then
+            # close the raw link ourselves — the transport's later close
+            # writes into a dead link and is harmlessly swallowed.
             link = getattr(transport, "link", None)
             if link is not None:
                 try:
+                    link.write("stop\n")
+                    time.sleep(0.2)
                     link.write("homesorter\n")
                     link.write("homefeeder:soft\n")  # no on-tab pocket advance
-                    time.sleep(0.3)      # let the lines hit the wire pre-close
+                    time.sleep(0.3)      # let the lines hit the wire
+                    link.close()
                 except Exception:
                     pass
             for closer in (transport, camera):
