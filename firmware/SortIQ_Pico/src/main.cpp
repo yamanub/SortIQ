@@ -205,8 +205,30 @@ uint32_t sortT0 = 0;                     // state timer
 uint32_t lastSortArrive = 0;
 bool sortMoveQueuedDone = false;         // a cycle waits on this arm move
 
+// Mid-position flag support: the tab may be mounted anywhere along the
+// slot arc. sortFlagOffset = usteps from SLOT 0 up to the flag's upper
+// edge (0 = flag at slot 0, the classic geometry — all crossing checks
+// are inert at 0). With the flag mid-range, every move crossing its zone
+// becomes a checkpoint: the flag must appear inside the zone (presence),
+// must NOT appear elsewhere (two-sided audit), and a crossing move that
+// never sees it fails loudly (absence check — catches lost steps AND a
+// dead sensor). Downward crossings measure the true upper edge by ISR;
+// small drift re-anchors the frame silently, large drift aborts.
+int sortFlagOffset = 0;       // usteps, slot 0 -> flag upper edge
+int sortFlagWidth = 240;      // usteps, tab width (zone below upper edge)
+volatile bool sortEdgeArm = false, sortEdgeSeen = false;
+volatile uint32_t sortEdgeUs = 0;
+bool sortEdgeCalced = false;
+bool sortCrossExpect = false, sortSawFlag = false, sortMovingDown = false;
+uint32_t sortCrossChecks = 0, sortReanchors = 0;
+long sortLastDrift = 0;
+void sortHomeIsr() {
+  if (sortEdgeArm && !sortEdgeSeen) { sortEdgeUs = micros(); sortEdgeSeen = true; }
+}
+
 long sortTargetAbs(int slot) {
-  return sortFlagPos + (long)sortHomingOffset * USTEP + slotPosTab[slot];
+  return sortFlagPos + (long)sortHomingOffset * USTEP - (long)sortFlagOffset
+         + slotPosTab[slot];
 }
 
 void sortApplyMotion() {
@@ -244,6 +266,15 @@ void sortHomingFailed() {
   host.println(F("error:sort homing failed"));
 }
 
+void sortSkipAbort() {                             // steps were lost: frame dead
+  sortHardStop();
+  sortStalls++; sortSkips++;
+  sortEdgeArm = false; sortCrossExpect = false;
+  sortState = S_IDLE; sortHomed = false;
+  host.println(F("error:sort stall detected"));
+  sortStartHoming();                               // self-heal like the fork
+}
+
 void sortGoTo(int slot) {                          // called only when S_IDLE+homed
   if (slot < 0) slot = 0; if (slot >= MAX_SLOTS) slot = MAX_SLOTS - 1;
   uint32_t since = millis() - lastSortArrive;      // settle: rapid commands
@@ -252,7 +283,17 @@ void sortGoTo(int slot) {                          // called only when S_IDLE+ho
   sortSlot = slot;
   sortApplyMotion();
   sgLastN = 0; sgLastSum = 0; sgLastMin = 1023;
-  sortSt->moveTo(sortTargetAbs(slot));
+  long start = (long)sortSt->getCurrentPosition();
+  long target = sortTargetAbs(slot);
+  long zLow = sortFlagPos - sortFlagWidth, zHigh = sortFlagPos;
+  sortCrossExpect = sortAxis && sortFlagOffset > 0 &&
+                    ((start < zLow - 64 && target > zHigh + 64) ||
+                     (start > zHigh + 64 && target < zLow - 64));
+  sortMovingDown = target < start;
+  sortSawFlag = false; sortEdgeCalced = false; sortEdgeSeen = false;
+  sortEdgeArm = sortCrossExpect;
+  if (sortCrossExpect) sortCrossChecks++;
+  sortSt->moveTo(target);
   sortState = S_MOVING;
 }
 
@@ -302,28 +343,48 @@ void sortService() {
         sortHomed = true; sortSlot = 0;
         lastSortArrive = millis();
         sortApplyMotion();
-        // rest at slot 0 = flag edge + offset, a small UP move off the flag
-        sortSt->moveTo(sortFlagPos + (long)sortHomingOffset * USTEP);
+        // rest at slot 0 (with a mid-range flag this is a DOWN move)
+        sortSt->moveTo(sortTargetAbs(0));
         sortState = S_IDLE;
       } else if (millis() - sortT0 > 6000) sortHomingFailed();
       return;
     case S_MOVING: {
-      // flag audit: the flag zone lies strictly BELOW flagPos (the anchor
-      // is its upper edge) — any sighting well above it means lost steps
-      long rel = (long)sortSt->getCurrentPosition() - sortFlagPos;
-      if (digitalRead(SORT_HOME) == LOW && rel > 240) {
-        sortHardStop();
-        sortStalls++; sortSkips++;
-        sortState = S_IDLE; sortHomed = false;     // frame is lost: re-home next
-        host.println(F("error:sort stall detected"));
-        sortStartHoming();                          // self-heal like the fork
-        return;
+      long pos = (long)sortSt->getCurrentPosition();
+      long zLow = sortFlagPos - sortFlagWidth, zHigh = sortFlagPos;
+      // ISR-latched entry edge on a crossing move: measure frame drift.
+      // Moving DOWN enters at the upper edge — the true homing anchor —
+      // so small drift re-anchors the frame (continuous self-calibration).
+      // Moving UP enters at the lower edge, whose position inherits the
+      // width setting's uncertainty: audited with a generous window only.
+      if (sortEdgeSeen && !sortEdgeCalced) {
+        uint32_t lateUs = micros() - sortEdgeUs;
+        int32_t vm = sortSt->getCurrentSpeedInMilliHz(); if (vm < 0) vm = -vm;
+        long lateSteps = (long)((uint64_t)lateUs * (uint32_t)(vm / 1000) / 1000000ULL);
+        long meas = sortMovingDown ? pos + lateSteps : pos - lateSteps;
+        sortEdgeCalced = true; sortSawFlag = true;
+        long drift = meas - (sortMovingDown ? zHigh : zLow);
+        sortLastDrift = drift;
+        if (sortMovingDown) {
+          if (drift >= -48 && drift <= 48) {
+            sortFlagPos += drift; sortReanchors++;
+          } else { sortSkipAbort(); return; }
+        } else if (drift < -160 || drift > 160) { sortSkipAbort(); return; }
+      }
+      // polled two-sided audit: the flag seen far outside its zone = lost
+      // steps (also marks legitimate in-zone sightings for the absence check)
+      if (digitalRead(SORT_HOME) == LOW) {
+        if (pos > zLow - 240 && pos < zHigh + 240) sortSawFlag = true;
+        else { sortSkipAbort(); return; }
       }
       // SG telemetry (blocking UART read costs the motion nothing on PIO)
       uint16_t r = sortDrv.SG_RESULT();
       if (r == 0) r = sortDrv.SG_RESULT();
       if (r > 0) { sgLastN++; sgLastSum += r; if (r < sgLastMin) sgLastMin = r; }
       if (!sortSt->isRunning()) {
+        // absence check: a crossing move that never saw the flag lost
+        // steps somewhere (or the sensor is dead) — same recovery
+        if (sortCrossExpect && !sortSawFlag) { sortSkipAbort(); return; }
+        sortEdgeArm = false; sortCrossExpect = false;
         lastSortArrive = millis();
         sortState = S_IDLE;
       }
@@ -838,6 +899,8 @@ void sendConfig() {
   host.print(F(",\"AirDropSignalTime\":")); host.print(airSignal);
   host.print(F(",\"FeedHomingOffset\":")); host.print(feedHomingOffset);
   host.print(F(",\"SortHomingOffset\":")); host.print(sortHomingOffset);
+  host.print(F(",\"SortFlagOffset\":")); host.print(sortFlagOffset);
+  host.print(F(",\"SortFlagWidth\":")); host.print(sortFlagWidth);
   host.print(F(",\"AutoMotorStandbyTimeout\":")); host.print(motorStandby);
   host.print(F(",\"CaseFanSpeedEnabled\":")); host.print(caseFanSw ? 1 : 0);
   host.print(F(",\"CaseFanLevel\":")); host.print(caseFanLevel);
@@ -925,6 +988,9 @@ void handleCommand() {
     host.print(F(" feedEdge=")); host.print(feedEdgeAbs);
     host.print(F(" fpos=")); host.print((long)feedSt->getCurrentPosition());
     host.print(F(" flaps=")); host.print(powerFlaps);
+    host.print(F(" xchk=")); host.print(sortCrossChecks);
+    host.print(F(" reanch=")); host.print(sortReanchors);
+    host.print(F(" drift=")); host.print(sortLastDrift);
     host.print(F(" txDropPi=")); host.print(outPi.dropped);
     host.print(F(" txDropUsb=")); host.print(outUsb.dropped);
     host.print(F(" rxPi=")); host.print(rxPiBytes);
@@ -1067,6 +1133,8 @@ void handleCommand() {
   SET_INT("sortdecel:", sortDecF, 100, 5000, );
   SET_INT("feedhomingoffset:", feedHomingOffset, 0, 30, );
   SET_INT("sorthomingoffset:", sortHomingOffset, 0, 100, );
+  SET_INT("sortflagoffset:", sortFlagOffset, 0, 3520, );
+  SET_INT("sortflagwidth:", sortFlagWidth, 32, 1000, );
   SET_INT("slotdropdelay:", slotDropDelay, 0, 3000, );
   SET_INT("armdwell:", armDwellMs, 0, 1000, );
   SET_INT("notificationdelay:", notificationDelay, 0, 1000, );
@@ -1150,6 +1218,7 @@ void setup() {
 
   pinMode(FEED_HOME, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(FEED_HOME), feedHomeIsr, FALLING);
+  attachInterrupt(digitalPinToInterrupt(SORT_HOME), sortHomeIsr, FALLING);
   pinMode(FEED_DIAG, INPUT);
   pinMode(SORT_HOME, INPUT_PULLUP);
   pinMode(PROX_PIN, INPUT_PULLUP);

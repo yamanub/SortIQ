@@ -6264,6 +6264,7 @@ MACHINE_DEFAULTS = {"feed_speed": 94, "feed_steps": 60, "sort_speed": 94,
                                            # auto-detected from the version
                                            # reply on connect
                     "sort_accel": 1200, "sort_home_backoff": 160,
+                    "sort_flag_offset": 0, "sort_flag_width": 240,
                     "sort_decel": 1200, "feed_accel": 1200,
                     "feed_decel_rate": 1200,
                     "stall_guard": True, "feed_stall_threshold": 40,
@@ -6314,6 +6315,8 @@ MACHINE_BOUNDS = {
     "feed_decel_rate": (100, 5000),  # µs stop-shaping slow end (Pico)
     "feed_stall_threshold": (0, 255),
     "sort_home_backoff": (0, 200),   # µsteps
+    "sort_flag_offset": (0, 3520),   # µsteps, slot 0 -> flag edge
+    "sort_flag_width": (32, 1000),   # µsteps
     "sort_home_slow": (100, 5000),   # µs/µstep
     "feed_launch": (0, 200),         # µsteps
     "arm_dwell": (0, 1000),          # ms, matches the firmware clamp
@@ -6347,6 +6350,8 @@ _SETTER_CMD = {"feed_speed": "feedspeed", "feed_steps": "feedsteps",
                "stall_guard": "sg",
                "feed_stall_threshold": "sgfeed",
                "sort_home_backoff": "sorthomebackoff",
+               "sort_flag_offset": "sortflagoffset",
+               "sort_flag_width": "sortflagwidth",
                "sort_home_slow": "sorthomeslow",
                "feed_launch": "feedlaunch",
                "feed_decel": "feeddecel",
@@ -6372,6 +6377,8 @@ _GETCONFIG_KEY = {"feed_speed": "FeedMotorSpeed", "feed_steps": "FeedCycleSteps"
                   "stall_guard": "StallGuardEnabled",
                   "feed_stall_threshold": "FeedStallThreshold",
                   "sort_home_backoff": "SortHomeBackoff",
+                  "sort_flag_offset": "SortFlagOffset",
+                  "sort_flag_width": "SortFlagWidth",
                   "sort_home_slow": "SortHomeSlowDelay",
                   "feed_launch": "FeedLaunchSteps",
                   "feed_decel": "FeedDecelOverOffset",
@@ -6479,7 +6486,8 @@ def _apply_machine_settings(settings):
     applied = 0
     fw = str(machine_settings().get("firmware", "stock"))
     pico_only = {"sort_decel", "feed_accel", "feed_decel_rate",
-                 "stall_guard", "feed_stall_threshold"}
+                 "stall_guard", "feed_stall_threshold",
+                 "sort_flag_offset", "sort_flag_width"}
     fork_only = {"sort_accel", "sort_home_backoff", "sort_home_slow",
                  "feed_launch", "feed_decel", "arm_dwell", "slot_positions"}
     on_stock = not (fw.startswith("ss") or fw == "pico")
