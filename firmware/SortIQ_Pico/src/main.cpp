@@ -328,6 +328,7 @@ int qSlot = 0;
 uint32_t feedT0 = 0, waitMsgT = 0;
 long feedSeekStart = 0;
 int feedSgHits = 0, feedSgGate = 0;
+int feedSortHomeTries = 0;
 long feedSgArmPos = -1;
 long feedSgEvalPos = LONG_MIN;
 
@@ -525,9 +526,17 @@ void feedService() {
     case F_WAIT_SORT:
       if (sortState == S_IDLE && (sortHomed || !sortAxis)) {
         feedState = F_WAIT_BRASS; waitMsgT = 0;
-      } else if (sortState == S_IDLE && !sortHomed) {
-        // arm lost + not re-homing: cycle cannot place brass truthfully
-        feedState = F_WAIT_BRASS; waitMsgT = 0;
+      } else if ((sortState == S_IDLE || sortState == S_UNHOMED) &&
+                 sortAxis && !sortHomed) {
+        // arm idle but unhomed (a stopped run, a failed home): self-heal —
+        // home it now and keep waiting; the cycle proceeds once the frame
+        // is real. Feeding over an unhomed arm mis-bins every case.
+        if (++feedSortHomeTries > 2) {             // physically blocked arm:
+          feedAbort(F("error:sort homing failed"));// don't grind forever
+          return;
+        }
+        sortStartHoming();
+        host.println(F("info:sort arm re-homing"));
       }
       return;
     case F_WAIT_BRASS:
@@ -644,11 +653,11 @@ void feedService() {
 
 void startPipelinedFeed(int slot, bool force) {    // pf / xf:N
   forceFeed = force;
+  feedSortHomeTries = 0;
   if (sortAxis && sortHomed) sortGoTo(slot);       // arm first (dwell inside)
-  else if (sortAxis && !sortHomed && sortState == S_UNHOMED) sortStartHoming();
   qSlot = slot;
-  feedState = F_WAIT_SORT; waitMsgT = 0;
-}
+  feedState = F_WAIT_SORT; waitMsgT = 0;           // unhomed arm: F_WAIT_SORT
+}                                                  // self-heals by homing first
 
 // =====================================================================
 // power + persistence
@@ -755,8 +764,18 @@ void handleCommand() {
   if (input == "getconfig") { sendConfig(); return; }
   if (input == "stop") {
     feedSt->forceStop(); sortSt->forceStop();
+    feedEdgeArm = false;
     feedState = F_IDLE; forceFeed = false;
-    if (sortState == S_MOVING) sortState = S_IDLE;
+    if (sortState == S_MOVING) {
+      sortState = S_IDLE;                          // position frame intact
+    } else if (sortState != S_IDLE && sortState != S_UNHOMED) {
+      // stop landed mid-HOMING: the frame is not established. Leaving the
+      // homing state running with a dead motor let its timeout fire
+      // 'sort homing failed' seconds later and strand the arm unhomed
+      // (field-hit on the first real sort run's stop/restart).
+      sortState = S_UNHOMED;
+      sortHomed = false;
+    }
     host.println(F("done"));
     return;
   }
