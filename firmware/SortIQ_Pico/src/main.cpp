@@ -212,6 +212,7 @@ void sortApplyMotion() {
 
 void sortStartHoming() {
   if (!sortAxis || !motorPower) { sortState = S_IDLE; sortHomed = sortAxis ? false : true; return; }
+  if (sortSt->isRunning()) sortSt->forceStop();    // re-home over any motion
   sortHomed = false;
   sortSt->setAcceleration(accFToSS2(sortAccF));
   // Homing geometry (machine-verified): the flag lies BELOW slot 0 in the
@@ -652,6 +653,16 @@ void feedService() {
 }
 
 void startPipelinedFeed(int slot, bool force) {    // pf / xf:N
+  if (feedState != F_IDLE) {
+    // recovery paths overlap: the app's HOME (a seconds-long homing dance)
+    // is chased by its re-prime xf within ~1s, and blindly overwriting the
+    // state machine left the wheel running into a mangled cycle -> error ->
+    // HOME again, forever (the first field run died in this loop). Yield
+    // whatever is in flight — every cycle re-anchors on its own edge.
+    feedSt->forceStop();
+    feedEdgeArm = false;
+    feedState = F_IDLE;
+  }
   forceFeed = force;
   feedSortHomeTries = 0;
   if (sortAxis && sortHomed) sortGoTo(slot);       // arm first (dwell inside)
