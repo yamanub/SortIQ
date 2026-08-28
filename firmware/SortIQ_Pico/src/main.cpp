@@ -568,7 +568,7 @@ void feedService() {
     case F_IDLE: return;
     case F_WAIT_SORT:
       if (sortState == S_IDLE && (sortHomed || !sortAxis)) {
-        feedState = F_WAIT_BRASS; waitMsgT = 0;
+        feedStartCycle();
       } else if ((sortState == S_IDLE || sortState == S_UNHOMED) &&
                  sortAxis && !sortHomed) {
         // arm idle but unhomed (a stopped run, a failed home): self-heal —
@@ -586,8 +586,7 @@ void feedService() {
       if (waitMsgT == 0) { waitMsgT = millis(); feedWaitStart = millis(); }
       if (forceFeed || digitalRead(PROX_PIN) == HIGH) {
         feedT0 = millis();
-        feedState = forceFeed ? F_BLIND : F_DEBOUNCE;
-        if (forceFeed) feedStartCycle();
+        feedState = forceFeed ? F_WAIT_SORT : F_DEBOUNCE;
         return;
       }
       // a slip event that misaligns the pocket kills brass STAGING, and
@@ -619,8 +618,8 @@ void feedService() {
       }
       return;
     case F_DEBOUNCE:
-      if (digitalRead(PROX_PIN) != HIGH) { feedState = F_WAIT_BRASS; return; }
-      if (millis() - feedT0 >= (uint32_t)debounceTime) feedStartCycle();
+      if (digitalRead(PROX_PIN) != HIGH) { feedState = F_WAIT_BRASS; waitMsgT = 0; return; }
+      if (millis() - feedT0 >= (uint32_t)debounceTime) feedState = F_WAIT_SORT;
       return;
     case F_LAUNCH:                                 // standstill + settle before
       if (!feedSt->isRunning() && millis() - feedT0 > 150) {
@@ -752,8 +751,12 @@ void startPipelinedFeed(int slot, bool force) {    // pf / xf:N
   feedRealigned = false; feedHomeResume = false;
   if (sortAxis && sortHomed) sortGoTo(slot);       // arm first (dwell inside)
   qSlot = slot;
-  feedState = F_WAIT_SORT; waitMsgT = 0;           // unhomed arm: F_WAIT_SORT
-}                                                  // self-heals by homing first
+  // brass wait + debounce run CONCURRENTLY with the arm move (pure sensor
+  // time, no motion); the wheel's MOTION gates on the parked arm in
+  // F_WAIT_SORT afterwards — brass still cannot drop before the arm is
+  // under the port, but the arm no longer sits through the debounce.
+  feedState = F_WAIT_BRASS; waitMsgT = 0;
+}
 
 // =====================================================================
 // power + persistence
