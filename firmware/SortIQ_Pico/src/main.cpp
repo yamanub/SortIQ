@@ -197,7 +197,8 @@ uint32_t sgLastN = 0, sgLastSum = 0; uint16_t sgLastMin = 1023;
 // SORT axis — flag-relative state machine
 // =====================================================================
 enum SortState { S_IDLE, S_UNHOMED, S_SEEK, S_BACKOFF_LEAVE, S_BACKOFF_RUN,
-                 S_APPROACH, S_HOME_SETTLE, S_MOVING, S_SEEK_ARM };
+                 S_APPROACH, S_HOME_SETTLE, S_MOVING, S_SEEK_ARM,
+                 S_WIDTH_ARM, S_WIDTH_RUN };
 SortState sortState = S_UNHOMED;
 long sortFlagPos = 0;                    // absolute ustep position of the flag edge
 bool sortHomed = false;
@@ -345,11 +346,44 @@ void sortService() {
         sortHardStop();
         delay(80);                                  // let queued steps drain
         sortFlagPos = (long)sortSt->getCurrentPosition();
+        if (sortFlagOffset > 0) {
+          // checkpoint mode: keep creeping down THROUGH the tab to its
+          // lower edge — measuring the printed tab's true width on this
+          // machine, every home (printer tolerances vary; the setting is
+          // only a starting default)
+          sortT0 = millis();
+          sortState = S_WIDTH_ARM;
+          return;
+        }
         sortHomed = true; sortSlot = 0;
         lastSortArrive = millis();
         sortApplyMotion();
-        // rest at slot 0 (with a mid-range flag this is a DOWN move)
         sortSt->moveTo(sortTargetAbs(0));
+        sortState = S_IDLE;
+      } else if (millis() - sortT0 > 6000) sortHomingFailed();
+      return;
+    case S_WIDTH_ARM:                              // standstill + settle first
+      if (!sortSt->isRunning() && millis() - sortT0 > 150) {
+        long us = sortHomeSlow > 0 ? sortHomeSlow : 1400;
+        sortSt->setSpeedInHz((uint32_t)(1000000L / us));
+        sortSt->runBackward();                     // continue DOWN through the tab
+        sortT0 = millis();
+        sortState = S_WIDTH_RUN;
+      } else if (millis() - sortT0 > 4000) sortHomingFailed();
+      return;
+    case S_WIDTH_RUN:
+      if (digitalRead(SORT_HOME) != LOW) {         // released: the lower edge
+        sortHardStop();
+        long w = sortFlagPos - (long)sortSt->getCurrentPosition();
+        if (w >= 16 && w <= 1000) {
+          sortFlagWidth = (int)w;
+          host.print(F("info:tab width measured "));
+          host.println(sortFlagWidth);
+        }
+        sortHomed = true; sortSlot = 0;
+        lastSortArrive = millis();
+        sortApplyMotion();
+        sortSt->moveTo(sortTargetAbs(0));          // continue down to slot 0
         sortState = S_IDLE;
       } else if (millis() - sortT0 > 6000) sortHomingFailed();
       return;
