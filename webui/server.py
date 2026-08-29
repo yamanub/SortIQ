@@ -1800,8 +1800,14 @@ def api_dataset_images():
         if not base.is_dir():
             return jsonify({"error": f"no profile {prof!r}"}), 404
     d = base / "raw" / label
-    if any(c in label for c in "/\\") or ".." in label or not d.is_dir():
+    if any(c in label for c in "/\\") or ".." in label:
         return jsonify({"error": f"unknown label {label!r}"}), 404
+    if not d.is_dir():
+        # a configured class with no photos yet (e.g. a demo headstamp
+        # nobody's collected) is a valid, empty dataset — not a 404;
+        # glob() on a missing dir below just yields nothing
+        if prof or label not in active_model_raw()["stamp_labels"]:
+            return jsonify({"error": f"unknown label {label!r}"}), 404
     try:
         offset = max(int(request.args.get("offset", 0)), 0)
         limit = min(max(int(request.args.get("limit", 23)), 1), 100)
