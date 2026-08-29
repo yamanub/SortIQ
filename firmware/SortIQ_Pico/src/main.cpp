@@ -461,6 +461,7 @@ bool feedRealigned = false;       // one realign per wait
 uint32_t feedWaitStart = 0;
 long feedSgArmPos = -1;
 long feedSgEvalPos = LONG_MIN;
+int feedCruiseCatch = 0;
 
 // Flag edge by INTERRUPT, not loop polling: the PIO keeps stepping while the
 // CPU services serial or TMC UART, so a polled edge is seen late (or a narrow
@@ -674,7 +675,15 @@ void feedFinishHome() {
   if (vm < 0) vm = -vm;
   uint32_t v = (uint32_t)(vm / 1000);
   // learn the pitch ONLY from slip-free edges (taken at creep speed) —
-  // a cruise-taken edge follows a slipped stop and reads short
+  // a cruise-taken edge follows a slipped stop and reads short.
+  // ESCAPE HATCH: a poisoned estimate (e.g. a hand-jammed cycle learned a
+  // fake pitch at creep speed) misplaces the creep point so edges land at
+  // cruise forever, and the gate then blocks all re-learning — a deadlock.
+  // Two consecutive cruise-caught edges reset the estimate: the next
+  // cycle bootstraps its creep from the blind length and re-learns clean.
+  if (v > FEED_CREEP_HZ + 800) {
+    if (++feedCruiseCatch >= 2) { feedPitchEst = 0; feedCruiseCatch = 0; }
+  } else feedCruiseCatch = 0;
   if (feedPrevEdge != LONG_MIN && v <= FEED_CREEP_HZ + 800) {
     long dp = feedEdgeAbs - feedPrevEdge;
     if (dp > 600 && dp < 3000)
@@ -726,10 +735,17 @@ void feedStartCycle() {                            // after the arm is parked
   // trusted, not a separate move.
   feedFallCount = 0;
   feedCreeping = false;
+  // the creep lead must fit the ACTUAL cruise speed: ramp-down distance
+  // + the 5ms planning queue + jitter margin. The old fixed 450 was sized
+  // for speed 96 and left speed 98 catching edges mid-ramp (slipped stops).
+  uint32_t vc = speedToHz(feedSpeedSet);
+  long lead = 100 + (long)(vc / 200) +
+      (long)(((uint64_t)vc * vc - (uint64_t)FEED_CREEP_HZ * FEED_CREEP_HZ) /
+             (2ULL * FEED_CREEP_RAMP));
   long blindEnd = feedCycleStart + (long)feedSteps * USTEP;
-  long bootstrap = blindEnd - FEED_CREEP_LEAD;   // unlearned: creep the seek
+  long bootstrap = blindEnd - lead;              // unlearned: creep the seek
   if (feedPitchEst > 0 && feedPrevEdge != LONG_MIN)
-    feedCreepAt = feedPrevEdge + feedPitchEst - FEED_CREEP_LEAD;
+    feedCreepAt = feedPrevEdge + feedPitchEst - lead;
   else
     feedCreepAt = bootstrap;
   if (feedCreepAt < feedCycleStart + 64 || feedCreepAt > blindEnd + 6400)
