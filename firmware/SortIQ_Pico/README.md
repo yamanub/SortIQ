@@ -15,11 +15,11 @@ or the 1200-baud touch on the USB CDC port.
   the frame says it belongs aborts the move and re-homes (bench-proven to
   catch jams StallGuard reads straight through). StallGuard on the sort is
   telemetry only.
-- Feed jam detection: the 1.x two-stage detector — the driver's DIAG pin is
-  a free tripwire (asserts when SG_RESULT < 2*SGTHRS); 24 accumulated highs
-  buy ONE UART confirm read, three low confirms = jam — plus the flag-seek
-  overtravel budget. Continuous UART sampling is wrong twice: it false-trips
-  on transient dips, and each read blocks the loop ~10 ms.
+- Feed jam detection: the flag-seek overtravel budget — two pitches past the
+  blind with no tab = jam. The 1.x DIAG tripwire retired with the v2.1 ring
+  swap (DIAG jumpers pulled; X-STOP is the feed opto now); on the bench the
+  overtravel budget caught every provoked jam the tripwire did. StallGuard
+  remains readable as telemetry only.
 - Feed flag edge by INTERRUPT with latency-corrected position (edge =
   pos_now − elapsed_µs × cruise rate), and host TX is ring-buffered and
   pumped from loop(). Both exist for the same reason, the core lesson of

@@ -19,11 +19,10 @@
 #include <Arduino.h>
 #include <TMCStepper.h>
 #include <FastAccelStepper.h>
-#include <Adafruit_NeoPixel.h>
 #include <EEPROM.h>
 #include <hardware/gpio.h>
 
-#define FIRMWARE_VERSION "SortIQ-Pico-2.0 (7.2-SS2-PICO)"
+#define FIRMWARE_VERSION "SortIQ-Pico-2.1 (7.2-SS2-PICO)"
 
 // ---------------- pins (SKR Pico) ----------------
 #define FEED_STEP 11
@@ -32,16 +31,21 @@
 #define SORT_STEP 6
 #define SORT_DIR  5
 #define SORT_EN   7
-#define FEED_HOME 16          // E0-STOP slotted opto, LOW = blocked
-#define FEED_DIAG 4           // X-STOP (DIAG jumper set): TMC stall tripwire
-#define SORT_HOME 25          // Z-STOP  slotted opto, LOW = blocked
+// Ring-swap pin map (v2.1): each sensor on its motor's own label, ring PWM
+// on the freed E0-STOP, Z-STOP spare. DIAG jumpers PULLED — the feed jam
+// detector is the overtravel budget (bench-proven); SG is telemetry only.
+#define FEED_HOME 4           // X-STOP slotted opto, LOW = blocked
+#define SORT_HOME 3           // Y-STOP slotted opto, LOW = blocked
 #define PROX_PIN  22          // WD-DET conditioned prox, HIGH = brass
 #define AUX_FAN1  17          // Pi/board cooling, on at boot
 #define AUX_FAN2  20
 #define CASEFAN   18          // camera fan, fan: 0-100
 #define AIRDROP_PIN 23        // HE0, optional mod
-#define RING_PIN  24          // WS2812 x12 (PWM ring lands here after the swap)
-#define RING_N    12
+#define RING_PIN  24          // RGB header (old NeoPixel data): PWM -> MOSFET
+                              // module -> 5V ring. NOT E0-STOP: the endstop
+                              // input conditioning (connector pull-up ahead
+                              // of the MCU's series R) wins against a driven
+                              // low — fine as an input, never as an output.
 #define R_SENSE   0.110f
 #define FEED_ADDR 0b00
 #define SORT_ADDR 0b10
@@ -78,8 +82,6 @@ TMC2209Stepper feedDrv(&Serial2, R_SENSE, FEED_ADDR);
 TMC2209Stepper sortDrv(&Serial2, R_SENSE, SORT_ADDR);
 FastAccelStepperEngine engine = FastAccelStepperEngine();
 FastAccelStepper *feedSt = nullptr, *sortSt = nullptr;
-Adafruit_NeoPixel ring(RING_N, RING_PIN, NEO_GRB + NEO_KHZ800);
-uint8_t ringR = 255, ringG = 255, ringB = 255;
 
 // ---------------- dual host ----------------
 // Host TX is BUFFERED and pumped from loop(). A raw print to the Pi link
@@ -147,11 +149,15 @@ static uint32_t accFToSS2(int c0) {                // AVR446 c0 us -> steps/s^2
 
 // ---------------- driver + peripherals ----------------
 void ringShow() {
-  uint8_t l = cameraLEDLevel;
-  uint32_t c = ring.Color((uint16_t)ringR * l / 255, (uint16_t)ringG * l / 255,
-                          (uint16_t)ringB * l / 255);
-  for (int i = 0; i < RING_N; i++) ring.setPixelColor(i, c);
-  ring.show();
+  // plain hardware-PWM duty; 20 kHz (set in setup) keeps the camera free of
+  // banding and stays inside the MOSFET module's rated switching range
+  analogWrite(RING_PIN, cameraLEDLevel);
+  // the stepper PIO claim stomps pin muxes (GPIO 0's UART TX died the same
+  // way — README caveat 2) and analogWrite caches "already PWM" so it never
+  // re-muxes. Force the pad back onto its PWM slice on every write; without
+  // this the board's endstop pull-up holds the MOSFET trigger high and the
+  // ring sits at full bright regardless of level. (Bench-hit on day one.)
+  gpio_set_function(RING_PIN, GPIO_FUNC_PWM);
 }
 
 void applyDriverConfig() {
@@ -170,8 +176,8 @@ void applyDriverConfig() {
   // sort ihold was 16 (50% hold) for StallGuard-at-rest experiments; SG is
   // telemetry-only now and the motor sat warm at idle. 8 = same as feed.
   sortDrv.rms_current(sortCurrent); sortDrv.ihold(8);
-  // feed DIAG is the free stall tripwire (fires when SG_RESULT < 2*SGTHRS);
-  // sort keeps DIAG quiet — its detector is the flag audit, SG is telemetry
+  // both DIAG jumpers pulled (ring swap): SGTHRS kept only so SG_RESULT
+  // telemetry stays comparable to old bench numbers
   feedDrv.SGTHRS(feedSgThrs); sortDrv.SGTHRS(0);
 }
 
@@ -454,13 +460,10 @@ bool slotQueued = true;
 int qSlot = 0;
 uint32_t feedT0 = 0, waitMsgT = 0;
 long feedSeekStart = 0;
-int feedSgHits = 0, feedSgGate = 0;
 int feedSortHomeTries = 0;
 bool feedHomeResume = false;      // F_HOME returns to the brass wait
 bool feedRealigned = false;       // one realign per wait
 uint32_t feedWaitStart = 0;
-long feedSgArmPos = -1;
-long feedSgEvalPos = LONG_MIN;
 int feedCruiseCatch = 0;
 
 // Flag edge by INTERRUPT, not loop polling: the PIO keeps stepping while the
@@ -736,7 +739,6 @@ void feedStartCycle() {                            // after the arm is parked
   feedCycleStart = (long)feedSt->getCurrentPosition();
   feedClearStart = feedCycleStart;
   feedSeekStart = feedCycleStart;
-  feedSgHits = 0; feedSgGate = 0; feedSgArmPos = -1; feedSgEvalPos = LONG_MIN;
   sgLastN = 0; sgLastSum = 0; sgLastMin = 1023;
   // ONE continuous run to the flag, 1.x-style. The port's blind-move /
   // stop / re-launch / seek / stop shape put three violent transitions
@@ -834,11 +836,10 @@ void feedService() {
       }
       return;
     case F_BLIND: {
-      // feed jam detection, the 1.x two-stage detector: DIAG is a free
-      // tripwire (asserts when SG_RESULT < 2*SGTHRS); only when it
-      // accumulates do we pay for ONE UART confirm read. Continuous UART
-      // sampling both false-trips on transient dips 1.x never saw and
-      // blocks the loop ~10 ms per read.
+      // feed jam detection is the overtravel budget below. The 1.x DIAG
+      // tripwire retired with the ring swap (jumpers pulled, X-STOP is the
+      // feed opto now); overtravel caught every bench-provoked jam the
+      // tripwire did, without the false-trip and UART-read costs.
       feedEdgeMaybeArm();
       if (!feedCreeping &&
           (long)feedSt->getCurrentPosition() >= feedCreepAt) {
@@ -846,37 +847,6 @@ void feedService() {
         feedSt->setSpeedInHz(FEED_CREEP_HZ);
         feedSt->applySpeedAcceleration();          // ramp down while running
         feedCreeping = true;
-      }
-      if (!feedCreeping && sgEnabled && feedSgThrs > 0 &&
-          (feedSt->rampState() & RAMP_STATE_COAST)) {
-        // 1.x SG_ARM_STEPS parity: SG_RESULT reads ~0 for the first ~8 full
-        // steps after a standstill and DIAG asserts through the settle.
-        // The gate advances per USTEP, not per loop pass — 1.x evaluated
-        // DIAG once per step pulse, and the loop spins ~10x faster than
-        // the step train, which made the gate ~10x too twitchy.
-        long pn = (long)feedSt->getCurrentPosition();
-        if (feedSgArmPos < 0) feedSgArmPos = pn + 256;
-        bool sgArmed = pn >= feedSgArmPos && pn != feedSgEvalPos;
-        if (sgArmed) feedSgEvalPos = pn;
-        if (sgArmed && digitalRead(FEED_DIAG) == HIGH) { feedSgGate++; }
-        else if (sgArmed && feedSgGate > 0) { feedSgGate--; }
-        if (feedSgGate >= 24) {
-          feedSgGate = 0;
-          uint16_t r = feedDrv.SG_RESULT();
-          if (r == 0) r = feedDrv.SG_RESULT();     // CRC-miss guard
-          if (r > 0) {
-            sgLastN++; sgLastSum += r; if (r < sgLastMin) sgLastMin = r;
-          }
-          if (r < (uint16_t)(feedSgThrs * 2)) {
-            if (++feedSgHits >= 3) {
-              feedStalls++;
-              feedAbort(F("error:feed stall detected"));
-              return;
-            }
-          }
-        }
-      } else {
-        feedSgGate = 0;
       }
       feedEdgeResolve();
       if (feedEdgeCalced) { feedFinishHome(); return; }
@@ -1347,16 +1317,9 @@ void handleCommand() {
     else { sortState = S_UNHOMED; sortHomed = false; }
     host.println(F("ok")); return;
   }
-  if (input.startsWith(F("ledcolor:"))) {          // r,g,b (WS2812 era)
-    int c1 = input.indexOf(',', 9), c2 = input.indexOf(',', c1 + 1);
-    if (c1 > 0 && c2 > c1) {
-      ringR = clampi(input.substring(9, c1).toInt(), 0, 255);
-      ringG = clampi(input.substring(c1 + 1, c2).toInt(), 0, 255);
-      ringB = clampi(input.substring(c2 + 1).toInt(), 0, 255);
-      ringShow();
-      host.println(F("ok"));
-    } else host.println(F("error:ledcolor wants r,g,b"));
-    return;
+  if (input.startsWith(F("ledcolor:"))) {          // WS2812 era; single-color
+    host.println(F("ok"));                         // PWM ring now — accepted
+    return;                                        // no-op for app compat
   }
   if (input.startsWith(F("chop:"))) {              // toff,tbl,pwmfreq (sort)
     int c1 = input.indexOf(',', 5), c2 = input.indexOf(',', c1 + 1);
@@ -1379,14 +1342,15 @@ void setup() {
   Serial1.setFIFOSize(256);
   Serial1.begin(9600);                  // Pi header UART — the machine link
   Serial.begin(9600);                   // USB mirror
-  Serial2.begin(115200);                // TMC bus
+  Serial2.begin(460800);                // TMC bus (2.1 baud bump: a confirm
+                                        // read blocks the loop ~2.5 ms, not
+                                        // ~10 ms; TMC2209 auto-bauds, <500k)
   EEPROM.begin(64);
   if (EEPROM.read(0) == 0xA5) sortAxis = EEPROM.read(1) != 0;
 
   pinMode(FEED_HOME, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(FEED_HOME), feedHomeIsr, FALLING);
   attachInterrupt(digitalPinToInterrupt(SORT_HOME), sortHomeIsr, FALLING);
-  pinMode(FEED_DIAG, INPUT);
   pinMode(SORT_HOME, INPUT_PULLUP);
   pinMode(PROX_PIN, INPUT_PULLUP);
   pinMode(FEED_EN, OUTPUT); digitalWrite(FEED_EN, LOW);
@@ -1396,7 +1360,9 @@ void setup() {
   pinMode(CASEFAN, OUTPUT); analogWrite(CASEFAN, caseFanLevel * 255 / 100);
   pinMode(AIRDROP_PIN, OUTPUT); digitalWrite(AIRDROP_PIN, LOW);
 
-  ring.begin();
+  pinMode(RING_PIN, OUTPUT);
+  analogWriteFreq(20000);               // above camera-exposure beat, inside
+                                        // the MOSFET module's switching spec
   ringShow();
   fillSlotTab();
   delay(400);
@@ -1424,6 +1390,7 @@ void setup() {
   // first stepperConnectToPin, RX untouched. Hand the pins back to UART.
   gpio_set_function(0, GPIO_FUNC_UART);
   gpio_set_function(1, GPIO_FUNC_UART);
+  ringShow();                           // re-assert ring PWM post-claim too
 
   host.println(F("Ready"));
   if (!motorPower) {

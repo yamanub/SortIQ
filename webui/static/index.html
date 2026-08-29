@@ -1757,17 +1757,19 @@
         </div>
 
         <div class="msTile picoOnly">
-          <h4>Jam detection (StallGuard)</h4>
+          <h4>Jam detection</h4>
           <div class="ctlRow" style="gap:18px; flex-wrap:wrap; align-items:flex-end">
-            <label class="inline" style="display:flex; gap:6px; align-items:center; margin:0; color:var(--text); font-size:13px">
-              <input type="checkbox" id="msSg" style="accent-color:var(--brass)">
-              Enabled</label>
-            <div><label title="How readily a drop in motor load counts as a jam. Higher trips easier (risking false alarms); lower needs a harder jam. 40 is the proven value; 0 turns load sensing off."><span class="msN">Feed stall threshold</span><br><span class="msH">higher = more sensitive; 0 = off</span></label>
-              <input type="number" id="msSgFeed" min="0" max="255" style="width:110px"></div>
-            <span class="muted" style="font-size:11.5px">watches the feed motor’s load and
-              aborts a cycle when the wheel is blocked; the wheel independently aborts if its
-              position sensor never appears. The sort arm is guarded by its position
-              checkpoints instead — motor load cannot reveal arm jams.</span>
+            <!-- StallGuard tripwire retired with the v2.1 ring swap (DIAG
+                 jumpers pulled). Inputs stay in the DOM, hidden — the
+                 settings load/save JS still binds them. -->
+            <div style="display:none">
+              <input type="checkbox" id="msSg">
+              <input type="number" id="msSgFeed" min="0" max="255">
+            </div>
+            <span class="muted" style="font-size:11.5px">nothing to configure — the machine
+              guards itself: the feed wheel aborts a cycle when its position sensor doesn’t
+              appear within the expected travel, and the sort arm is checked against its
+              position checkpoint. Repeated failures stop the machine with a fault.</span>
           </div>
         </div>
 
@@ -4118,21 +4120,12 @@ async function loadCamSettings() {
     }                               // real control at the dim end
     $("ledLevel").value = Math.min(m.settings.camera_led, +$("ledLevel").max);
     $("vLedLevel").textContent = $("ledLevel").value;
-    $("ledColorRow").style.display = pico ? "" : "none";
+    // color picker retired with the WS2812 ring (v2.1 ring is single-color
+    // PWM; the firmware accepts ledcolor: as a no-op for compat). The hidden
+    // input stays in the DOM — camBase and the settings push still read it.
+    $("ledColorRow").style.display = "none";
     $("ledColor").value = m.settings.led_color || "#ffffff";
     $("vLedColor").textContent = $("ledColor").value;
-    if (pico && !$("ledSwatches").childElementCount) {
-      const SW = [["#ffffff","white"], ["#ffd9a0","warm"], ["#ff3b30","red"],
-                  ["#34c759","green"], ["#0a84ff","blue"], ["#ffcc00","amber"]];
-      $("ledSwatches").append(...SW.map(([hex, name]) => {
-        const b = document.createElement("button");
-        b.className = "ghost"; b.title = name;
-        b.style.cssText = "width:24px; height:24px; padding:0; border-radius:50%; " +
-                          "border:1px solid var(--line); background:" + hex;
-        b.onclick = () => { $("ledColor").value = hex; $("ledColor").oninput(); };
-        return b;
-      }));
-    }
     $("ledHint").textContent = m.connected
       ? "applies to the board when you press Save"
       : "Save stores it — applies when the machine connects";
