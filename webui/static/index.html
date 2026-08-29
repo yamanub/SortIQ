@@ -2164,7 +2164,12 @@ function sortedLabels(counts, mode) {
 
 function renderDatasetMgr() {
   const raw = STATE.datasets.real.raw || {};
-  const labels = sortedLabels(raw, $("dsSortN").checked ? "count" : "alpha");
+  // configured classes with no photos yet (e.g. a demo headstamp nobody's
+  // collected) still get a card — otherwise there's no way to open them
+  // and reach Rename/Delete
+  const counts = { ...raw };
+  for (const name of STATE.stamp_labels) counts[name] = counts[name] || 0;
+  const labels = sortedLabels(counts, $("dsSortN").checked ? "count" : "alpha");
   // chip-cards, not button rows: the whole card opens the class view,
   // where Rename/Delete now live (86 red Delete buttons was 85 too many)
   $("dsMgr").innerHTML = labels.length
@@ -2173,9 +2178,9 @@ function renderDatasetMgr() {
           ? '" style="border-color:var(--brass)' : ""}"
           onclick="dsView('${l.replace(/'/g, "\\'")}', 0, true)">
         <div class="top"><span class="name" title="${l}"
-          style="color:${classTier(raw[l])}">${l}</span>
-        <span class="cnt" title="${raw[l]} images">${raw[l]}</span></div>
-        ${tierBarHtml(raw[l])}</div>`).join("")
+          style="color:${classTier(counts[l])}">${l}</span>
+        <span class="cnt" title="${counts[l]} images">${counts[l]}</span></div>
+        ${tierBarHtml(counts[l])}</div>`).join("")
     : `<div class="muted">nothing collected yet</div>`;
   renderFamilies();
 }
@@ -2694,7 +2699,9 @@ async function dsView(label, page = 0, scrollTo = false) {
     // page, so any dsView while it's open is the walk refreshing the
     // grid underneath (after a Move/Delete); closing it killed the walk
     $("dsGalleryTitle").textContent = `${label} — ${j.total} image${j.total === 1 ? "" : "s"}`;
-    $("dsThumbs").innerHTML = j.images.map(im => dsCellHtml(label, im, "dsCell_")).join("");
+    $("dsThumbs").innerHTML = j.images.length
+      ? j.images.map(im => dsCellHtml(label, im, "dsCell_")).join("")
+      : `<div class="muted">no photos yet — collect some, or remove this class below</div>`;
     $("dsExCard").style.display = ex.images.length ? "" : "none";
     $("dsExCount").textContent = `— ${label} · ${ex.images.length} in gallery`;
     $("dsExThumbs").innerHTML = ex.images.map(im => dsCellHtml(label, im, "dsExCell_")).join("");
