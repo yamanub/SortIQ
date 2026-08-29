@@ -280,7 +280,10 @@ void sortSkipAbort() {                             // steps were lost: frame dea
 void sortGoTo(int slot) {                          // called only when S_IDLE+homed
   if (slot < 0) slot = 0; if (slot >= MAX_SLOTS) slot = MAX_SLOTS - 1;
   uint32_t since = millis() - lastSortArrive;      // settle: rapid commands
-  uint32_t dwell = (uint32_t)(slotDropDelay > 0 ? slotDropDelay : 150) + (uint32_t)armDwellMs;
+  // 1.x parity: AirDrop REPLACES the baseline rest (blasted cases clear
+  // the chute faster); Arm dwell is extra margin on top in both modes
+  int base = airDrop ? airPost : slotDropDelay;
+  uint32_t dwell = (uint32_t)(base > 0 ? base : 150) + (uint32_t)armDwellMs;
   if (since < dwell) delay(dwell - since);         // bounded, protocol-visible
   sortSlot = slot;
   sortApplyMotion();

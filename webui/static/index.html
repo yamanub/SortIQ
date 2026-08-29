@@ -1732,13 +1732,13 @@
         <div class="msTile">
           <h4>Cycle timing</h4>
           <div class="msTileRow">
-            <div><label title="How long the arm stays put at a slot before it may move again — time for the falling case to clear the chute. Too short and a quick next move can throw a case toward the wrong slot."><span class="msN">Slot drop delay</span> <span class="muted">(ms)</span><br><span class="msH">arm rest time at each slot</span></label>
+            <div><label title="The BASELINE rest the arm takes at every slot — time for the falling case to clear the chute before the next move. Too short and a quick next move can throw a case toward the wrong slot. When AirDrop is enabled, its own Drop delay replaces this number (blasted cases clear faster); Arm dwell is always added on top."><span class="msN">Slot drop delay</span> <span class="muted">(ms)</span><br><span class="msH">baseline rest at each slot (AirDrop swaps this)</span></label>
               <input type="number" id="msDropDelay" min="0" max="3000" step="50"></div>
             <div><label title="After a feed lands a case, the board waits this long before reporting done — which is the moment the photo is taken. Raise in +20 ms steps if head photos blur (the case is still settling)."><span class="msN">Notification delay</span> <span class="muted">(ms)</span><br><span class="msH">settle time before the photo</span></label>
               <input type="number" id="msNotifDelay" min="0" max="1000" step="10"></div>
             <div><label title="After this many seconds with no motion the motors de-energize to run cool (0 = never). They re-energize and re-home automatically on the next command."><span class="msN">Motor standby</span> <span class="muted">(s)</span><br><span class="msH">power motors down when idle</span></label>
               <input type="number" id="msStandby" min="0" max="3600"></div>
-            <div class="forkOnly"><label title="Extra rest added on top of Slot drop delay at every slot — for cases that tumble slowly down long chutes. Usually 0."><span class="msN">Arm dwell</span> <span class="muted">(ms)</span><br><span class="msH">extra hold at each slot</span></label>
+            <div class="forkOnly"><label title="EXTRA rest added on top of the baseline at every slot, in both normal and AirDrop modes — your machine’s margin for cases that tumble slowly down long chutes. Total rest = Slot drop delay (or AirDrop’s Drop delay) + Arm dwell. Usually 0."><span class="msN">Arm dwell</span> <span class="muted">(ms)</span><br><span class="msH">extra margin on top, in both modes</span></label>
               <input type="number" id="msArmDwell" min="0" max="1000" step="10"></div>
           </div>
         </div>
