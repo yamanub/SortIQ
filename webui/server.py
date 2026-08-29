@@ -4605,6 +4605,20 @@ class RunManager:
                 # adopted link = board already booted; there is no Ready
                 # coming, so don't sit out the full boot-banner timeout
                 transport = Cs72Transport(link, ready_timeout=1.0)
+                # re-assert the SAVED lighting on the adopted link: a board
+                # reboot between the console's last push and this run leaves
+                # firmware-default lighting (field-hit: first cases of a run
+                # blown out white until the operator noticed)
+                try:
+                    ms = machine_settings()
+                    if ms.get("camera_led") is not None:
+                        link.write(f"cameraledlevel:{int(ms['camera_led'])}\n")
+                    lc = (ms.get("led_color") or "").lstrip("#")
+                    if len(lc) == 6:
+                        r, g, b = (int(lc[i:i+2], 16) for i in (0, 2, 4))
+                        link.write(f"ledcolor:{r},{g},{b}\n")
+                except Exception:
+                    pass
                 # capture mode: no flicker probe -> the feed ack IS the
                 # seat time, so the settle carries the whole post-seat
                 # wait that think time covers during sorting (see
@@ -4618,7 +4632,11 @@ class RunManager:
                 # SS2 fork: the mechanical cycle runs UNDER inference
                 # (PFEED right after the photo, PSLOT when the slot is
                 # known). Older firmware keeps the sequential SORT path.
-                pipelined = machine_settings().get("firmware") == "ss2"
+                # ss2 AND pico speak the pipelined cycle (pf/ps:); the pico
+                # kind postdates this gate and fell through to the stock
+                # sequential path, which 2.0 doesn't speak — every sort
+                # timed out, HOME, re-prime, forever (first field run).
+                pipelined = machine_settings().get("firmware") in ("ss2", "pico")
             else:
                 from sorter.esp32_sim import VirtualMachine, Esp32Sim
                 from sorter.transport import SimTransport
@@ -4733,11 +4751,14 @@ class RunManager:
                     return reply
 
                 def await_feed(timeout=12.0):
-                    """Wait out a forced FEED: SEATED, JAM or None."""
+                    """Wait out a forced FEED: SEATED, JAM, FAULT or None."""
                     deadline = time.monotonic() + timeout
                     while time.monotonic() < deadline:
                         line = transport.readline(
                             timeout=max(deadline - time.monotonic(), 0.1))
+                        if line and line.startswith("FAULT:"):
+                            _console["fault"] = line[6:]
+                            return "JAM"          # caller aborts; run loop sees
                         if line in ("SEATED", "JAM", None):
                             return line
                     return None
@@ -4757,6 +4778,14 @@ class RunManager:
                                 self.state["end_reason"] = "out_of_brass"
                             break
                         continue
+                    if line and line.startswith("FAULT:"):
+                        reason = line[6:]
+                        note(f"run END: machine fault — {reason}")
+                        with self.lock:
+                            self.state["end_reason"] = "fault"
+                            self.state["error"] = "machine fault: " + reason
+                        _console["fault"] = reason      # surfaces the banner
+                        break
                     if line == "JAM":
                         with self.lock:
                             self.state["jams"] += 1
@@ -5042,6 +5071,26 @@ class RunManager:
                 rj.write_text(json.dumps(meta))
             except (OSError, ValueError):
                 pass
+            # every ended run (finished, stopped, crashed) leaves the sorter
+            # arm re-homed: a jam late in a run can skew the arm's frame
+            # without ever crossing the flag again, and the next run must
+            # not inherit that. ORDER IS EVERYTHING: transport.close()
+            # sends its own cleanup "stop", which was killing the homing
+            # we had just started (field-hit: every run ended with the arm
+            # stranded unhomed mid-dance). Quiesce first, then home, then
+            # close the raw link ourselves — the transport's later close
+            # writes into a dead link and is harmlessly swallowed.
+            link = getattr(transport, "link", None)
+            if link is not None:
+                try:
+                    link.write("stop\n")
+                    time.sleep(0.2)
+                    link.write("homesorter\n")
+                    link.write("homefeeder:soft\n")  # no on-tab pocket advance
+                    time.sleep(0.3)      # let the lines hit the wire
+                    link.close()
+                except Exception:
+                    pass
             for closer in (transport, camera):
                 try:
                     if closer:
@@ -5966,6 +6015,8 @@ def _console_connect(mode, port=None):
                 except Exception:
                     break                     # the port itself died
                 if line:
+                    if line.startswith("fault:"):
+                        _console["fault"] = line[6:]
                     with _console["lock"]:
                         _console_log_append("<", line)
             # ZOMBIE FIX: a USB re-enumeration kills the port under us. If
@@ -6145,6 +6196,18 @@ def api_power_get():
     return jsonify({"on": _power_get(fresh=True), "gpio": POWER_GPIO})
 
 
+@app.post("/api/machine/fault_clear")
+def api_fault_clear():
+    _console["fault"] = None
+    try:
+        _console_request("faultclear", lambda l: l.strip() == "ok", timeout=3.0)
+        _console_request("homesorter", lambda l: l.strip() == "ok", timeout=3.0)
+        _console_request("homefeeder:soft", lambda l: l.strip() == "ok", timeout=3.0)
+    except Exception:
+        pass
+    return jsonify({"ok": True})
+
+
 @app.post("/api/power")
 def api_power_post():
     on = bool((request.get_json() or {}).get("on"))
@@ -6232,6 +6295,7 @@ MACHINE_DEFAULTS = {"feed_speed": 94, "feed_steps": 60, "sort_speed": 94,
                                            # auto-detected from the version
                                            # reply on connect
                     "sort_accel": 1200, "sort_home_backoff": 160,
+                    "sort_flag_offset": 0, "sort_flag_width": 240,
                     "sort_decel": 1200, "feed_accel": 1200,
                     "feed_decel_rate": 1200,
                     "stall_guard": True, "feed_stall_threshold": 40,
@@ -6282,6 +6346,8 @@ MACHINE_BOUNDS = {
     "feed_decel_rate": (100, 5000),  # µs stop-shaping slow end (Pico)
     "feed_stall_threshold": (0, 255),
     "sort_home_backoff": (0, 200),   # µsteps
+    "sort_flag_offset": (0, 3520),   # µsteps, slot 0 -> flag edge
+    "sort_flag_width": (32, 1000),   # µsteps
     "sort_home_slow": (100, 5000),   # µs/µstep
     "feed_launch": (0, 200),         # µsteps
     "arm_dwell": (0, 1000),          # ms, matches the firmware clamp
@@ -6315,6 +6381,8 @@ _SETTER_CMD = {"feed_speed": "feedspeed", "feed_steps": "feedsteps",
                "stall_guard": "sg",
                "feed_stall_threshold": "sgfeed",
                "sort_home_backoff": "sorthomebackoff",
+               "sort_flag_offset": "sortflagoffset",
+               "sort_flag_width": "sortflagwidth",
                "sort_home_slow": "sorthomeslow",
                "feed_launch": "feedlaunch",
                "feed_decel": "feeddecel",
@@ -6340,6 +6408,8 @@ _GETCONFIG_KEY = {"feed_speed": "FeedMotorSpeed", "feed_steps": "FeedCycleSteps"
                   "stall_guard": "StallGuardEnabled",
                   "feed_stall_threshold": "FeedStallThreshold",
                   "sort_home_backoff": "SortHomeBackoff",
+                  "sort_flag_offset": "SortFlagOffset",
+                  "sort_flag_width": "SortFlagWidth",
                   "sort_home_slow": "SortHomeSlowDelay",
                   "feed_launch": "FeedLaunchSteps",
                   "feed_decel": "FeedDecelOverOffset",
@@ -6447,7 +6517,8 @@ def _apply_machine_settings(settings):
     applied = 0
     fw = str(machine_settings().get("firmware", "stock"))
     pico_only = {"sort_decel", "feed_accel", "feed_decel_rate",
-                 "stall_guard", "feed_stall_threshold"}
+                 "stall_guard", "feed_stall_threshold",
+                 "sort_flag_offset", "sort_flag_width"}
     fork_only = {"sort_accel", "sort_home_backoff", "sort_home_slow",
                  "feed_launch", "feed_decel", "arm_dwell", "slot_positions"}
     on_stock = not (fw.startswith("ss") or fw == "pico")
@@ -6486,6 +6557,7 @@ def api_machine_settings_get():
                     "defaults": MACHINE_DEFAULTS,
                     "bounds": MACHINE_BOUNDS,
                     "connected": _console["transport"] is not None,
+                    "fault": _console.get("fault"),
                     "mode": _console["mode"]})
 
 

@@ -1,0 +1,345 @@
+<title>SKR Pico Sorter Wiring</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+  :root {
+    --bg: #eef0f3; --panel: #ffffff; --panel2: #e3e7ec; --line: #c5ccd6;
+    --text: #1b2027; --dim: #5b6674; --brass: #9a7a2a; --brass-soft: #f1e7c9;
+    --v12: #c62f28; --v5: #c27a12; --v33: #1a8b86; --sig: #2b6fc2; --gnd: #3a4049;
+    --warn-bg: #fff5dc; --warn-line: #d9b45a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14171c; --panel: #1d2229; --panel2: #242b34; --line: #313a46;
+      --text: #d7dde5; --dim: #8a95a3; --brass: #d4a94f; --brass-soft: #2b2717;
+      --v12: #ef6a5f; --v5: #e9a23b; --v33: #3fc8c8; --sig: #6aa6f0; --gnd: #aab3bf;
+      --warn-bg: #2a2416; --warn-line: #8a6d22;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14171c; --panel: #1d2229; --panel2: #242b34; --line: #313a46;
+    --text: #d7dde5; --dim: #8a95a3; --brass: #d4a94f; --brass-soft: #2b2717;
+    --v12: #ef6a5f; --v5: #e9a23b; --v33: #3fc8c8; --sig: #6aa6f0; --gnd: #aab3bf;
+    --warn-bg: #2a2416; --warn-line: #8a6d22;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 "IBM Plex Sans", "Segoe UI", system-ui, sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 28px 20px 64px; }
+  h1 { font: 700 44px/1 "Barlow Condensed", "Arial Narrow", sans-serif;
+    letter-spacing: .01em; margin: 0 0 6px; text-wrap: balance; }
+  h2 { font: 700 24px/1.1 "Barlow Condensed", "Arial Narrow", sans-serif;
+    text-transform: uppercase; letter-spacing: .06em; color: var(--brass);
+    margin: 40px 0 12px; padding-top: 14px; border-top: 1px solid var(--line); }
+  h3 { font: 600 16px/1.3 "IBM Plex Sans", sans-serif; margin: 18px 0 6px; }
+  p { max-width: 68ch; margin: 0 0 10px; }
+  .lede { color: var(--dim); max-width: 70ch; margin-bottom: 18px; }
+  code, .pin { font: 600 13px/1 "IBM Plex Mono", Consolas, monospace;
+    background: var(--panel2); border: 1px solid var(--line); border-radius: 5px;
+    padding: 2px 6px; white-space: nowrap; }
+  .strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px; margin: 18px 0 6px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 12px; }
+  .tile small { display: block; font-size: 11px; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--dim); margin-bottom: 3px; }
+  .tile b { font-size: 15px; }
+  .warn { background: var(--warn-bg); border: 1px solid var(--warn-line);
+    border-radius: 10px; padding: 10px 14px; margin: 14px 0; max-width: none; }
+  .warn b { color: var(--brass); }
+  figure { margin: 18px 0 6px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 14px; overflow-x: auto; }
+  figure svg { display: block; min-width: 720px; max-width: 100%; height: auto;
+    font-family: "IBM Plex Mono", Consolas, monospace; }
+  figcaption { color: var(--dim); font-size: 13px; margin-top: 10px; max-width: 80ch; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12.5px; color: var(--dim);
+    margin: 8px 0 0; }
+  .legend span::before { content: ""; display: inline-block; width: 26px; height: 3px;
+    vertical-align: middle; margin-right: 6px; border-radius: 2px; background: var(--c); }
+  .tblwrap { overflow-x: auto; margin: 10px 0 4px; }
+  table { border-collapse: collapse; width: 100%; min-width: 560px;
+    font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line);
+    vertical-align: top; }
+  th { font-size: 11.5px; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--dim); font-weight: 600; }
+  td:first-child { font-weight: 600; }
+  .v12 { color: var(--v12); } .v5 { color: var(--v5); } .v33 { color: var(--v33); }
+  .sig { color: var(--sig); } .gnd { color: var(--gnd); }
+  ol.steps { padding-left: 22px; margin: 8px 0; max-width: 72ch; }
+  ol.steps li { margin: 6px 0; }
+  ol.steps li::marker { font: 600 13px "IBM Plex Mono", monospace; color: var(--brass); }
+  .circuit { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 14px; }
+  pre { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 14px; font: 13px/1.5 "IBM Plex Mono", Consolas, monospace;
+    overflow-x: auto; margin: 8px 0; color: var(--text); }
+  .chk { list-style: none; padding: 0; margin: 8px 0; max-width: 72ch; }
+  .chk li { padding: 8px 0 8px 30px; position: relative; border-bottom: 1px dashed var(--line); }
+  .chk li::before { content: ""; position: absolute; left: 2px; top: 11px; width: 15px;
+    height: 15px; border: 2px solid var(--brass); border-radius: 4px; }
+  footer { color: var(--dim); font-size: 12.5px; margin-top: 40px; max-width: 72ch; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<main>
+  <h1>SKR Pico Sorter Wiring</h1>
+  <p class="lede">A second sorter built on a BigTreeTech SKR Pico and a Raspberry Pi 4 — the
+  test bed for the controller that may replace the CS7.2 board. Every connection in bench order;
+  pin numbers are the board's published GPIO map and the firmware port will assume exactly these.</p>
+
+  <div class="strip">
+    <div class="tile"><small>Supply</small><b>12 V system</b></div>
+    <div class="tile"><small>Motors</small><b>X = feed · Y = sort</b></div>
+    <div class="tile"><small>This build</small><b>Pi 4 on its own PSU · UART link</b></div>
+    <div class="tile"><small>Extra parts</small><b>2× 1 kΩ, leads (no opto module)</b></div>
+  </div>
+
+  <div class="warn"><b>The one rule of this board:</b> the RP2040's inputs take 3.3 V, never 5 V.
+  Every signal that arrives at a GPIO must be 3.3 V logic — the optical sensors run from 3.3 V,
+  the prox goes into the <span class="pin">WD-DET</span> header, whose own conditioning circuit brings
+  its 12/24 V output down to logic level — and nothing from the 5 V or 12 V rails touches an input directly.</div>
+
+  <h2>Overview</h2>
+  <figure>
+    <svg viewBox="0 0 980 600" role="img" aria-label="Wiring overview: the SKR Pico in the center with the feed and sort motors on its X and Y headers, the two optical homing sensors and the prox on the WD-DET header, and the LED ring, fan and optional solenoid on the MOSFET outputs.">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+        </marker>
+      </defs>
+      <!-- board -->
+      <rect x="330" y="150" width="320" height="300" rx="14" fill="var(--panel2)" stroke="currentColor" stroke-width="1.5"/>
+      <text x="490" y="182" text-anchor="middle" font-size="18" font-weight="600" fill="currentColor">SKR Pico</text>
+      <text x="490" y="200" text-anchor="middle" font-size="11" fill="var(--dim)">RP2040 · 4× TMC2209 on board</text>
+      <!-- board headers: left (motors) -->
+      <rect x="330" y="230" width="52" height="26" rx="4" fill="var(--panel)" stroke="currentColor" stroke-width="1"/>
+      <text x="356" y="247" text-anchor="middle" font-size="12" fill="currentColor">X</text>
+      <rect x="330" y="300" width="52" height="26" rx="4" fill="var(--panel)" stroke="currentColor" stroke-width="1"/>
+      <text x="356" y="317" text-anchor="middle" font-size="12" fill="currentColor">Y</text>
+      <rect x="330" y="370" width="52" height="26" rx="4" fill="var(--panel)" stroke="var(--dim)" stroke-width="1" stroke-dasharray="3 3"/>
+      <text x="356" y="387" text-anchor="middle" font-size="11" fill="var(--dim)">Z · E</text>
+      <text x="395" y="387" font-size="10" fill="var(--dim)">empty</text>
+      <!-- bottom (inputs) -->
+      <g font-size="10.5" fill="currentColor">
+        <rect x="345" y="426" width="60" height="24" rx="4" fill="var(--panel)" stroke="currentColor"/><text x="375" y="442" text-anchor="middle">E0-STOP</text>
+        <rect x="415" y="426" width="60" height="24" rx="4" fill="var(--panel)" stroke="currentColor"/><text x="445" y="442" text-anchor="middle">Z-STOP</text>
+        <rect x="485" y="426" width="60" height="24" rx="4" fill="var(--panel)" stroke="currentColor"/><text x="515" y="442" text-anchor="middle">PROBE</text>
+        <rect x="555" y="426" width="80" height="24" rx="4" fill="var(--panel)" stroke="var(--dim)" stroke-dasharray="3 3"/><text x="595" y="442" text-anchor="middle" fill="var(--dim)">X/Y-STOP</text>
+      </g>
+      <text x="595" y="470" text-anchor="middle" font-size="10" fill="var(--dim)">= driver DIAG via jumpers</text>
+      <!-- right (outputs) -->
+      <g font-size="11" fill="currentColor">
+        <rect x="598" y="230" width="52" height="26" rx="4" fill="var(--panel)" stroke="var(--dim)" stroke-dasharray="3 3"/><text x="624" y="247" text-anchor="middle" fill="var(--dim)">FAN1</text>
+        <rect x="598" y="290" width="52" height="26" rx="4" fill="var(--panel)" stroke="currentColor"/><text x="624" y="307" text-anchor="middle">FAN2</text>
+        <rect x="598" y="350" width="52" height="26" rx="4" fill="var(--panel)" stroke="currentColor"/><text x="624" y="367" text-anchor="middle">HE0</text>
+      </g>
+      <!-- top (power / usb / 5V) -->
+      <g font-size="11" fill="currentColor">
+        <rect x="360" y="150" width="60" height="24" rx="4" fill="var(--panel)" stroke="currentColor"/><text x="390" y="166" text-anchor="middle">VIN</text>
+        <rect x="455" y="150" width="70" height="24" rx="4" fill="var(--panel)" stroke="currentColor"/><text x="490" y="166" text-anchor="middle">USB-C</text>
+        <rect x="560" y="150" width="70" height="24" rx="4" fill="var(--panel)" stroke="currentColor"/><text x="595" y="166" text-anchor="middle">SERVOS</text>
+      </g>
+
+      <!-- PSU + Pi -->
+      <rect x="300" y="40" width="110" height="44" rx="8" fill="var(--panel)" stroke="currentColor"/>
+      <text x="355" y="58" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">12 V PSU</text>
+      <text x="355" y="74" text-anchor="middle" font-size="10" fill="var(--dim)">shared with machine</text>
+      <line x1="370" y1="84" x2="388" y2="148" stroke="var(--v12)" style="color:var(--v12)" stroke-width="3" marker-end="url(#ah)"/>
+      <text x="330" y="118" font-size="10.5" fill="var(--v12)">+12 V · GND</text>
+
+      <rect x="440" y="40" width="100" height="44" rx="8" fill="var(--panel)" stroke="currentColor"/>
+      <text x="490" y="58" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">Raspberry Pi</text>
+      <text x="490" y="74" text-anchor="middle" font-size="10" fill="var(--dim)">SortIQ</text>
+      <line x1="490" y1="84" x2="490" y2="148" stroke="var(--sig)" style="color:var(--sig)" stroke-width="2" marker-end="url(#ah)" marker-start="url(#ah)"/>
+      <text x="498" y="118" font-size="10.5" fill="var(--sig)">UART header (or USB-C)</text>
+
+      <!-- motors -->
+      <rect x="60" y="216" width="150" height="54" rx="8" fill="var(--panel)" stroke="currentColor"/>
+      <text x="135" y="238" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">Feed stepper</text>
+      <text x="135" y="256" text-anchor="middle" font-size="10" fill="var(--dim)">4-wire, 900 mA</text>
+      <line x1="210" y1="243" x2="328" y2="243" stroke="currentColor" stroke-width="2.5" marker-end="url(#ah)"/>
+      <text x="269" y="236" text-anchor="middle" font-size="10.5" fill="currentColor">X motor</text>
+
+      <rect x="60" y="286" width="150" height="54" rx="8" fill="var(--panel)" stroke="currentColor"/>
+      <text x="135" y="308" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">Sort stepper</text>
+      <text x="135" y="326" text-anchor="middle" font-size="10" fill="var(--dim)">4-wire, 900 mA</text>
+      <line x1="210" y1="313" x2="328" y2="313" stroke="currentColor" stroke-width="2.5" marker-end="url(#ah)"/>
+      <text x="269" y="306" text-anchor="middle" font-size="10.5" fill="currentColor">Y motor</text>
+
+      <!-- inputs -->
+      <rect x="250" y="520" width="140" height="50" rx="8" fill="var(--panel)" stroke="currentColor"/>
+      <text x="320" y="540" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">Feed homing</text>
+      <text x="320" y="556" text-anchor="middle" font-size="10" fill="var(--v33)">optical · powered 3.3 V</text>
+      <line x1="340" y1="520" x2="372" y2="452" stroke="var(--sig)" style="color:var(--sig)" stroke-width="2" marker-end="url(#ah)"/>
+
+      <rect x="400" y="520" width="140" height="50" rx="8" fill="var(--panel)" stroke="currentColor"/>
+      <text x="470" y="540" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">Sort homing</text>
+      <text x="470" y="556" text-anchor="middle" font-size="10" fill="var(--v33)">optical · powered 3.3 V</text>
+      <line x1="458" y1="520" x2="447" y2="452" stroke="var(--sig)" style="color:var(--sig)" stroke-width="2" marker-end="url(#ah)"/>
+
+      <rect x="560" y="520" width="150" height="50" rx="8" fill="var(--panel)" stroke="currentColor"/>
+      <text x="635" y="540" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">Prox (direct)</text>
+      <text x="635" y="556" text-anchor="middle" font-size="10" fill="var(--v33)">WD-DET · PNP jumper off</text>
+      <line x1="580" y1="520" x2="522" y2="452" stroke="var(--sig)" style="color:var(--sig)" stroke-width="2" marker-end="url(#ah)"/>
+
+      <rect x="790" y="520" width="150" height="50" rx="8" fill="var(--panel)" stroke="currentColor"/>
+      <text x="865" y="540" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">Prox LJ8A3</text>
+      <text x="865" y="556" text-anchor="middle" font-size="10" fill="var(--v12)">12 V PNP</text>
+      <line x1="790" y1="545" x2="712" y2="545" stroke="var(--v12)" style="color:var(--v12)" stroke-width="2.5" marker-end="url(#ah)"/>
+      <text x="751" y="538" text-anchor="middle" font-size="10" fill="var(--v12)">12 V signal</text>
+
+      <!-- outputs -->
+      <rect x="760" y="216" width="160" height="54" rx="8" fill="var(--panel)" stroke="currentColor"/>
+      <text x="840" y="238" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">Camera LED ring</text>
+      <text x="840" y="256" text-anchor="middle" font-size="10" fill="var(--v5)">WS2812 ×12 · 5 V + data</text>
+      <path d="M630,174 C700,174 760,180 790,214" fill="none" stroke="var(--v5)" style="color:var(--v5)" stroke-width="2.5" marker-end="url(#ah)"/>
+      <text x="740" y="190" text-anchor="middle" font-size="10" fill="var(--v5)">SERVOS header: 5 V · data · GND</text>
+
+      <rect x="760" y="286" width="160" height="48" rx="8" fill="var(--panel)" stroke="currentColor"/>
+      <text x="840" y="306" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">Case fan</text>
+      <text x="840" y="322" text-anchor="middle" font-size="10" fill="var(--v12)">12 V</text>
+      <line x1="652" y1="303" x2="758" y2="303" stroke="var(--v12)" style="color:var(--v12)" stroke-width="2.5" marker-end="url(#ah)"/>
+
+      <rect x="760" y="346" width="160" height="48" rx="8" fill="var(--panel)" stroke="var(--dim)" stroke-dasharray="4 3"/>
+      <text x="840" y="366" text-anchor="middle" font-size="12" font-weight="600" fill="var(--dim)">AirDrop solenoid</text>
+      <text x="840" y="382" text-anchor="middle" font-size="10" fill="var(--dim)">12 V · only if fitted</text>
+      <line x1="652" y1="363" x2="758" y2="363" stroke="var(--v12)" style="color:var(--v12)" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ah)"/>
+    </svg>
+    <div class="legend">
+      <span style="--c: var(--v12)">12 V</span>
+      <span style="--c: var(--v5)">5 V</span>
+      <span style="--c: var(--v33)">3.3 V</span>
+      <span style="--c: var(--sig)">signal</span>
+      <span style="--c: var(--gnd)">switched ground</span>
+    </div>
+    <figcaption>Everything the Uno did, on one board: motors on the left, sensors below, loads
+    on the right. Even the prox connects directly: the <span class="pin">WD-DET</span> header carries its own
+    proximity-switch conditioning, so its 12 V never reaches the RP2040.</figcaption>
+  </figure>
+
+  <h2>Wire it in this order</h2>
+  <ol class="steps">
+    <li><b>Nothing powered.</b> Set the jumpers first: the <span class="pin">DIAG</span> jumper on
+      the X and Y driver positions (so StallGuard reaches the board), drivers in UART mode (the Pico's
+      default — its 2209s are soldered on).</li>
+    <li><b>Motors.</b> Feed stepper to <span class="pin">X</span>, sort stepper to
+      <span class="pin">Y</span>. Same 4-wire plugs as today; if a motor runs backwards later,
+      that's a firmware direction flag, not a rewire.</li>
+    <li><b>Homing sensors</b> to the endstop headers, powered from <span class="v33">3.3 V</span>
+      (see the meter check below before plugging in).</li>
+    <li><b>Prox</b> straight into <span class="pin">WD-DET</span> (brown → VIN, blue → GND, black → P_S).
+      Two jumpers set it up: fit the <b>Proximity Switch</b> jumper (feeds the header VIN) and
+      <b>remove the NPN jumper</b> — the LJ8A3-…-Z/BY is PNP.</li>
+    <li><b>LED ring, fan, solenoid</b> on the MOSFET outputs.</li>
+    <li><b>Pi link:</b> three wires from the <span class="pin">Raspberry Pi</span> header to the
+      Pi's GPIO header (TX→15, RX→14, GND→GND). Leave the header's 5 V pin off for a Pi 5.</li>
+    <li><b>12 V</b> to <span class="pin">VIN</span>/<span class="pin">GND</span>. Power up and run
+      the checks.</li>
+  </ol>
+
+  <h2>Connections</h2>
+  <h3>Power</h3>
+  <div class="tblwrap"><table>
+    <tr><th>From</th><th>To</th><th>Notes</th></tr>
+    <tr><td class="v12">12 V PSU +</td><td><span class="pin">VIN</span></td><td>The machine's existing 12 V supply. The board makes its own 5 V and 3.3 V from it.</td></tr>
+    <tr><td class="gnd">12 V PSU −</td><td><span class="pin">GND</span></td><td>One common ground for board, motors, and sensors.</td></tr>
+    <tr><td class="sig">Raspberry Pi header TX / RX / GND</td><td>Pi GPIO 15 / GPIO 14 / GND</td><td><b>The board link.</b> Plain 3.3 V UART, three wires to the Pi's 40-pin header, with a <b>1 kΩ resistor inline on TX and on RX</b> — the Pi stays powered while the board is off, and the resistors stop its idle serial lines back-feeding the dead RP2040. Appears as <span class="pin">/dev/ttyAMA0</span> (enable the UART in the Pi's boot config). No USB, no isolator, none of the USB-noise history — the camera becomes the Pi's only USB device.</td></tr>
+    <tr><td class="v5">Raspberry Pi header 5 V</td><td><b>not connected</b></td><td>The Pi runs on its own supply and stays on while the machine's 12 V is switched off — clean shutdowns, and the Pi keeps serving the UI and the fleet. Never feed a Pi from two supplies. (The board <i>can</i> power a Pi 3/4 through this pin for a machine whose Pi is meant to sleep with it.)</td></tr>
+    <tr><td class="sig">USB-C (fallback)</td><td>Raspberry Pi</td><td>Appears as <span class="pin">/dev/ttyACM0</span>. Only if you skip the UART link; then keep the USB isolator doctrine.</td></tr>
+  </table></div>
+
+  <h3>Motors</h3>
+  <div class="tblwrap"><table>
+    <tr><th>Machine</th><th>Header</th><th>GPIO (step / dir / en)</th><th>UART addr</th><th>StallGuard DIAG</th></tr>
+    <tr><td>Feed stepper</td><td><span class="pin">X</span></td><td>11 / 10 / 12</td><td>0</td><td>jumper → <span class="pin">X-STOP</span> (GPIO 4)</td></tr>
+    <tr><td>Sort stepper</td><td><span class="pin">Y</span></td><td>6 / 5 / 7</td><td>2</td><td>jumper → <span class="pin">Y-STOP</span> (GPIO 3)</td></tr>
+    <tr><td class="gnd">—</td><td><span class="pin">Z</span>, <span class="pin">E</span></td><td colspan="3">empty — their endstop inputs are borrowed below</td></tr>
+  </table></div>
+  <p>All four drivers share one UART (<span class="pin">GPIO 8</span> tx / <span class="pin">GPIO 9</span> rx)
+  and are told apart by address — firmware's problem, not yours.</p>
+
+  <h3>Inputs</h3>
+  <div class="tblwrap"><table>
+    <tr><th>Sensor</th><th>Header</th><th>GPIO</th><th>Power</th><th>Notes</th></tr>
+    <tr><td>Feed homing (optical)</td><td><span class="pin">E0-STOP</span></td><td>16</td><td class="v5">5 V (header)</td><td>Straight in — the board conditions the endstop inputs, so the 5 V-powered opto is fine. Reads 0 blocked / 1 clear (bench-verified). <b>Not X-STOP/Y-STOP</b>: those two pins are the StallGuard DIAG inputs.</td></tr>
+    <tr><td>Sort homing (optical)</td><td><span class="pin">Z-STOP</span></td><td>25</td><td class="v5">5 V (header)</td><td>Same. Z has no motor, so its endstop is free.</td></tr>
+    <tr><td>Prox LJ8A3-…-Z/BY (PNP)</td><td><span class="pin">WD-DET</span></td><td>22</td><td class="v12">VIN (12/24 V)</td><td>Direct — the header conditions the PNP output to logic level; the <b>Proximity Switch jumper</b> (the 2-pin <code>P_S | IO22</code> block) routes it to GPIO 22. NPN jumper <b>removed</b>. Brass present reads HIGH (firmware sensor type 1). <b>Count headers from the USB-C end: Laser, then WD-DET</b> — the Laser header is the same 3-pin plug one position up and shares FAN3's pin; a prox plugged there lights the FAN3 LED and never reaches GPIO 22 (bench-verified mistake).</td></tr>
+  </table></div>
+
+  <h3>Outputs</h3>
+  <div class="tblwrap"><table>
+    <tr><th>Load</th><th>Header</th><th>GPIO</th><th>How</th></tr>
+    <tr><td>Camera LED ring — WS2812 ×12</td><td><span class="pin">RGB</span> header</td><td>24 (data)</td><td>Three wires: <span class="v5">5 V</span>, signal → ring DIN, <span class="gnd">GND</span>. Brightness and color are firmware values, not PWM; the RP2040 drives the ring in hardware, so updates never disturb step timing. The RGB header already carries 5 V and GND on the same plug, so it is a straight three-wire fit. If it ever flickers, a 74AHCT125 level shifter on the data line fixes the 3.3 V→WS2812 margin.</td></tr>
+    <tr><td>Camera fan (24 V)</td><td><span class="pin">FAN2</span></td><td>18</td><td>The app's controllable fan (<code>fan:</code> level). The header's + is VIN — fans must match the supply voltage.</td></tr>
+    <tr><td>Pi/Pico cooling ×2 (24 V)</td><td><span class="pin">FAN1</span> · <span class="pin">FAN3</span></td><td>17 · 20</td><td>Both switched on at boot, no control. Same VIN rule.</td></tr>
+    <tr><td>AirDrop solenoid (12 V, optional)</td><td><span class="pin">HE0</span></td><td>23</td><td>Not fitted on this build, but the firmware and this reserved output keep the mod available for anyone who runs it. Direct drive, no relay.</td></tr>
+  </table></div>
+
+  <h2>The two small circuits</h2>
+  <div class="circuit">
+    <div>
+      <h3>Prox on WD-DET, no extra parts</h3>
+<pre><span class="v12">prox brown  (+V)  → WD-DET 12/24V
+prox blue   (0 V) → WD-DET GND
+prox black  (out) → WD-DET P_S</span>   ← conditioned on-board → GPIO 22
+
+jumper "Proximity Switch"  FITTED   (header Vcc = VIN)
+jumper "NPN"               REMOVED  (LJ8A3-…-Z/BY is PNP)</pre>
+      <p>The board does what the opto module would have: the P_S line goes through a divider
+      to the RP2040, so the sensor's 12/24 V output never reaches a GPIO. A PNP sensor pulls the
+      line <b>high</b> on brass; the firmware ships with sensor type 1 for exactly that — if the
+      meter says otherwise, <code>feedsensortype:0</code> flips it, no rewire.</p>
+    </div>
+    <div>
+      <h3>WS2812 ring on the SERVOS header</h3>
+<pre><span class="v5">SERVOS header 5 V    → ring 5V / VCC</span>
+<span class="sig">SERVOS header signal → ring DIN  (data IN, not OUT)</span>
+<span class="gnd">SERVOS header GND    → ring GND</span></pre>
+      <p>Full white on 12 pixels is ~720 mA from the 5 V rail — fine for the board's regulator,
+      but give the <b>servos their own 5 V supply</b> through the PCA9685's V+ input so a dozen
+      twitching servos never share a rail with the camera light. Pick one color mix for
+      imaging and keep it fixed, the same rule as the stock ring.</p>
+    </div>
+  </div>
+
+  <h2>Meter checks before the first run</h2>
+  <ul class="chk">
+    <li><b>Endstop header power pin:</b> with the board powered and nothing in the headers, meter the
+      <span class="pin">V</span> pin on <span class="pin">E0-STOP</span>/<span class="pin">Z-STOP</span>.
+      3.3 V → power the optical modules from it. 5 V → don't; feed them from a 3.3 V pin instead.</li>
+    <li><b>Opto output:</b> <span class="pin">OUT</span> ≈ 3.3 V with no case, ≈ 0 V with brass in
+      front (or the reverse — just note which).</li>
+    <li><b>DIAG at rest:</b> <span class="pin">X-STOP</span> and <span class="pin">Y-STOP</span> read
+      low with the motors idle.</li>
+    <li><b>No 5 V on any signal pin</b> — the only 5 V wire on the board goes to the ring.</li>
+    <li><b>Ring lights</b> at the firmware's level on the <span class="pin">SERVOS</span> header (no
+      flicker, correct color); fan spins on <span class="pin">FAN2</span>.</li>
+  </ul>
+
+  <h2>What the firmware port will assume</h2>
+  <div class="tblwrap"><table>
+    <tr><th>Role</th><th>GPIO</th><th>Role</th><th>GPIO</th></tr>
+    <tr><td>Feed step / dir / en</td><td>11 / 10 / 12</td><td>Feed DIAG</td><td>4</td></tr>
+    <tr><td>Sort step / dir / en</td><td>6 / 5 / 7</td><td>Sort DIAG</td><td>3</td></tr>
+    <tr><td>Driver UART tx / rx</td><td>8 / 9</td><td>Feed homing</td><td>16</td></tr>
+    <tr><td>LED ring (WS2812 data)</td><td>24</td><td>Sort homing</td><td>25</td></tr>
+    <tr><td>Case fan</td><td>18</td><td>Prox (WD-DET, direct)</td><td>22</td></tr>
+    <tr><td>Cooling fans</td><td>17, 20</td><td>Spare inputs</td><td>29 (SERVOS)</td></tr>
+    <tr><td>AirDrop</td><td>23</td><td></td><td></td></tr>
+    <tr><td>Spare outputs</td><td>21 (HB), 29 (SERVOS)</td><td>Reserved: phase-2 I²C</td><td>26 SDA (TH0) + 27 SCL (THB) — on-board 3.3 V pull-ups included</td></tr>
+  </table></div>
+  <p>The spares are where phase 2 lands: the gated-wheel's <b>PCA9685 servo driver</b> on the
+  reserved I²C pair (GPIO 26 SDA / 27 SCL — the <span class="pin">TH0</span>/<span class="pin">THB</span>
+  analog headers, whose on-board thermistor pull-ups double as I²C pull-ups), with the servos powered from their own 5 V through the
+  PCA9685's <span class="pin">V+</span>; plus a pocket-empty sensor on a thermistor input.</p>
+  <p><b>Motor power comes and goes while the board runs.</b> With the Pi always on and the 12 V
+  switched at will, the firmware treats motor power as a state: it notices when the drivers
+  appear or vanish (<span class="pin">PWR-DET</span>, or the drivers answering on UART),
+  re-applies current / microstep / StallGuard settings every time power returns, and tells
+  SortIQ "motor power off" so the Machine page says so instead of the first feed failing as a
+  mystery jam.</p>
+
+  <footer>GPIO numbers from BigTreeTech's published SKR Pico v1.0 pin map. Header voltages vary by
+  board revision — hence the meter checks. The firmware is a port of the SortIQ CS7.2 fork to this
+  board with the same serial protocol, so nothing on the Pi changes.</footer>
+</main>
