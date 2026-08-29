@@ -691,7 +691,18 @@ void feedFinishHome() {
   }
   feedPrevEdge = feedEdgeAbs;
   if (remain < 16) {
-    feedHardStop();                          // at/past the mark: dead stop
+    if (v > FEED_CREEP_HZ + 800) {
+      feedHardStop();          // cruise-caught anomaly: take no reversal risk
+    } else {
+      // land EXACTLY like the manual home does: moveTo lets the planner
+      // hit the target, instead of a dead stop that drains the 5ms step
+      // queue past it (~20 usteps at creep — the systematic 'a hair too
+      // far' at offset 0). Any micro-correction is sub-full-step.
+      long t = pos + 4;
+      if (stopAt > t) t = stopAt;
+      feedSt->setAcceleration(4000000);
+      feedSt->moveTo(t);
+    }
   } else if (!feedDecelOverOffset) {
     feedSt->setAcceleration(4000000);        // cruise the offset, dead stop
     feedSt->moveTo(stopAt);
