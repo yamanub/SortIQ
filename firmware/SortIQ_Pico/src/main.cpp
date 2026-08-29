@@ -186,6 +186,8 @@ void fillSlotTab() {
 void feedHardStop();
 void sortHardStop();
 void motorsWake();
+void enterFault(uint8_t code, const __FlashStringHelper *msg);
+extern uint8_t faultCode, feedAbortStreak, sortHomeFailStreak, sortSkipStreak;
 
 // ---------------- stats ----------------
 uint32_t feedCycles = 0, feedStalls = 0, sortStalls = 0, sortSkips = 0;
@@ -267,6 +269,8 @@ void sortHomingFailed() {
   sortHardStop();
   sortState = S_IDLE; sortHomed = false;
   host.println(F("error:sort homing failed"));
+  if (++sortHomeFailStreak >= 2)
+    enterFault(2, F("sort arm cannot find its sensor"));
 }
 
 void sortSkipAbort() {                             // steps were lost: frame dead
@@ -275,6 +279,10 @@ void sortSkipAbort() {                             // steps were lost: frame dea
   sortEdgeArm = false; sortCrossExpect = false;
   sortState = S_IDLE; sortHomed = false;
   host.println(F("error:sort stall detected"));
+  if (++sortSkipStreak >= 3) {
+    enterFault(3, F("sort arm keeps losing position at the checkpoint"));
+    return;
+  }
   sortStartHoming();                               // self-heal like the fork
 }
 
@@ -356,6 +364,7 @@ void sortService() {
           return;
         }
         sortHomed = true; sortSlot = 0;
+        sortHomeFailStreak = 0;                    // a good home = healthy
         lastSortArrive = millis();
         sortApplyMotion();
         sortSt->moveTo(sortTargetAbs(0));
@@ -381,6 +390,7 @@ void sortService() {
           host.println(sortFlagWidth);
         }
         sortHomed = true; sortSlot = 0;
+        sortHomeFailStreak = 0;                    // a good home = healthy
         lastSortArrive = millis();
         sortApplyMotion();
         sortSt->moveTo(sortTargetAbs(0));          // continue down to slot 0
@@ -423,6 +433,7 @@ void sortService() {
         // absence check: a crossing move that never saw the flag lost
         // steps somewhere (or the sensor is dead) — same recovery
         if (sortCrossExpect && !sortSawFlag) { sortSkipAbort(); return; }
+        if (sortCrossExpect && sortSawFlag) sortSkipStreak = 0;  // clean crossing
         sortEdgeArm = false; sortCrossExpect = false;
         lastSortArrive = millis();
         sortState = S_IDLE;
@@ -581,12 +592,33 @@ void checkMotorStandby() {
   }
 }
 
+// FAULT STOP: the escalation policy over the self-healing layers. Each
+// recovery (realign, re-home, checkpoint heal) gets ONE immediate retry;
+// the same failure recurring back-to-back means an unclearable condition
+// (a real jam, a dead sensor) — stop the machine and say so, instead of
+// grinding through heal/fail loops. Zero happy-path cost: every counter
+// here lives on a path that only runs when something already failed.
+uint8_t faultCode = 0;                 // 0=none 1=feed 2=sort-home 3=checkpoint
+uint8_t feedAbortStreak = 0, sortHomeFailStreak = 0, sortSkipStreak = 0;
+
+void enterFault(uint8_t code, const __FlashStringHelper *msg) {
+  if (faultCode) return;
+  faultCode = code;
+  feedHardStop(); sortHardStop();
+  feedEdgeArm = false; sortEdgeArm = false;
+  feedState = F_IDLE; forceFeed = false;
+  sortState = S_IDLE; sortHomed = false;
+  host.print(F("fault:")); host.println(msg);
+}
+
 void feedAbort(const __FlashStringHelper *err) {
   feedHardStop();
   feedEdgeArm = false;
   feedPrevEdge = LONG_MIN;   // edge chain broken: don't learn a fake pitch
   feedState = F_IDLE; forceFeed = false;
   host.println(err);
+  if (++feedAbortStreak >= 2)
+    enterFault(1, F("feed jam - wheel cannot reach its sensor"));
 }
 
 // bare feed home: slow seek to the tab edge, stop AT it, no offset.
@@ -845,6 +877,7 @@ void feedService() {
     case F_NOTIFY:
       if (millis() - feedT0 >= (uint32_t)notificationDelay) {
         feedCycles++;
+        feedAbortStreak = 0;                       // a clean cycle = healthy
         if (digitalRead(FEED_HOME) == HIGH) restOffTab++;  // stop slipped off tab
         feedState = F_IDLE; forceFeed = false;
         host.println(F("done"));
@@ -1060,6 +1093,7 @@ void handleCommand() {
     host.print(F(" feedEdge=")); host.print(feedEdgeAbs);
     host.print(F(" fpos=")); host.print((long)feedSt->getCurrentPosition());
     host.print(F(" flaps=")); host.print(powerFlaps);
+    host.print(F(" fault=")); host.print(faultCode);
     host.print(F(" xchk=")); host.print(sortCrossChecks);
     host.print(F(" reanch=")); host.print(sortReanchors);
     host.print(F(" drift=")); host.print(sortLastDrift);
@@ -1120,6 +1154,21 @@ void handleCommand() {
   if (input.startsWith(F("feeddebug:"))) {
     feedDebug = input.substring(10).toInt() != 0;
     host.println(F("ok"));
+    return;
+  }
+  if (input == "faultclear") {
+    faultCode = 0;
+    feedAbortStreak = 0; sortHomeFailStreak = 0; sortSkipStreak = 0;
+    host.println(F("ok"));
+    return;
+  }
+  if (faultCode &&
+      (input.startsWith(F("pf")) || input.startsWith(F("xf:")) ||
+       input.startsWith(F("sortto:")) || input.startsWith(F("sorttest:")))) {
+    host.print(F("fault:"));
+    host.println(faultCode == 1 ? F("feed jam - wheel cannot reach its sensor")
+               : faultCode == 2 ? F("sort arm cannot find its sensor")
+               : F("sort arm keeps losing position at the checkpoint"));
     return;
   }
   if (input.startsWith(F("armfree:"))) {

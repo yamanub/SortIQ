@@ -4745,11 +4745,14 @@ class RunManager:
                     return reply
 
                 def await_feed(timeout=12.0):
-                    """Wait out a forced FEED: SEATED, JAM or None."""
+                    """Wait out a forced FEED: SEATED, JAM, FAULT or None."""
                     deadline = time.monotonic() + timeout
                     while time.monotonic() < deadline:
                         line = transport.readline(
                             timeout=max(deadline - time.monotonic(), 0.1))
+                        if line and line.startswith("FAULT:"):
+                            _console["fault"] = line[6:]
+                            return "JAM"          # caller aborts; run loop sees
                         if line in ("SEATED", "JAM", None):
                             return line
                     return None
@@ -4769,6 +4772,14 @@ class RunManager:
                                 self.state["end_reason"] = "out_of_brass"
                             break
                         continue
+                    if line and line.startswith("FAULT:"):
+                        reason = line[6:]
+                        note(f"run END: machine fault — {reason}")
+                        with self.lock:
+                            self.state["end_reason"] = "fault"
+                            self.state["error"] = "machine fault: " + reason
+                        _console["fault"] = reason      # surfaces the banner
+                        break
                     if line == "JAM":
                         with self.lock:
                             self.state["jams"] += 1
@@ -5998,6 +6009,8 @@ def _console_connect(mode, port=None):
                 except Exception:
                     break                     # the port itself died
                 if line:
+                    if line.startswith("fault:"):
+                        _console["fault"] = line[6:]
                     with _console["lock"]:
                         _console_log_append("<", line)
             # ZOMBIE FIX: a USB re-enumeration kills the port under us. If
@@ -6175,6 +6188,18 @@ def _power_get(fresh=False):
 @app.get("/api/power")
 def api_power_get():
     return jsonify({"on": _power_get(fresh=True), "gpio": POWER_GPIO})
+
+
+@app.post("/api/machine/fault_clear")
+def api_fault_clear():
+    _console["fault"] = None
+    try:
+        _console_request("faultclear", lambda l: l.strip() == "ok", timeout=3.0)
+        _console_request("homesorter", lambda l: l.strip() == "ok", timeout=3.0)
+        _console_request("homefeeder:soft", lambda l: l.strip() == "ok", timeout=3.0)
+    except Exception:
+        pass
+    return jsonify({"ok": True})
 
 
 @app.post("/api/power")
@@ -6526,6 +6551,7 @@ def api_machine_settings_get():
                     "defaults": MACHINE_DEFAULTS,
                     "bounds": MACHINE_BOUNDS,
                     "connected": _console["transport"] is not None,
+                    "fault": _console.get("fault"),
                     "mode": _console["mode"]})
 
 

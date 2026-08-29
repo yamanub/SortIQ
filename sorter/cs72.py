@@ -231,6 +231,9 @@ class Cs72Transport(Transport):
             # dry. The run loop counts these to detect end-of-brass and to
             # flush the cases already sitting past the sensor.
             return ["WAITING"]
+        if raw.startswith("fault:"):             # firmware fault stop: the
+            self._sort_pending = False           # machine refuses cycles until
+            return ["FAULT:" + raw[6:]]          # the operator clears it
         if raw.startswith("error"):              # e.g. "error:feed overtravel detected"
             self._sort_pending = False
             return ["JAM"]

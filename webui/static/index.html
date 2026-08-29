@@ -671,6 +671,21 @@
 </div>
 
 <!-- mid-travel checkpoint setup dialog -->
+<div id="faultBanner" style="display:none; position:fixed; left:50%; top:14px;
+     transform:translateX(-50%); z-index:60; background:#5c1a1a; border:1px solid #a33;
+     color:#fff; border-radius:10px; padding:10px 16px; max-width:640px;
+     box-shadow:0 4px 24px rgba(0,0,0,.5); font-size:13.5px">
+  <b>MACHINE FAULT</b> — <span id="faultText"></span>
+  <div class="muted" style="color:#e9b8b8; font-size:11.5px; margin-top:4px">
+    The machine stopped itself after repeated failed self-recovery. Clear the
+    physical problem, then click below — the machine re-homes and resumes.
+  </div>
+  <div style="margin-top:8px">
+    <button class="ghost" style="border-color:#a33; color:#fff"
+            onclick="faultClear()">Clear fault &amp; re-home</button>
+  </div>
+</div>
+
 <div id="mtcModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.55);
      z-index:50; align-items:center; justify-content:center">
   <div class="card" style="min-width:340px; max-width:480px">
@@ -6431,6 +6446,24 @@ const MS_FIELDS = { feed_speed: "msFeedSpeed", feed_steps: "msFeedSteps",
   air_drop_pre_delay: "msAirPre", air_drop_signal_ms: "msAirSignal",
   air_drop_post_delay: "msAirPost" };
 
+/* ---- machine fault banner ------------------------------------------- */
+function faultShow(reason) {
+  const b = $("faultBanner");
+  if (!b) return;
+  if (reason) { $("faultText").textContent = reason; b.style.display = "block"; }
+  else b.style.display = "none";
+}
+async function faultClear() {
+  faultShow(null);
+  try { await postJson("/api/machine/fault_clear", {}); } catch (e) {}
+}
+setInterval(async () => {
+  try {
+    const j = await (await fetch("/api/machine/settings")).json();
+    faultShow(j.fault);
+  } catch (e) {}
+}, 5000);
+
 /* ---- Mid-travel checkpoint: guided enable/disable ------------------- */
 let mtcEnable = false, mtcSaved = false;
 function mtcReflect(on) {
@@ -6620,6 +6653,7 @@ async function loadMachineSettings() {
     const j = await api("/api/machine/settings");
     for (const [k, id] of Object.entries(MS_FIELDS)) $(id).value = j.settings[k];
     mtcReflect(+j.settings.sort_flag_offset > 0);
+    faultShow(j.fault);
     $("msInit").checked = !!j.settings.init_on_startup;
     $("msFeedDecel").checked = !!j.settings.feed_decel;
     $("msSg").checked = j.settings.stall_guard !== false;
