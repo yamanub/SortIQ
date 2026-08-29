@@ -4114,10 +4114,9 @@ async function loadCamSettings() {
   try {                       // the light ring is a firmware setting
     const m = await api("/api/machine/settings");
     const pico = (m.settings.board || "") === "SKR Pico";
-    if (pico) {                     // the Pico ring is ~3x the old one:
-      $("ledLevel").max = 100;      // full range is blinding — 100 is the
-      $("ledLevel").step = 1;       // practical ceiling, and step 1 gives
-    }                               // real control at the dim end
+    if (pico) $("ledLevel").step = 1;   // fine control; the 100 cap that
+                                        // tamed the WS2812 ring retired with
+                                        // it — the v2.1 PWM ring uses 0-255
     $("ledLevel").value = Math.min(m.settings.camera_led, +$("ledLevel").max);
     $("vLedLevel").textContent = $("ledLevel").value;
     // color picker retired with the WS2812 ring (v2.1 ring is single-color
