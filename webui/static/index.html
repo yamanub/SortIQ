@@ -1723,8 +1723,6 @@
             <div id="mtcTune" class="ctlRow" style="display:none; gap:18px; flex-wrap:wrap; align-items:flex-end; margin:0">
               <div><label title="How far the sensor tab sits above slot 0 (one slot = 320). Set automatically by the guided setup. Fine-tune after homing: arm parks past slot 0 → raise this; parks short → lower it."><span class="msN">Flag position</span><br><span class="msH">distance from slot 0 to the tab</span></label>
                 <input type="number" id="msFlagOffset" min="0" max="3520" step="16" style="width:110px"></div>
-              <div><label title="The distance the tab blocks the sensor as the arm sweeps past it. The firmware MEASURES this automatically every time the arm homes (printed tabs vary between printers) — the value here is only the starting default before the first home."><span class="msN">Tab width</span><br><span class="msH">auto-measured at each homing</span></label>
-                <input type="number" id="msFlagWidth" min="32" max="1000" step="8" style="width:100px"></div>
             </div>
           </div>
         </div>
@@ -6427,7 +6425,7 @@ const MS_FIELDS = { feed_speed: "msFeedSpeed", feed_steps: "msFeedSteps",
   feed_accel: "msFeedAccel", feed_decel_rate: "msFeedDecRate",
   feed_stall_threshold: "msSgFeed",
   sort_home_backoff: "msHomeBackoff",
-  sort_flag_offset: "msFlagOffset", sort_flag_width: "msFlagWidth",
+  sort_flag_offset: "msFlagOffset",
   sort_home_slow: "msHomeSlow", feed_launch: "msFeedLaunch",
   arm_dwell: "msArmDwell",
   air_drop_pre_delay: "msAirPre", air_drop_signal_ms: "msAirSignal",
@@ -6474,7 +6472,6 @@ async function mtcApply() {
   try { await postJson("/api/machine/settings", body); } catch (e) {}
   try { await postJson("/api/console/send", { line: "armfree:0" }); } catch (e) {}
   $("msFlagOffset").value = body.sort_flag_offset;
-  $("msFlagWidth").value = body.sort_flag_width;
   mtcReflect(mtcEnable);
   $("mtcSteps").innerHTML = "";
   $("mtcActions").style.display = "none";
