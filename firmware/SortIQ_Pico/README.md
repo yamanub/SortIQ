@@ -1,10 +1,33 @@
-# SortIQ-Pico 2.0
+# SortIQ-Pico 2.1
 
 The rewrite: FastAccelStepper (PIO step generation) under the same serial
 protocol as the CS7.2 fork / 1.x port. The app is unchanged.
 
 Build: PlatformIO, `pio run`. Flash: BOOT jumper + UF2 to the RPI-RP2 drive,
-or the 1200-baud touch on the USB CDC port.
+the 1200-baud touch on the USB CDC port, or the `bootloader` console command
+over the Pi link (remote flashing — no hands on the machine).
+
+## Wiring & GPIO map
+
+| Connection | SKR Pico port | GPIO | Signal |
+|---|---|---|---|
+| Feed wheel motor | **X** driver output | step 11 / dir 10 / en 12 | onboard TMC2209, UART addr 0 |
+| Sort arm motor | **Y** driver output | step 6 / dir 5 / en 7 | onboard TMC2209, UART addr 2 |
+| Feed homing opto | **X-STOP** | 4 | input, pull-up — LOW = blocked |
+| Sort homing opto | **Y-STOP** | 3 | input, pull-up — LOW = blocked |
+| Brass/case sensor | **WD-DET** | 22 | input, pull-up — HIGH = brass present |
+| LED ring MOSFET module — trigger | **RGB** header, data pin | 24 | 20 kHz PWM, duty = brightness |
+| LED ring MOSFET module — power in | **SERVOS** header, 5V + GND | — | 5 V supply only |
+| Camera fan | **FAN2** | 18 | PWM (`fan:` 0–100) |
+| Board/Pi cooling fans | **FAN1**, **FAN3** | 17, 20 | on at boot |
+| AirDrop mod (optional) | **HE0** | 23 | pulse output, off by default |
+| Pi machine link (UART, 9600) | **TFT** header | 0 (TX) / 1 (RX) | wire to Pi RXD/TXD + GND |
+| TMC driver telemetry (internal) | — | 8 / 9 | UART2 to the onboard drivers, 460800 |
+| Spare inputs | E0-STOP, Z-STOP | 16, 25 | unused in 2.1 |
+
+**Required**: pull BOTH the X and Y DIAG jumpers — 2.1 does not use
+StallGuard for jam detection (position sensing covers it), and a set jumper
+interferes with the endstop inputs, which the homing optos share.
 
 ## Architecture
 - Motion on the RP2040 PIO via FastAccelStepper: the CPU never bit-bangs;
