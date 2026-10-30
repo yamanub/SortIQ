@@ -30,7 +30,15 @@ DEFAULT_IMAGING = {"pocket_frac": 0.42, "pocket_circle": True, "head_donut": Tru
 # stamp_confidence = the Sort page's Acceptance offset (0.85 neutral);
 # sharpness = the photo-quality gate. (top2_margin retired with the twins —
 # the embedding's runner-up margin lives in the gallery, not the floors.)
-DEFAULT_FLOORS = {"stamp_confidence": 0.85, "sharpness": 20.0}
+# donut_sharpness: the blur gate, scored on the case-head donut at model
+# input scale (imaging.donut_sharpness). Calibrated on real frames: they
+# ran 934+ (two machines: 71 and 450 frames); a blur sweep read
+# 23/24 at ~400 and 5/24 at ~80, with ZERO misreads in 336 degraded reads —
+# the model fails safe, so the floor only drops hopeless frames early.
+# "sharpness" is the retired whole-frame floor, kept so model.json
+# round-trips; nothing gates on it.
+DEFAULT_FLOORS = {"stamp_confidence": 0.85, "sharpness": 20.0,
+                  "donut_sharpness": 250.0}
 
 # crop_mode -> imaging flags. "normal" = full head ring; "hide_primer" =
 # black out the primer pocket (donut); "primer_only" would crop the pocket.

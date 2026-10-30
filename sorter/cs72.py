@@ -3,7 +3,7 @@
 Lets the SortIQ application drive the *unmodified* CS7.2 board over USB
 serial. The app speaks SortIQ's controller protocol; this module
 translates to/from the CS7.2 firmware's line protocol, so nothing on the
-board changes (Phase 1 of the hardware bring-up).
+board changes.
 
     SortIQ (app) -> here : LIGHT:*   SORT:<bin>   HOME   PFEED  PSLOT:<bin>
     here -> SortIQ        : SEATED    DONE         JAM
@@ -20,16 +20,15 @@ The link is 9600 baud (the stock firmware's `Serial.begin(9600)`), and the
 Uno auto-resets when the port opens, printing `Ready` after its bootloader —
 so we wait for `Ready` before priming.
 
-HARDWARE-VALIDATION TODO (only confirmable against the real machine):
+Notes:
   * SLOT_MAP: SortIQ bin ids -> physical CS7.2 chute numbers. Default is
-    identity; set it to your machine on the first live run.
+    identity.
   * Prime/home timing: how long after boot or a HOME the board will accept a
     feed. Tunable via the timeouts below.
   * The camera->drop pipeline is handled inside the stock firmware (qPos1/qPos2
     shift register) and stock mechanics, so it is inherited here, not
-    reimplemented — but eyeball a live run to confirm cases land in the
-    intended bins before trusting the numbers.
-  * [Verified on the real board] Setter names:
+    reimplemented.
+  * Setter names:
     `feedhomingoffset` / `sorthomingoffset` / `cameraledlevel` work as
     guessed; motor standby is `automotorstandbytimeout` (getconfig key
     `AutoMotorStandbyTimeout`), and the LED getconfig key is
@@ -78,6 +77,10 @@ class Cs72Transport(Transport):
     SEATED without special-casing startup.
     """
 
+    # send() drops LIGHT:* — the ring is a brightness setting, always on,
+    # not switched per shot — so the run loop skips its light-on settle
+    switches_light = False
+
     def __init__(self, link, slot_map=None, prime=True,
                  ready_timeout=8.0, feed_timeout=15.0):
         self.link = link
@@ -88,9 +91,23 @@ class Cs72Transport(Transport):
         self._need_prime = prime
         self._ready_timeout = ready_timeout
         self._expect_stop_done = False           # FORCE_FEED's stop-ack pending
+        self.last_error = None                   # board text behind the last JAM
+        # the case feeder's lines ("feeder:...") are not sort replies: they
+        # go to this callable, never to the run loop
+        self.feeder_sink = None
+        # the board's own recovery notes ("info:feed re-anchored ...") go
+        # to the run's event log through this, when a run sets it
+        self.info_sink = None
+        # send() and _translate() share the flags above; the gate
+        # choreography reads on its own thread while the run loop sends
+        self._lock = threading.RLock()
 
     # ---- app -> firmware --------------------------------------------------
     def send(self, line):
+        with self._lock:
+            self._send_locked(line)
+
+    def _send_locked(self, line):
         line = line.strip()
         if line.startswith("LIGHT"):
             return   # LED brightness is a setting (cameraledlevel), not per-shot
@@ -156,9 +173,7 @@ class Cs72Transport(Transport):
             # the camera comes up empty — every straggler lands in its
             # TRUE bin and the wheel ends empty. One checked feed per
             # command, so a jam stops the sequence before anything drops
-            # blind. Proven against the firmware simulator
-            # (tools/cs72_flush_selftest) before ever touching brass —
-            # see PRs #50/#52/#53 for why that bar exists.
+            # blind.
             prev, last = (int(x) for x in line.split(":")[1:3])
             self._sort_pending = True
             self.link.write(f"sortto:{self._slot(prev)}\n")
@@ -215,7 +230,19 @@ class Cs72Transport(Transport):
     # ---- translation ------------------------------------------------------
     def _translate(self, raw):
         """Raw CS7.2 line -> zero or more SortIQ lines."""
+        with self._lock:
+            return self._translate_locked(raw)
+
+    def _translate_locked(self, raw):
         raw = raw.strip()
+        if raw.startswith("feeder:"):
+            if self.feeder_sink:
+                self.feeder_sink(raw)
+            return []
+        if raw.startswith("info:feed re-anchored"):
+            if self.info_sink:
+                self.info_sink(raw)
+            return []
         if raw == "done":
             if self._expect_stop_done:           # ack of FORCE_FEED's stop,
                 self._expect_stop_done = False   # not a feed completing
@@ -236,8 +263,18 @@ class Cs72Transport(Transport):
             return ["FAULT:" + raw[6:]]          # the operator clears it
         if raw.startswith("error"):              # e.g. "error:feed overtravel detected"
             self._sort_pending = False
+            self.last_error = raw
             return ["JAM"]
-        return []                                # Ready / ok / version: swallow
+        if raw.endswith("Ready"):
+            # the boot banner outside _prime(): the board restarted UNDER the
+            # run (flash, brownout). It came back on firmware defaults — sort
+            # steps, offsets and delays unpushed, queue empty — and a run
+            # carrying on would misplace every bin. Stop as a fault: the
+            # operator's clear re-homes, and the console re-pushes settings
+            # when it takes the link back.
+            self._sort_pending = False
+            return ["FAULT:board restarted mid-run - settings were reset"]
+        return []                                # ok / version: swallow
 
     def _slot(self, bin_id):
         return self.slot_map.get(bin_id, bin_id)
@@ -258,15 +295,13 @@ class Cs72Transport(Transport):
                 break
             if raw.strip() == "Ready":
                 break
-        self._sort_pending = False               # the prime feed is not a real sort
-        self.link.write(f"xf:{PARK_SLOT}\n")
+        with self._lock:
+            self._sort_pending = False           # the prime feed is not a real sort
+            self.link.write(f"xf:{PARK_SLOT}\n")
 
 
 def cancel_wait(transport):
-    """First move of the end-of-brass flush, PROVEN against the firmware
-    simulator (tools/cs72_flush_selftest.py drives THIS function over the
-    ported firmware) before ever running on brass — the bar PRs #50/#52/#53
-    established after two field misplacements.
+    """First move of the end-of-brass flush.
 
     Called when a bare sort answered "waiting for brass" repeatedly: sends
     CANCEL to kill the pending prox-gated feed, then listens long enough to
@@ -285,6 +320,8 @@ def cancel_wait(transport):
             return "resumed"
         if line == "JAM":
             return "jam"
+        if line and line.startswith("FAULT:"):
+            return line                        # the caller ends the run on it
         if line is None:                       # silence: the wait died dry
             return "clean"                     # (stray WAITINGs are ignored)
     return "clean"

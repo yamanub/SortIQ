@@ -53,6 +53,10 @@ ambiguous — the case lands in the right bin either way, so hesitating
 between siblings costs nothing. Without the family, that same near-tie
 kicks a perfectly sortable case to the Unmatched bin.
 
+Families follow class changes: renaming a class renames it in its
+families, merging or deleting one takes it out, and a family left with a
+single class is removed, that class keeping the family's bin.
+
 The pattern to remember: **split for the model, family for the bin.**
 
 ## 3 · Keep classes clean — the scan loop
@@ -66,7 +70,7 @@ The Dataset page has two fast tools for this:
   gallery with its own vote masked out, and images that read as a
   different class are flagged for review. The scan covers the full
   dataset in seconds, so run it freely.
-- **Duplicate scan** — finds the same physical case photographed more
+- **Scan for duplicates** — finds the same physical case photographed more
   than once (re-run brass), pixel-verified so look-alike distinct
   cases never flag.
 
@@ -80,7 +84,8 @@ Two flags that are *not* mislabels, and what to do instead:
 
 - **Worn-but-real stamps** (correct label, heavily worn die): keep
   them — they teach the model what worn examples look like — but mark
-  them **Excluded** (the ⊘ badge in the gallery view) so they never
+  them **Excluded** (in the class window, click the photo's badge until
+  it shows 🚫) so they never
   become matching anchors. Deletion is for bad *photos* (ghosted,
   smeared), not bad *brass*.
 - **Thin-class flags**: a 4-image class losing one image to a

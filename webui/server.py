@@ -12,6 +12,7 @@ Usage: python webui/server.py [--port 5000] [--data data/real]
 import argparse
 import base64
 import functools
+import hashlib
 import itertools
 import json
 import os
@@ -49,7 +50,7 @@ from sorter.camera import (CAMERA_PROPS, apply_camera_controls, apply_zoom,
 from sorter.config import Config
 from sorter.dataset import (dataset_counts, delete_label, delete_pair,
                             move_pair, parse_label, raw_counts, rebuild_crops,
-                            rename_label)
+                            rename_label, safe_label)
 
 app = Flask(__name__, static_folder="static")
 
@@ -110,20 +111,51 @@ def write_cfg_raw(raw):
     os.replace(tmp, CONFIG_PATH)
 
 
-def clean_bins(raw):
-    """Normalize bins to lists-of-stamps and drop stamps no longer configured.
+def clean_bins(raw, rename=None):
+    """Normalize bins to lists-of-stamps and drop stamps no longer configured
+    (families are brought in step first — see clean_families).
 
     Slots hold LISTS so several variants of one make can share a chute
     (see sorter.config.normalize_bin); legacy single-string entries are
     normalized here on the next write."""
     from sorter.config import normalize_bin
+    dropped = clean_families(raw, rename)
     stamps = set(raw["stamp_labels"])
     fams = set((raw.get("families") or {}).keys())
-    raw["bins"] = [[s for s in normalize_bin(b)
-                    if s in ("UNMATCHED", "OVERFLOW") or s in stamps
-                    or (s.startswith("family:")
-                        and s[len("family:"):] in fams)]
-                   for b in raw.get("bins", [])]
+    bins = []
+    for b in raw.get("bins", []):
+        slot = []
+        for s in normalize_bin(b):
+            # a family dropped for losing its last partner hands its slot
+            # to the class that is left, so that class keeps its bin
+            for x in dropped.get(s[len("family:"):], [s]) \
+                    if s.startswith("family:") else [s]:
+                if x not in slot:
+                    slot.append(x)
+        bins.append([s for s in slot
+                     if s in ("UNMATCHED", "OVERFLOW") or s in stamps
+                     or (s.startswith("family:")
+                         and s[len("family:"):] in fams)])
+    raw["bins"] = bins
+
+
+def clean_families(raw, rename=None):
+    """Keep families in step with the class list: a renamed (or merged)
+    class carries its new name into its families, a removed class leaves
+    them, and a family that this leaves with a single class is dropped —
+    a family of one groups nothing. -> {dropped family: classes left}."""
+    stamps = set(raw["stamp_labels"])
+    fams = raw.get("families") or {}
+    dropped = {}
+    for name, members in list(fams.items()):
+        was = set(members)
+        now = {(rename or {}).get(m, m) for m in was} & stamps
+        if len(now) < len(was) and len(now) < 2:
+            fams.pop(name)
+            dropped[name] = sorted(now)
+        elif now != was:
+            fams[name] = sorted(now)
+    return dropped
 
 
 # ---- active model (labels / bins / floors / imaging live in model.json) ----
@@ -154,7 +186,8 @@ def write_active_model(mj):
 def set_active_model(cartridge, model):
     """Repoint the app at a different caliber/model and reload its dirs/models."""
     global DATA_DIR, MODELS_DIR
-    profiles.set_active(CONFIG_PATH, cartridge, model)   # raises if it's missing
+    with _config_lock:      # config.json read-modify-write, like every other
+        profiles.set_active(CONFIG_PATH, cartridge, model)   # raises if missing
     DATA_DIR, MODELS_DIR = active_dirs()
     with state_lock:                # force an embed-classifier reload
         _shadow.update(clf=None, mtimes=None)
@@ -186,6 +219,27 @@ def get_shadow():
             _shadow["clf"] = None
             _shadow["mtimes"] = mt
     return _shadow["clf"]
+
+
+_embedder = {"e": None, "mtime": None}
+
+
+def get_embedder():
+    """The recognizer without a gallery (sorter.embed_classifier.Embedder),
+    for fingerprinting only — None when the profile has no recognizer."""
+    m_path = MODELS_DIR / "shadow_embed.tflite"
+    if not m_path.exists():
+        return None
+    mt = m_path.stat().st_mtime
+    if _embedder["mtime"] != mt:
+        try:
+            from sorter.embed_classifier import Embedder
+            _embedder["e"] = Embedder(m_path)
+        except Exception as e:
+            print(f"embedder load failed: {e}", flush=True)
+            _embedder["e"] = None
+        _embedder["mtime"] = mt
+    return _embedder["e"]
 
 
 # ---------------------------------------------------------------- camera ---
@@ -241,6 +295,7 @@ def _recovery_loop():
                     open_camera_locked()
                 if _camera["cap"] is not None:
                     _camera["recovering"] = False
+                    print("[camera] back", flush=True)
                     return               # working open (ours or someone's)
                 _camera["error"] = "camera lost — reconnecting"
     except BaseException:
@@ -283,6 +338,11 @@ def _pump(cap, stop):
                         cap.release()
                         _camera["cap"] = None
                         _camera["error"] = "camera lost — reconnecting"
+                        # to the journal: a fleet card's red camera dot
+                        # was untraceable without a timestamped record
+                        # of the loss itself
+                        print(f"[camera] lost after {failures} failed reads "
+                              f"— reconnecting", flush=True)
                         _ensure_recovery()
                 return
             time.sleep(0.05)
@@ -358,6 +418,24 @@ def open_camera_locked():
                         capture_output=True, timeout=5)
                 except (OSError, subprocess.TimeoutExpired):
                     pass
+                # never let the kernel power-save the camera's USB link:
+                # the installer's udev rule covers the Suyin at plug-in,
+                # this covers every camera the app opens, on any Pi,
+                # installer or not (best-effort: sudo is passwordless on
+                # an installed machine)
+                try:
+                    vid = os.path.basename(os.path.realpath(node))
+                    usb = os.path.realpath(
+                        f"/sys/class/video4linux/{vid}/device/..")
+                    ctl = os.path.join(usb, "power", "control")
+                    if os.path.exists(ctl):
+                        with open(ctl) as f:
+                            if f.read().strip() != "on":
+                                subprocess.run(("sudo", "-n", "tee", ctl),
+                                               input=b"on", capture_output=True,
+                                               timeout=5)
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
             # off-thread: a slow v4l2-ctl must never sit inside the
             # camera lock (a mid-run watchdog reopen would stall the
             # run loop's captures behind it)
@@ -402,7 +480,12 @@ def smoothed_head(frame):
     return det
 
 
-def steady_head(n=4, budget_s=1.0):
+# read time of the first frame the last steady_head() averaged — the run
+# log's seat_ms (how long after the seat the photo really started)
+_steady_last = {"first_t": None}
+
+
+def steady_head(n=4, budget_s=1.0, not_before=None):
     """(frame, (cx, cy, r)) — noise-averaged frame + median head circle
     over several DISTINCT fresh frames.
 
@@ -421,10 +504,14 @@ def steady_head(n=4, budget_s=1.0):
     doesn't honor — CLAHE downstream then sharpens lettering instead of
     amplifying grain. budget_s caps the wait so a slow camera mode
     degrades to fewer frames instead of stalling the feed cycle.
+    not_before (monotonic): skip frames the pump READ before it — the
+    newest frame can be a frame period older than the call, and a run
+    capture must never average a frame from before its settle ended.
     Returns (None, None) when no camera."""
     dets, frames = [], []
     last_t = 0.0
-    deadline = time.monotonic() + budget_s
+    _steady_last["first_t"] = None
+    deadline = max(time.monotonic(), not_before or 0.0) + budget_s
     while len(frames) < n:
         f = read_frame()
         if f is None:
@@ -432,8 +519,11 @@ def steady_head(n=4, budget_s=1.0):
         t = _camera["frame_t"]
         if t != last_t:                    # genuinely new frame from the pump
             last_t = t
-            frames.append(f)
-            dets.append(imaging.find_head(f))
+            if not_before is None or t >= not_before:
+                if not frames:
+                    _steady_last["first_t"] = t
+                frames.append(f)
+                dets.append(imaging.find_head(f))
         if len(frames) < n:
             if time.monotonic() > deadline:
                 break
@@ -442,8 +532,16 @@ def steady_head(n=4, budget_s=1.0):
         return None, None
     mid = len(dets) // 2
     center = tuple(int(sorted(d[k] for d in dets)[mid]) for k in range(3))
-    frame = frames[0] if len(frames) == 1 else \
-        np.mean(np.stack(frames), axis=0).astype(np.uint8)
+    if len(frames) == 1:
+        frame = frames[0]
+    else:
+        # per-pixel mean in 16-bit integers: floor(sum / n), bit-identical
+        # to the old float64 np.mean(...).astype(uint8) — same pixels, but
+        # ~30 ms instead of ~140 ms per capture on the Pi 4
+        acc = frames[0].astype(np.uint16)
+        for f in frames[1:]:
+            acc += f
+        frame = (acc // len(frames)).astype(np.uint8)
     return frame, center
 
 
@@ -493,8 +591,8 @@ def decode_upload(file_or_b64):
 
 
 def next_index(folder):
-    existing = sorted(folder.glob("*_A.png"))
-    return int(existing[-1].name.split("_")[0]) + 1 if existing else 0
+    from sorter.dataset import next_index as _next
+    return _next(folder)          # numeric max + 1, see sorter.dataset
 
 
 # ----------------------------------------------------------------- routes ---
@@ -615,9 +713,12 @@ def api_state():
         "bins": cfg.bins,
         "bin_count": cfg.bin_count,
         "bin_sizes": (raw.get("machine") or {}).get("bin_sizes") or [],
-        "bin_colors": (raw.get("machine") or {}).get("bin_colors") or [],
+        "bin_colors": _bin_colors((raw.get("machine") or {}).get("bin_colors")),
         "slots_enabled": cfg.slots_enabled,
         "unmatched_bin": cfg.unmatched_bin,
+        # firmware kind lets Sort-page UI adapt without a Machine-tab visit
+        # (e.g. the servo carousel's fixed UNMATCHED-on-open-pocket notice)
+        "firmware": (raw.get("machine") or {}).get("firmware") or "stock",
         "floors": cfg.floors,
         "imaging": cfg.imaging,
         "train_disabled": cfg.train_disabled,
@@ -631,10 +732,31 @@ def api_state():
     })
 
 
+def _dataset_busy():
+    """Why the active profile must not change right now, or None. The run
+    loop re-reads the active config and classifier per case, and the
+    scans, a gallery build and a crop rebuild all walk the active
+    profile's tree — switching, deleting or reshaping it under them
+    classifies cases with another profile's gallery, persists bins into
+    the wrong model or reads crops that are being deleted."""
+    if run_mgr.status().get("running"):
+        return "a run is active — stop it first"
+    if _scan_status["running"] or _dup_status["running"]:
+        return "a dataset scan is running — let it finish first"
+    if _gal_build["running"]:
+        return "a gallery rebuild is running — let it finish first"
+    if _cam_cal["running"]:
+        return "camera calibration is running — let it finish first"
+    return None
+
+
 @app.post("/api/model/switch")
 def api_model_switch():
     """Change the active caliber/model. Its dataset, crops, and weights swap in."""
     b = request.get_json() or {}
+    busy = _dataset_busy()
+    if busy:
+        return jsonify({"error": f"can't switch: {busy}"}), 409
     try:
         set_active_model(b["cartridge"], b["model"])
     except (KeyError, ValueError, FileNotFoundError) as e:
@@ -651,12 +773,27 @@ def api_model_create():
     name = (b.get("model") or "").strip()
     if not cart or not name:
         return jsonify({"error": "cartridge and model name are required"}), 400
+    if b.get("activate", True):
+        busy = _dataset_busy()
+        if busy:
+            return jsonify({"error": f"can't create and switch: {busy}"}), 409
     seed = None
     if b.get("seed_from"):
         seed = (b["seed_from"]["cartridge"], b["seed_from"]["model"])
     try:
         profiles.create_model(ROOT, cart, name, seed_from=seed,
                               imaging=b.get("imaging"))
+        if seed:
+            # the seed copies raws only; without crops the new profile
+            # can neither build a gallery nor train until someone happens
+            # to rebuild — cut them now, under the new profile's imaging
+            new_dir = profiles.model_dir(ROOT, cart, name) / "data"
+            mj_new = profiles.read_model(ROOT, cart, name)
+            imaging.configure(mj_new.get("imaging") or {})
+            try:
+                rebuild_crops(new_dir)
+            finally:
+                imaging.configure(load_cfg().imaging)   # back to the active look
         seeded_embed = False
         if b.get("seed_embed"):
             # borrow the ACTIVE model's trained recognizer so the new
@@ -676,11 +813,11 @@ def api_model_create():
                 dst_dir = profiles.model_dir(ROOT, cart, name) / "models"
                 dst_dir.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dst_dir / "shadow_embed.tflite")
-                mj_path = profiles.model_dir(ROOT, cart, name) / "model.json"
-                mj = json.loads(mj_path.read_text())
-                mj["embed_seeded_from"] = (f"{act['cartridge']}/{act['model']}"
-                                           f" {time.strftime('%Y-%m-%d')}")
-                mj_path.write_text(json.dumps(mj, indent=2))
+                with _config_lock:      # atomic write, like every model.json
+                    mj = profiles.read_model(ROOT, cart, name)
+                    mj["embed_seeded_from"] = (f"{act['cartridge']}/{act['model']}"
+                                               f" {time.strftime('%Y-%m-%d')}")
+                    profiles.write_model(ROOT, cart, name, mj)
                 seeded_embed = True
         if b.get("activate", True):
             set_active_model(cart, name)
@@ -719,8 +856,7 @@ def api_model_merge():
             label = d.name
             dst = DATA_DIR / "raw" / label
             dst.mkdir(parents=True, exist_ok=True)
-            existing = sorted(dst.glob("*_A.png"))
-            nxt = int(existing[-1].name.split("_")[0]) + 1 if existing else 0
+            nxt = next_index(dst)
             n = 0
             for a in sorted(d.glob("*_A.png")):
                 idx = a.name.split("_")[0]
@@ -794,6 +930,9 @@ def api_model_delete():
         return jsonify({"error": f"no such model {cart}/{model}"}), 404
     active = json.loads(CONFIG_PATH.read_text()).get("active", {})
     if active.get("cartridge") == cart and active.get("model") == model:
+        busy = _dataset_busy()
+        if busy:
+            return jsonify({"error": f"can't delete the active model: {busy}"}), 409
         # switch to any other remaining model before deleting the active one
         other = next(((c, m) for c, ms in profs.items() for m in ms
                       if (c, m) != (cart, model)), None)
@@ -855,6 +994,22 @@ def api_stamps_remove():
     return jsonify({"ok": True, "removed": name, "images_deleted": deleted})
 
 
+def _servo_fill_tokens(bins, total):
+    """Servo carousel: the last slot is the open pocket (no door), and both
+    special tokens always live SOMEWHERE — UNMATCHED (rejects) and OVERFLOW
+    (classified, no bin) default to that pocket and can only be moved to a
+    gated bin, never removed. A map that lost one (old tab, a profile
+    copied from the arm) gets it back on the pocket. Other firmwares keep
+    the free layout: OVERFLOW is optional there."""
+    if machine_settings().get("firmware") != "pico-servo" or total < 2:
+        return
+    while len(bins) < total:
+        bins.append([])
+    for tok in ("UNMATCHED", "OVERFLOW"):
+        if not any(tok in g for g in bins):
+            bins[total - 1].append(tok)
+
+
 @app.post("/api/classes")
 def api_classes():
     body = request.get_json()
@@ -871,6 +1026,7 @@ def api_classes():
             from sorter.config import normalize_bin
             total = int(machine_settings()["slots_total"])
             bins = [normalize_bin(b) for b in body["bins"]][:total]
+            _servo_fill_tokens(bins, total)
             named = [s for g in bins for s in g
                      if s not in ("UNMATCHED", "OVERFLOW")]
             if sum("UNMATCHED" in g for g in bins) != 1:
@@ -887,7 +1043,9 @@ def api_classes():
                 return jsonify({"error": "bin assigned to an unknown headstamp"}), 400
             raw["bins"] = bins
         if "floors" in body:
-            for k in raw["floors"]:
+            # known floors = the model's own + any default added since it
+            # was made (the donut blur floor) — else a new one never saves
+            for k in set(raw["floors"]) | set(profiles.DEFAULT_FLOORS):
                 if k in body["floors"]:
                     raw["floors"][k] = float(body["floors"][k])
         crops_rebuilt = False
@@ -916,6 +1074,13 @@ def api_classes():
                 body["imaging"].get("rim_scale", old.get("rim_scale", 1.0))),
                 0.8), 1.2), 3)
             crops_rebuilt = raw["imaging"] != old
+            if crops_rebuilt:
+                busy = _dataset_busy()
+                if busy:
+                    # a reshape deletes and re-cuts every crop and changes
+                    # the crop geometry process-wide mid-run
+                    return jsonify({"error": f"can't change the image "
+                                             f"geometry now: {busy}"}), 409
         write_active_model(raw)
     load_cfg()  # validates + applies imaging params process-wide
     if crops_rebuilt:
@@ -960,11 +1125,14 @@ def api_stream():
             if fast:
                 view = frame
             else:
-                cx, cy, r = smoothed_head(frame)
                 view = frame.copy()
-                cv2.circle(view, (cx, cy), imaging._rim(r), (0, 255, 0), 2)
-                cv2.putText(view, f"sharpness {imaging.sharpness(frame):.0f}",
-                            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+                try:        # one bad frame must not end every viewer's stream
+                    cx, cy, r = smoothed_head(frame)
+                    cv2.circle(view, (cx, cy), imaging._rim(r), (0, 255, 0), 2)
+                    cv2.putText(view, f"sharpness {imaging.donut_sharpness(frame, center=(cx, cy, r)):.0f}",
+                                (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+                except Exception:
+                    pass
             # right-size for VIEWING: full-res frames at ~9fps saturate the
             # Pi's Wi-Fi (~9 of its ~12 Mbit/s) and the stream falls seconds
             # behind while starving every other request. The browser shows
@@ -1015,10 +1183,92 @@ def _v4l2_ranges(index):
     return ranges
 
 
+def _v4l2_modes(index):
+    """[[w, h], ...] the camera really offers, biggest first.
+
+    The page used to list fixed presets up to 2048x1536 and let you pick a
+    mode the camera does not have: the driver silently snaps to its nearest
+    size, so the page said 1920x1080 while the sensor delivered 1280x720. MJPG only — that is what
+    the app captures in; empty list = could not ask, page falls back to its
+    presets."""
+    try:
+        dev = _capture_device(int(index))
+        if not isinstance(dev, str):
+            dev = f"/dev/video{dev}"
+        out = subprocess.run(("v4l2-ctl", "-d", dev, "--list-formats-ext"),
+                             capture_output=True, text=True, timeout=5).stdout
+    except Exception:
+        return []
+    import re
+    sizes, in_mjpg = set(), False
+    for line in out.splitlines():
+        m = re.match(r"\s*\[\d+\]:\s*'(\w+)'", line)
+        if m:
+            in_mjpg = m.group(1).upper() == "MJPG"
+            continue
+        s = re.match(r"\s*Size:\s*Discrete\s+(\d+)x(\d+)", line)
+        if s and in_mjpg:
+            sizes.add((int(s.group(1)), int(s.group(2))))
+    return [list(wh) for wh in sorted(sizes, key=lambda t: -t[0] * t[1])]
+
+
+def _v4l2_defaults(index):
+    """{control: driver default} for int, bool and menu controls.
+
+    Reopening the device does NOT restore a UVC module's controls — it
+    keeps whatever was last written. Reset writes these back.
+    """
+    try:
+        dev = _capture_device(int(index))
+        if not isinstance(dev, str):
+            dev = f"/dev/video{dev}"
+        out = subprocess.run(("v4l2-ctl", "-d", dev, "-l"),
+                             capture_output=True, text=True, timeout=5).stdout
+    except Exception:
+        return {}
+    import re
+    found = {}
+    for line in out.splitlines():
+        m = re.match(r"\s*(\w+)\s+0x\w+\s+\((?:int|bool|menu)\)\s*:.*?"
+                     r"default=(-?\d+)", line)
+        if m:
+            found[m.group(1)] = int(m.group(2))
+    return found
+
+
+def _restore_driver_defaults(index):
+    """Put every control back to the camera's own default. Autos go LAST:
+    a manual value written while its auto is on is ignored."""
+    defaults = _v4l2_defaults(index)
+    if not defaults:
+        return 0
+    autos = ("auto_exposure", "white_balance_automatic", "focus_automatic_continuous")
+    order = ([(k, v) for k, v in defaults.items() if k not in autos]
+             + [(k, v) for k, v in defaults.items() if k in autos])
+    try:
+        dev = _capture_device(int(index))
+        if not isinstance(dev, str):
+            dev = f"/dev/video{dev}"
+    except Exception:
+        return 0
+    # ONE CONTROL PER CALL: v4l2-ctl abandons the rest of a comma list at
+    # the first refusal, and a manual control is refused while its auto is
+    # on — which silently skipped the auto_exposure reset that follows it.
+    done = 0
+    for k, v in order:
+        try:
+            r = subprocess.run(("v4l2-ctl", "-d", dev, "--set-ctrl", f"{k}={v}"),
+                               capture_output=True, timeout=5)
+            done += int(r.returncode == 0)
+        except Exception:
+            pass
+    return done
+
+
 # ------------------------------------------------------- camera identity ---
 # Which physical camera is attached decides WHICH controls are real: both
-# drivers happily enumerate knobs that do nothing (or worse). The user's
-# choice lives in config camera.model; USB detection is shown beside the
+# drivers happily enumerate knobs that do nothing (or worse). The
+# operator's choice lives in config camera.model; USB detection is shown beside the
 # selector and warns on a mismatch but never overrides the user.
 CAMERA_MODELS = {
     "ov3660": {
@@ -1030,6 +1280,30 @@ CAMERA_MODELS = {
         "controls": ["auto_exposure", "exposure", "gain", "brightness",
                      "contrast", "saturation", "sharpness",
                      "white_balance_auto", "white_balance_temp"],
+        # the writes are accepted and the image never moves — no tuning UI
+        "tunable": False,
+    },
+    "suyin_hd": {
+        "label": "Suyin HD (50° lens)",
+        "usb": ("1e45", "8022"),
+        # sort-arm camera. UNLIKE the OV3660 this module
+        # honors its UVC controls, so the whole set is offered; it has no
+        # gain or focus control at all (v4l2 enumerates neither). Native
+        # ranges differ a lot from the generic CONTROL_META defaults
+        # (brightness -64..64, gamma 100..500, exposure 50..10000) —
+        # _v4l2_ranges already replaces them per control.
+        # measured on the bench: one control at a time with a
+        # restore between each: brightness, contrast, gamma, saturation,
+        # auto_exposure, exposure (manual only) and both white-balance
+        # controls all move the image. In-camera "sharpness" does nothing
+        # (0 vs 100 identical to 1%), so it is not offered.
+        # exposure is NOT offered: this module keeps 30 fps on auto by
+        # raising its own gain, and any manual lock bright enough to match
+        # it drops it to ~4 fps (2446 -> 4.1 fps). It runs on
+        # auto exposure, as the carousel always has.
+        "controls": ["brightness", "contrast", "saturation", "gamma",
+                     "white_balance_auto", "white_balance_temp"],
+        "tunable": True,
     },
 }
 
@@ -1110,20 +1384,15 @@ def api_camera_model():
                     "models": {k: m["label"] for k, m in CAMERA_MODELS.items()}})
 
 
-@app.post("/api/camera/model")
-def api_camera_model_post():
-    locked = _camera_locked_resp()
-    if locked:
-        return locked
-    key = ((request.get_json() or {}).get("model") or "").strip()
-    if key not in CAMERA_MODELS:
-        return jsonify({"error": f"unknown camera {key!r}"}), 400
+def _switch_camera_model(key):
+    """Record `key` as the camera in use, stashing the leaving camera's look
+    and restoring the arriving one's. Returns False when nothing changed."""
     with _config_lock:
         raw = json.loads(CONFIG_PATH.read_text())
         cam = raw.setdefault("camera", {})
         old = cam.get("model") or "ov3660"
         if key == old:
-            return jsonify({"ok": True, "model": key})
+            return False
         cams = raw.setdefault("cameras", {})
         # stash the leaving camera's live look, restore the arriving one's
         cams.setdefault(old, {"presets": {}})["saved"] = {
@@ -1141,8 +1410,46 @@ def api_camera_model_post():
             cam["controls"] = {}          # fresh camera: driver defaults
         cam["active_preset"] = s.get("active_preset")
         write_cfg_raw(raw)
+    return True
+
+
+def _adopt_detected_camera():
+    """A camera the app RECOGNIZES becomes the selected one by itself — the
+    operator should not have to tell the app what is plugged in. Only fires
+    for a positive USB-id match; an unknown camera leaves the choice alone."""
+    try:
+        raw = json.loads(CONFIG_PATH.read_text())
+        cam = raw.get("camera", {})
+        found = detect_camera_model(cam.get("index", 0))
+        if found and found != (cam.get("model") or "ov3660"):
+            if _switch_camera_model(found):
+                print(f"camera: detected {found} — selected automatically")
+    except Exception:
+        pass
+
+
+_adopt_detected_camera()      # a recognized camera selects itself
+
+
+@app.post("/api/camera/model")
+def api_camera_model_post():
+    locked = _camera_locked_resp()
+    if locked:
+        return locked
+    key = ((request.get_json() or {}).get("model") or "").strip()
+    if key not in CAMERA_MODELS:
+        return jsonify({"error": f"unknown camera {key!r}"}), 400
+    if not _switch_camera_model(key):
+        return jsonify({"ok": True, "model": key})
     with _camera["lock"]:
         open_camera_locked()
+    # the arriving camera's saved look (lighting travels with the camera):
+    # read back from config — the switch helper only reports whether it
+    # switched (this used to reference a name that never existed here and
+    # 500'd every real switch)
+    with _config_lock:
+        s = ((json.loads(CONFIG_PATH.read_text()).get("cameras", {})
+              .get(key) or {}).get("saved") or {})
     led_pushed = False
     if s.get("led_color"):
         save_machine_settings({"led_color": s["led_color"]})
@@ -1155,6 +1462,49 @@ def api_camera_model_post():
             led_pushed = bool(_apply_machine_settings({"camera_led": m["camera_led"]}))
     return jsonify({"ok": True, "model": key,
                     "camera": _camera["error"] or "ok", "led_pushed": led_pushed})
+
+
+@app.get("/api/camera/case_detect")
+def api_case_detect():
+    """Live case-detection reading for Camera setup: the head brightness
+    the cutoff is compared against, plus the cutoff in force."""
+    cam = cam_cfg_raw()
+    model = cam.get("model")
+    out = {"model": model, "cutoff": case_cutoff(),
+           "default": case_cutoff_default(model),
+           "custom": (cam.get("case_cutoff") or {}).get(model or "") is not None}
+    frame = read_frame()
+    if frame is not None:
+        head, b = case_reading(frame)
+        out.update(round_head=head, brightness=round(b),
+                   present=head and b >= out["cutoff"])
+    return jsonify(out)
+
+
+@app.post("/api/camera/case_detect")
+def api_case_detect_set():
+    """Save this camera's cutoff ({"cutoff": n}) or drop back to the
+    default ({"cutoff": null})."""
+    v = (request.get_json() or {}).get("cutoff")
+    model = cam_cfg_raw().get("model") or ""
+    if v is not None:
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            return jsonify({"error": "cutoff must be a number"}), 400
+        if not 1 <= v <= 254:
+            return jsonify({"error": "cutoff must be between 1 and 254"}), 400
+    with _config_lock:
+        raw = json.loads(CONFIG_PATH.read_text())
+        cc = dict(raw["camera"].get("case_cutoff") or {})
+        if v is None:
+            cc.pop(model, None)
+        else:
+            cc[model] = v
+        raw["camera"]["case_cutoff"] = cc
+        write_cfg_raw(raw)
+    return jsonify({"ok": True, "cutoff": case_cutoff(),
+                    "default": case_cutoff_default(model)})
 
 
 @app.get("/api/camera/settings")
@@ -1194,13 +1544,20 @@ def api_camera_settings():
     # ground truth per camera, not driver claims
     cur_model = c.get("model") or "ov3660"
     allowed = CAMERA_MODELS.get(cur_model, {}).get("controls")
+    # full_controls = the page's "Unlock controls" box: it decides whether
+    # the sliders are SHOWN, never which ones exist. The list itself stays
+    # the measured per-camera whitelist.
+    full = bool(c.get("full_controls"))
     if allowed is not None:
         controls = [i for i in controls if i["name"] in allowed]
     return jsonify({"index": c["index"],
                     "camera_model": cur_model,
+                    "full_controls": full,
+                    "tunable": bool(CAMERA_MODELS.get(cur_model, {}).get("tunable")),
                     "detected": detect_camera_model(c["index"]),
                     "model_labels": {k: m["label"] for k, m in CAMERA_MODELS.items()},
                     "lock": camera_lock_status(),
+                    "modes": _v4l2_modes(c["index"]),
                     "resolution": {"width": c.get("width"), "height": c.get("height"),
                                    "actual_width": actual_w, "actual_height": actual_h},
                     "zoom": _camera["zoom"] or {"factor": 1.0, "x": 0, "y": 0},
@@ -1212,14 +1569,21 @@ def api_camera_settings_post():
     locked = _camera_locked_resp()     # every branch changes the raw image
     if locked:
         return locked
-    body = request.get_json()
+    body = request.get_json(silent=True) or {}
     cap = get_camera()
 
     if body.get("reset"):
+        c0 = cam_cfg_raw()
         save_cam_cfg({"controls": {}, "zoom": {"factor": 1.0, "x": 0, "y": 0}})
+        restored = _restore_driver_defaults(c0.get("index", 0))
         with _camera["lock"]:
-            open_camera_locked()  # driver defaults come back on a fresh open
-        return jsonify({"ok": True})
+            open_camera_locked()
+        return jsonify({"ok": True, "restored": restored})
+
+    if "full_controls" in body:
+        on = bool(body["full_controls"])
+        save_cam_cfg({"full_controls": on})
+        return jsonify({"ok": True, "full_controls": on})
 
     if "index" in body:
         save_cam_cfg({"index": int(body["index"])})
@@ -1264,16 +1628,203 @@ def api_camera_settings_post():
         return jsonify({"error": f"unknown control {name!r}"}), 400
     if cap is None:
         return jsonify({"error": "no camera"}), 404
+    actual, auto_off = _camera_set_control(cap, name, value,
+                                           persist=not body.get("preview"))
+    return jsonify({"ok": True, "actual": actual, "auto_off": auto_off})
+
+
+def _camera_set_control(cap, name, value, persist=True):
+    """Set one control. Returns (actual, auto_turned_off).
+
+    persist=False is the page's live preview: the camera changes, the saved
+    settings do not, so Revert can put it back and Save is what commits.
+
+    A manual value is INACTIVE while its auto is on: the driver takes the
+    write and keeps the old value, so the matching auto is
+    switched off first and reported."""
+    pair = {"exposure": "auto_exposure",
+            "white_balance_temp": "white_balance_auto"}.get(name)
+    auto_off = None
     with _camera["lock"]:
-        raw_value = auto_exposure_value(bool(value)) if name == "auto_exposure" \
-            else float(value)
+        if pair:
+            now = cap.get(CAMERA_PROPS[pair])
+            is_auto = (now >= auto_exposure_value(True) if pair == "auto_exposure"
+                       else now > 0)
+            if is_auto:
+                cap.set(CAMERA_PROPS[pair],
+                        auto_exposure_value(False) if pair == "auto_exposure" else 0)
+                auto_off = pair
+    if auto_off:
+        # let the driver take the mode switch before the manual write —
+        # OUTSIDE the camera lock: the pump takes that lock every frame,
+        # and a sleep under it stalled the live view 200 ms per call
+        time.sleep(0.2)
+    with _camera["lock"]:
+        raw_value = (auto_exposure_value(bool(value)) if name == "auto_exposure"
+                     else (1.0 if value else 0.0) if isinstance(value, bool)
+                     else float(value))
         cap.set(CAMERA_PROPS[name], raw_value)
         actual = cap.get(CAMERA_PROPS[name])
-    with _config_lock:
-        raw = json.loads(CONFIG_PATH.read_text())
-        raw["camera"].setdefault("controls", {})[name] = value
-        write_cfg_raw(raw)
-    return jsonify({"ok": True, "actual": actual})
+    if persist:
+        with _config_lock:
+            raw = json.loads(CONFIG_PATH.read_text())
+            ctl = raw["camera"].setdefault("controls", {})
+            ctl[name] = value
+            if auto_off:
+                ctl[auto_off] = False
+            # an auto switched ON makes its manual partner meaningless — and
+            # a stale one rides into presets: a SuyinHD preset kept a 245 ms
+            # exposure lock after the arm went back to auto
+            partner = {"auto_exposure": "exposure",
+                       "white_balance_auto": "white_balance_temp"}.get(name)
+            if partner and value:
+                ctl.pop(partner, None)
+            write_cfg_raw(raw)
+    return actual, auto_off
+
+
+# ---------------------------------------------------- camera calibration ---
+# Exposure and white balance must be LOCKED on a sorting machine: left on
+# auto the camera re-decides per case, so a shiny aluminium head and a
+# tarnished brass one are exposed differently and the model sees two
+# distributions. The right VALUES are per-machine (ring distance and angle,
+# lens, nest finish) and cannot ship — the PROCEDURE does: reproduce what
+# auto renders on this machine, then hold it there. The driver never reports
+# what auto chose (it keeps showing the manual register), so the match is
+# made on the rendered image, not on the numbers.
+_cam_cal = {"running": False, "stage": "", "error": None, "result": None}
+
+
+def _cam_look(n=3):
+    """(ring brightness, red/blue, sharpness) over n frames — None when no
+    case head is in view."""
+    vals = []
+    for _ in range(n):
+        frame = read_frame()
+        if frame is None:
+            return None
+        # a CASE, not just a circle: the nest's own round opening passes
+        # find_head, and a calibration on an empty pocket once locked white
+        # balance to a black frame. case_present is the same
+        # test the sort loop uses to spot an empty pocket.
+        if not _case_presence(frame, case_cutoff())[0]:
+            return None
+        try:
+            cx, cy, rad = imaging.find_head(frame)
+        except Exception:
+            return None
+        if rad < 20:
+            return None
+        mask = np.zeros(frame.shape[:2], np.uint8)
+        cv2.circle(mask, (cx, cy), int(rad * 0.95), 255, -1)
+        cv2.circle(mask, (cx, cy), int(rad * 0.60), 0, -1)
+        b, g, r, _ = cv2.mean(frame, mask=mask)
+        grey = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        vals.append((cv2.mean(grey, mask=mask)[0], r / max(b, 1.0),
+                     imaging.donut_sharpness(frame, center=(cx, cy, rad))))
+        time.sleep(0.25)
+    return tuple(sum(v[i] for v in vals) / len(vals) for i in range(3))
+
+
+def _camera_calibrate_worker():
+    # NOTHING is saved until the end. Calibration switches the autos on to
+    # see what the camera picks by itself; saving that switch meant a
+    # refused or failed run (empty pocket) left white balance UNLOCKED and
+    # erased the saved temperature. A failure now puts the
+    # camera and the saved settings back exactly as they were.
+    before = dict(cam_cfg_raw().get("controls", {}))
+    cap = None
+    try:
+        cap = get_camera()
+        if cap is None:
+            raise RuntimeError("no camera")
+        _cam_cal["stage"] = "letting auto exposure settle"
+        _camera_set_control(cap, "auto_exposure", True, persist=False)
+        _camera_set_control(cap, "white_balance_auto", True, persist=False)
+        time.sleep(2.5)
+        target = _cam_look(4)
+        if target is None:
+            raise RuntimeError("no case at the camera — feed one, then calibrate")
+        t_bright, t_rb, t_sharp = target
+
+        _cam_cal["stage"] = "matching white balance"
+        ranges = _v4l2_ranges(cam_cfg_raw().get("index", 0))
+        wb = ranges.get("white_balance_temperature", {"min": 2800, "max": 6500})
+        lo_t, hi_t = int(wb["min"]), int(wb["max"])
+        picks = []
+        for k in range(6):
+            temp = int(lo_t + (hi_t - lo_t) * k / 5)
+            _camera_set_control(cap, "white_balance_temp", temp, persist=False)
+            time.sleep(0.9)
+            got = _cam_look(2)
+            if got is None:
+                raise RuntimeError("lost sight of the case mid-calibration")
+            picks.append((abs(got[1] - t_rb), temp, got[1]))
+        chosen = min(picks)
+        # the commit: exposure stays automatic, white balance locked. The
+        # auto is switched off EXPLICITLY and saved: the sweep already had
+        # it off on the camera, so the temp write alone would not record
+        # it, config would keep white_balance_auto=True, and the next
+        # camera reopen would put the module back on auto — lock gone
+        _camera_set_control(cap, "auto_exposure", True)
+        _camera_set_control(cap, "white_balance_auto", False)
+        _camera_set_control(cap, "white_balance_temp", chosen[1])
+        time.sleep(1.0)
+
+        final = _cam_look(4) or (0.0, 0.0, 0.0)
+        _cam_cal["result"] = {
+            "exposure": "auto",
+            "white_balance_temp": chosen[1],
+            "auto": {"brightness": round(t_bright, 1), "red_blue": round(t_rb, 2),
+                     "sharpness": round(t_sharp)},
+            "locked": {"brightness": round(final[0], 1),
+                       "red_blue": round(final[1], 2),
+                       "sharpness": round(final[2])},
+            "wb_exact": bool(abs(chosen[2] - t_rb) < 0.25)}
+        _cam_cal["stage"] = "locked"
+    except Exception as e:
+        _cam_cal["error"] = str(e)
+        _cam_cal["stage"] = "failed"
+        try:                       # put everything back as it was
+            with _config_lock:
+                raw = json.loads(CONFIG_PATH.read_text())
+                raw["camera"]["controls"] = before
+                write_cfg_raw(raw)
+            if cap is not None:
+                # manual values first, autos last: writing a manual value
+                # switches its auto OFF, so an auto restored first would
+                # be undone by its partner
+                autos = ("auto_exposure", "white_balance_auto")
+                for k in sorted(before, key=lambda n: n in autos):
+                    _camera_set_control(cap, k, before[k], persist=False)
+        except Exception:
+            pass
+    finally:
+        _cam_cal["running"] = False
+
+
+@app.post("/api/camera/calibrate")
+def api_camera_calibrate():
+    """Lock white balance to the colour auto picks on THIS machine.
+    Exposure stays automatic."""
+    if run_mgr.status().get("running"):
+        return jsonify({"error": "a run owns the camera — calibrate after it"}), 409
+    if _cam_cal["running"]:
+        return jsonify({"error": "calibration already running"}), 409
+    if get_camera() is None:
+        return jsonify({"error": "no camera"}), 404
+    model = cam_cfg_raw().get("model") or "ov3660"
+    if not CAMERA_MODELS.get(model, {}).get("tunable"):
+        return jsonify({"error": "this camera ignores its controls — "
+                                 "nothing to lock"}), 400
+    _cam_cal.update(running=True, stage="starting", error=None, result=None)
+    threading.Thread(target=_camera_calibrate_worker, daemon=True).start()
+    return jsonify({"ok": True})
+
+
+@app.get("/api/camera/calibrate/status")
+def api_camera_calibrate_status():
+    return jsonify(_cam_cal)
 
 
 # ------------------------------------------------------- camera presets ---
@@ -1366,7 +1917,7 @@ def api_capture():
     if frame is None:
         return jsonify({"error": "no camera"}), 404
     return jsonify({"image": b64_jpg(frame, max_side=1600),
-                    "sharpness": round(float(imaging.sharpness(frame)), 1),
+                    "sharpness": round(imaging.donut_sharpness(frame, center=center), 1),
                     "center": list(center),
                     "head": b64_jpg(imaging.crop_head(frame, center=center), max_side=320)})
 
@@ -1377,6 +1928,18 @@ def save_labeled(stamp, frame, center=None):
     `center` carries the capture-time (median-stabilized) head circle so the
     saved training crop is EXACTLY the strip the operator approved — a fresh
     single-frame re-detection here could disagree and save a warped strip."""
+    # the name is a path component: validate it here, at the one place
+    # every filing path ends up, and keep the class list honest — a save
+    # into a name nobody configured used to create a phantom class dir
+    stamp = safe_label(str(stamp).strip().upper())
+    if not _valid_stamp(stamp) or stamp in ("UNKNOWN", "UNMATCHED", "OVERFLOW"):
+        raise ValueError(f"invalid headstamp name {stamp!r}")
+    with _config_lock:
+        raw = active_model_raw()
+        if stamp not in raw["stamp_labels"]:
+            raw["stamp_labels"].append(stamp)
+            write_active_model(raw)
+            _counts_dirty()
     raw_dir = DATA_DIR / "raw" / stamp
     raw_dir.mkdir(parents=True, exist_ok=True)
     idx = next_index(raw_dir)
@@ -1407,10 +1970,11 @@ def api_save_pair():
         return jsonify({"error": "an image is required"}), 400
     cfg = load_cfg()
 
-    # blur guard: keep unusable images out of the training data
+    # blur guard: keep unusable images out of the training data (judged on
+    # the donut the model reads — see imaging.donut_sharpness)
     if not force:
-        floor = cfg.floors["sharpness"]
-        s = imaging.sharpness(frame)
+        floor = cfg.floors["donut_sharpness"]
+        s = imaging.donut_sharpness(frame, center=center)
         if s < floor:
             return jsonify({"error": f"image looks blurry "
                             f"(sharpness {s:.0f} < floor {floor:.0f})",
@@ -1502,20 +2066,24 @@ def api_collect_advance():
         source = "synthetic"
     if frame is None:
         return jsonify({"error": "no camera"}), 404
-    floor = load_cfg().floors["sharpness"]
-    if source == "camera" and imaging.sharpness(frame) < floor:
+    floor = load_cfg().floors["donut_sharpness"]
+    sharp = imaging.donut_sharpness(frame, center=center)
+    if source == "camera" and sharp < floor:
         # blur auto-retake: one fresh grab before bothering the user
         time.sleep(0.15)
         again, c2 = steady_head()
-        if again is not None and imaging.sharpness(again) > imaging.sharpness(frame):
-            frame, center = again, c2
-    sharp = round(float(imaging.sharpness(frame)), 1)
+        if again is not None:
+            s2 = imaging.donut_sharpness(again, center=c2)
+            if s2 > sharp:
+                frame, center, sharp = again, c2, s2
+    sharp = round(sharp, 1)
     # predict=false skips inference entirely — faster feeds, and an early
     # model's guesses are noise the operator asked not to see
     predict = body.get("predict", True)
     # empty-nest guard: a force-feed skips the proximity sensor, so a missed
     # slot shows the camera a bare nest — flag it so the UI can refuse a save
-    present = imaging.case_present(frame) if source == "camera" else True
+    present = (_case_presence(frame, case_cutoff())[0]
+               if source == "camera" else True)
     return jsonify({"image": b64_jpg(frame, max_side=1600),
                     # the operator reads the stamp off this one — keep it sharp
                     "crop": b64_jpg(imaging.head_view(frame, center=center),
@@ -1557,7 +2125,8 @@ def api_imaging_preview():
                                        center=center, rim_scale=rim)
     resp = {"head": b64_jpg(head, max_side=280),
             "indicator": b64_jpg(indicator, max_side=280),
-            "sharpness": round(imaging.sharpness(frame), 1),
+            "sharpness": round(imaging.donut_sharpness(
+                frame, center=center, rim_scale=rim, pocket_frac=frac), 1),
             "source": source}
     return jsonify(resp)
 
@@ -1669,6 +2238,15 @@ def api_models_restore():
         # embeddings and exemplar vectors come from the same network or
         # match nothing. get_shadow() hot-reloads on mtime, so this takes
         # effect on the next classify — no restart.
+        busy = _dataset_busy()
+        if busy:
+            return jsonify({"error": f"can't restore now: {busy}"}), 409
+        if not (MODELS_DIR / "archive" / f"shadow_gallery_{ts}.npz").exists():
+            # a model without its own gallery would match the live
+            # gallery's vectors in the wrong space and report success
+            return jsonify({"error": f"archive {ts} has no gallery to pair "
+                                     "with this model — it can't be restored "
+                                     "as a working generation"}), 400
         now = time.strftime("%Y%m%d_%H%M%S")
         pair = (("shadow_embed", ".tflite"), ("shadow_gallery", ".npz"),
                 ("shadow_embed", ".json"))
@@ -1677,12 +2255,19 @@ def api_models_restore():
             if cur.exists():
                 shutil.copy2(cur,
                              MODELS_DIR / "archive" / f"{base}_{now}{suffix}")
-        restored = []
+        # land the pair as one moment: copy both to temp names first,
+        # then rename back to back, so a classify between the two files
+        # never sees new model + old gallery
+        restored, staged = [], []
         for base, suffix in pair:
             src_p = MODELS_DIR / "archive" / f"{base}_{ts}{suffix}"
             if src_p.exists():
-                shutil.copy2(src_p, MODELS_DIR / f"{base}{suffix}")
+                tmp = MODELS_DIR / f".{base}{suffix}.restoring"
+                shutil.copy2(src_p, tmp)
+                staged.append((tmp, MODELS_DIR / f"{base}{suffix}"))
                 restored.append(base)
+        for tmp, dst in staged:
+            os.replace(tmp, dst)
         # a generation without a bench sidecar must not inherit the
         # previous one's — stale provenance is worse than none
         if not (MODELS_DIR / "archive" / f"shadow_embed_{ts}.json").exists():
@@ -2006,7 +2591,9 @@ _gal_build = {"running": False, "error": None, "done": None, "log": ""}
 # batch-review clustering in flight (api_run_groups embedding fresh
 # unknowns) — a run must not start under it, and it must not start
 # under a run: same interpreter, and on a Pi the same CPU budget
-_groups_busy = {"n": 0}
+_groups_busy = {"n": 0, "lock": threading.Lock()}   # n under the lock: two
+                                                     # concurrent reviews once
+                                                     # left it stuck at 1
 
 
 @app.post("/api/gallery/rebuild")
@@ -2107,7 +2694,7 @@ def api_dataset_pair():
             img = cv2.imread(str(p))
             if img is not None:
                 resp[key] = b64_jpg(img, max_side=640)
-                resp[key + "_sharpness"] = round(imaging.sharpness(img), 1)
+                resp[key + "_sharpness"] = round(imaging.donut_sharpness(img), 1)
                 # the crop is what actually trains — show it next to the raw
                 if key == "a":
                     resp["head_crop"] = b64_jpg(imaging.crop_head(img), max_side=320)
@@ -2135,7 +2722,12 @@ def _carry_crop(label, index, to, new_idx):
         return False
     new_dir = DATA_DIR / "stamp" / parse_label(to)[0]
     new_dir.mkdir(parents=True, exist_ok=True)
-    old.rename(new_dir / f"{to}_{new_idx:04d}_A.png")
+    dst = new_dir / f"{to}_{new_idx:04d}_A.png"
+    os.replace(old, dst)          # a stale crop at that index is overwritten
+    try:                          # the crop is new at this path: give it a
+        os.utime(dst, None)       # fresh mtime so no gallery bank trusts an
+    except OSError:               # older vector for it
+        pass
     return True
 
 
@@ -2219,7 +2811,9 @@ def api_dataset_rename():
                                for b in raw.get("bins", [])]
                 raw["train_disabled"] = sorted({dst if s == src else s
                                                 for s in raw.get("train_disabled", [])})
-            clean_bins(raw)
+            # families follow the class to its new name; a merge that
+            # leaves a family with one class drops the family
+            clean_bins(raw, rename={src: dst})
             write_active_model(raw)
             renamed = True
     if renamed:
@@ -2827,9 +3421,23 @@ def api_models_install():
     got = {k: f for k, f in request.files.items()
            if k in ("shadow_embed.tflite", "shadow_gallery.npz",
                     "shadow_embed.json")}
-    if not got:
-        return jsonify({"error": "need shadow_embed.tflite and/or "
+    if not ("shadow_embed.tflite" in got and "shadow_gallery.npz" in got):
+        # the pair lives and dies together: a model landing without its
+        # gallery matches the old gallery's vectors in the wrong space
+        return jsonify({"error": "need BOTH shadow_embed.tflite and "
                                  "shadow_gallery.npz"}), 400
+    # the sender names the profile it trained: a stale trainer URL or a
+    # machine switched to another model meanwhile must not receive a
+    # pair built for a different dataset
+    want = (request.form.get("cartridge"), request.form.get("model"))
+    if any(want):
+        act = json.loads(CONFIG_PATH.read_text()).get("active", {})
+        have = (act.get("cartridge"), act.get("model"))
+        if want != have:
+            return jsonify({"error": f"this pair was built for "
+                                     f"{want[0]}/{want[1]} but the machine "
+                                     f"is on {have[0]}/{have[1]} — switch "
+                                     "the machine's model first"}), 409
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     arch_dir = MODELS_DIR / "archive"
     arch_dir.mkdir(exist_ok=True)
@@ -2848,8 +3456,16 @@ def api_models_install():
             if cur.exists():
                 _sh.copy2(cur, arch_dir / arch_name)
         archived = True
+    # land the pair as one moment: every file to a temp name first, then
+    # rename back to back, so the hot-reload watcher never loads a new
+    # model against the old gallery (or a half-written file)
+    staged = []
     for name, f in got.items():
-        f.save(MODELS_DIR / name)
+        tmp = MODELS_DIR / f".{name}.installing"
+        f.save(tmp)
+        staged.append((tmp, MODELS_DIR / name))
+    for tmp, dst in staged:
+        os.replace(tmp, dst)
     # a new model without a bench sidecar must not keep the old one's
     if "shadow_embed.tflite" in got and "shadow_embed.json" not in got:
         (MODELS_DIR / "shadow_embed.json").unlink(missing_ok=True)
@@ -2885,7 +3501,24 @@ def api_shadow_push():
     url = _machine_url()
     if not url:
         return jsonify({"error": "set the sorting machine URL first"}), 400
-    data, ctype = _multipart(files)
+    # same interlock as Install: this profile mirrors ONE machine
+    src_p = MODELS_DIR.parent / "source.json"
+    hello = _machine_hello(url)
+    if src_p.exists():
+        known = json.loads(src_p.read_text())
+        if hello is None:
+            return jsonify({"error": "the machine did not answer its identity "
+                                     "check — can't confirm this pair belongs "
+                                     "to it; retry"}), 409
+        if known.get("host") and known["host"] != hello.get("host"):
+            return jsonify({"error": f"this profile mirrors machine "
+                                     f"“{known.get('name') or known['host']}” "
+                                     f"but the configured machine is "
+                                     f"“{hello.get('name') or hello.get('host')}”"
+                                     " — fix the machine URL first"}), 409
+    act = json.loads(CONFIG_PATH.read_text()).get("active", {})
+    data, ctype = _multipart(files, {"cartridge": act.get("cartridge", ""),
+                                     "model": act.get("model", "")})
     req = urllib.request.Request(url + "/api/models/install", data=data,
                                  method="POST", headers={"Content-Type": ctype})
     with urllib.request.urlopen(req, timeout=120) as r:
@@ -2929,7 +3562,7 @@ def api_shadow_remove():
 STARTER_URL = ("https://github.com/yamanub/SortIQ/releases/download/"
                "v1.4/starter_9mm.tar.gz")
 # UNPINNED for the v1.4 release (owner's call — held for later). The v5
-# pair (99.9% closed-set, 86 classes, packaged 2026-08-18) lives at
+# pair (99.9% closed-set, 86 classes) lives at
 # Documents\SortIQ-release-assets\starter_9mm.tar.gz with digest
 # e40d5abec51e4649c44790cf177d8f4ae70617deb33ec8540a25bf53dee9ba9c —
 # re-pin that digest here and attach the asset to a release to publish.
@@ -3599,6 +4232,34 @@ def _relaunch_self():
     os._exit(0)
 
 
+def _single_instance(port, wait_s=30.0):
+    """One app per port. Windows lets a second server bind a port the
+    first still holds, so the trainer watchdog relaunching into the beat
+    of a self-restart left two trainers answering on one port for a week
+    (field: 2026-10-14..21, the old one kept serving stale code). Each app
+    holds an OS lock for its port: a self-restart's child waits here for
+    its parent to let go; a true duplicate gives up and exits."""
+    import tempfile
+    f = open(os.path.join(tempfile.gettempdir(), f"sortiq-{port}.lock"), "a+")
+    t0 = time.monotonic()
+    while True:
+        try:
+            if os.name == "nt":
+                import msvcrt
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return f                       # held for the life of the process
+        except OSError:
+            if time.monotonic() - t0 > wait_s:
+                print(f"another SortIQ server already runs on port {port} "
+                      "— this copy exits", flush=True)
+                sys.exit(0)
+            time.sleep(0.5)
+
+
 @functools.lru_cache(maxsize=1)      # installed-or-not never changes mid-run
 def _tf_available():
     """Whether this host can train at all (the Pi deliberately can't:
@@ -3906,7 +4567,14 @@ def api_train_install():
         # the pair must land on the machine this profile mirrors — with
         # several machines, pushing A's model to B is one stale URL away
         src_p = MODELS_DIR.parent / "source.json"
-        hello = _machine_hello(url) or {}
+        hello = _machine_hello(url)
+        if src_p.exists() and hello is None:
+            # a hello that times out must not disable the check while
+            # the 300 s push still goes ahead
+            return jsonify({"error": "the machine did not answer its identity "
+                                     "check — can't confirm this pair belongs "
+                                     "to it; retry in a moment"}), 409
+        hello = hello or {}
         if src_p.exists() and hello.get("host"):
             known = json.loads(src_p.read_text())
             if known.get("host") and known["host"] != hello["host"]:
@@ -3969,7 +4637,9 @@ def api_train_install():
                 train_status["stage"] = "install"
                 files = {n: (MODELS_DIR / n).read_bytes()
                          for n in pair if (MODELS_DIR / n).exists()}
-                data, ctype = _multipart(files)
+                act = json.loads(CONFIG_PATH.read_text()).get("active", {})
+                data, ctype = _multipart(files, {"cartridge": act.get("cartridge", ""),
+                                                 "model": act.get("model", "")})
                 req = urllib.request.Request(
                     url + "/api/models/install", data=data, method="POST",
                     headers={"Content-Type": ctype})
@@ -4012,6 +4682,12 @@ def api_hello():
 def api_machines_scan():
     """Sweep this host's /24 for SortIQ instances (port 5000 + hello).
     ~2s: 254 addresses probed on 64 threads, 0.3s connect timeout."""
+    me, base, found = _scan_lan()
+    return jsonify({"subnet": f"{base}.0/24", "me": me, "found": found})
+
+
+def _scan_lan():
+    """(my ip, my /24 base, SortIQ instances answering on it)."""
     import socket as _s
     import urllib.request
     from concurrent.futures import ThreadPoolExecutor
@@ -4043,7 +4719,151 @@ def api_machines_scan():
     with ThreadPoolExecutor(max_workers=64) as ex:
         found = [r for r in ex.map(probe, (f"{base}.{i}"
                                            for i in range(1, 255))) if r]
-    return jsonify({"subnet": f"{base}.0/24", "me": me, "found": found})
+    return me, base, found
+
+
+# ---- machines that moved. Every saved address (the trainer's machine_url,
+# fleet_peers, each profile's source.json) is an IP — a new router, a reset
+# or a lease change breaks every link at once (field: 2026-10-20). A
+# background pass learns which hostname answers at each saved address;
+# when one stops answering it sweeps the network for that hostname and
+# rewrites every saved copy of the address. Hostnames are the identity:
+# each Pi is imaged with its own, the PC has its own.
+PEER_CHECK_S = 120          # how often the saved addresses are checked
+PEER_SCAN_GAP_S = 600       # a machine that's simply off: sweep at most this often
+_peer_state = {"scan_t": 0.0}
+
+
+def _source_files():
+    return list((ROOT / "calibers").glob("*/*/source.json"))
+
+
+def _saved_peer_urls():
+    raw = json.loads(CONFIG_PATH.read_text())
+    urls = {u.rstrip("/") for u in (raw.get("fleet_peers") or []) if u}
+    if raw.get("machine_url"):
+        urls.add(raw["machine_url"].rstrip("/"))
+    for p in _source_files():
+        try:
+            u = json.loads(p.read_text()).get("url")
+        except (OSError, ValueError):
+            continue
+        if u:
+            urls.add(u.rstrip("/"))
+    return urls
+
+
+def _replace_peer_url(old, new):
+    """Rewrite every saved copy of a machine's address."""
+    with _config_lock:
+        raw = json.loads(CONFIG_PATH.read_text())
+        if (raw.get("machine_url") or "").rstrip("/") == old:
+            raw["machine_url"] = new
+        peers = []
+        for u in raw.get("fleet_peers") or []:
+            u = new if u.rstrip("/") == old else u
+            if u not in peers:
+                peers.append(u)
+        if "fleet_peers" in raw:
+            raw["fleet_peers"] = peers
+        hosts = raw.get("peer_hosts") or {}
+        if old in hosts:
+            hosts[new] = hosts.pop(old)
+            raw["peer_hosts"] = hosts
+        write_cfg_raw(raw)
+    for p in _source_files():
+        try:
+            d = json.loads(p.read_text())
+        except (OSError, ValueError):
+            continue
+        if (d.get("url") or "").rstrip("/") == old:
+            d["url"] = new
+            p.write_text(json.dumps(d))
+    print(f"fleet: the machine at {old} moved to {new} — saved addresses "
+          "updated", flush=True)
+
+
+def _peer_pass():
+    if run_mgr.state.get("running"):
+        return                                 # never during a run
+    own = _own_lan_url().rstrip("/")
+    raw = json.loads(CONFIG_PATH.read_text())
+    hosts = dict(raw.get("peer_hosts") or {})
+    for p in _source_files():                  # profiles carry their host
+        try:
+            d = json.loads(p.read_text())
+        except (OSError, ValueError):
+            continue
+        if d.get("url") and d.get("host"):
+            hosts.setdefault(d["url"].rstrip("/"), d["host"])
+    learned, lost = {}, []
+    for url in _saved_peer_urls():
+        if url == own:
+            continue
+        h = _machine_hello(url)
+        if h and h.get("host"):
+            if hosts.get(url) != h["host"]:
+                learned[url] = h["host"]
+        elif hosts.get(url):
+            lost.append((url, hosts[url]))
+    if learned:
+        with _config_lock:
+            r2 = json.loads(CONFIG_PATH.read_text())
+            r2["peer_hosts"] = {**(r2.get("peer_hosts") or {}), **learned}
+            write_cfg_raw(r2)
+    if not lost or time.monotonic() - _peer_state["scan_t"] < PEER_SCAN_GAP_S:
+        return
+    _peer_state["scan_t"] = time.monotonic()
+    _, _, found = _scan_lan()
+    where = {f["host"]: f["ip"] for f in found
+             if not f.get("self") and f.get("host")}
+    for url, host in lost:
+        if where.get(host):
+            new = f"http://{where[host]}:5000"
+            if new != url:
+                _replace_peer_url(url, new)
+
+
+def _peer_keeper():
+    time.sleep(60)
+    while True:
+        try:
+            _peer_pass()
+        except Exception as e:                 # never let it die
+            print(f"fleet: address check failed ({e!r})", flush=True)
+        time.sleep(PEER_CHECK_S)
+
+
+# ---- Windows calls most new networks "Public" and then blocks the
+# machines from reaching the trainer (field: a new router, the scan from
+# the carousel found nothing). Say so where the user looks.
+_netcat = {"t": 0.0, "public": None}
+
+
+def _windows_public_network():
+    if not sys.platform.startswith("win"):
+        return None
+    if time.monotonic() - _netcat["t"] < 300 and _netcat["t"]:
+        return _netcat["public"]
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "(Get-NetConnectionProfile | Where-Object "
+             "{ $_.IPv4Connectivity -ne 'Disconnected' } | "
+             "Select-Object -ExpandProperty NetworkCategory) -join ','"],
+            capture_output=True, text=True, timeout=15,
+            creationflags=0x08000000)          # no console window
+        cats = [c.strip() for c in r.stdout.strip().split(",") if c.strip()]
+        public = bool(cats) and all(c == "Public" for c in cats)
+    except (OSError, subprocess.TimeoutExpired):
+        public = None
+    _netcat.update(t=time.monotonic(), public=public)
+    return public
+
+
+@app.get("/api/host/network_hint")
+def api_host_network_hint():
+    return jsonify({"public_network": _windows_public_network()})
 
 
 # ------------------------------------------------------------- fleet ---
@@ -4158,11 +4978,15 @@ def api_fleet_update():
         return jsonify({"error": f"peer didn't take the update: {e}"}), 502
 
 
-def _multipart(files):
-    """Encode {name: bytes} as multipart/form-data (stdlib-only client)."""
+def _multipart(files, fields=None):
+    """Encode {name: bytes} (+ plain {field: str}) as multipart/form-data
+    (stdlib-only client)."""
     import uuid
     boundary = uuid.uuid4().hex
     out = bytearray()
+    for name, value in (fields or {}).items():
+        out += (f'--{boundary}\r\nContent-Disposition: form-data; '
+                f'name="{name}"\r\n\r\n{value}\r\n').encode()
     for name, data in files.items():
         out += (f'--{boundary}\r\nContent-Disposition: form-data; '
                 f'name="{name}"; filename="{name}"\r\n'
@@ -4218,8 +5042,17 @@ def api_train_remote():
             # same profile name would silently mirror-delete each other's
             # datasets right here. The first pull stamps the source; a
             # different machine must rename its model first.
-            hello = _machine_hello(url) or {}
+            hello = _machine_hello(url)
             src_p = pdir / "source.json"
+            if src_p.exists() and hello is None:
+                # the manifest answered but the identity check did not:
+                # a mirror-delete on an unverified machine is the one
+                # thing this interlock exists to prevent
+                raise RuntimeError(
+                    f"{url} did not answer its identity check — can't "
+                    f"confirm it is the machine profile {cart}/{model} "
+                    "mirrors; retry in a moment")
+            hello = hello or {}
             if src_p.exists() and hello.get("host"):
                 known = json.loads(src_p.read_text())
                 if known.get("host") and known["host"] != hello["host"]:
@@ -4235,8 +5068,9 @@ def api_train_remote():
                 src_p.write_text(json.dumps(
                     {"host": hello["host"], "name": hello.get("name"),
                      "url": url}))
-            profiles.write_model(ROOT, cart, model, man["model_json"])
-            data_dir = pdir / "data"
+            with _config_lock:      # a concurrent pin/exclude write must
+                profiles.write_model(ROOT, cart, model, man["model_json"])
+            data_dir = pdir / "data"       # not land over the fresh pull
 
             # mirror raw/ exactly: pull new/changed (by size — captures are
             # immutable), delete what the machine no longer has (renames,
@@ -4251,9 +5085,18 @@ def api_train_remote():
                 for d in sorted(raw_dir.glob("*/"), reverse=True):
                     if d.is_dir() and not any(d.iterdir()):
                         d.rmdir()
-            need = [rel for rel, f in want.items()
-                    if not (data_dir / rel).exists()
-                    or (data_dir / rel).stat().st_size != f["size"]]
+            def _stale(rel, f):
+                p = data_dir / rel
+                if not p.exists():
+                    return True
+                st = p.stat()
+                if st.st_size != f["size"]:
+                    return True
+                # size alone misses a re-used index holding a different
+                # capture of the same byte length; the manifest carries
+                # the machine's mtime, so a newer capture refetches
+                return "mtime" in f and int(st.st_mtime) < int(f["mtime"])
+            need = [rel for rel, f in want.items() if _stale(rel, f)]
             train_status["pulled"] = len(want) - len(need)
             # batched tar pulls (50/call): per-file GETs measured ~3s each
             # over the machine's Wi-Fi - the batch endpoint is ~50x fewer
@@ -4308,6 +5151,9 @@ def api_train_remote():
             # adopt the machine's profile locally (imaging config included),
             # then rebuild crops so they match the pulled raws exactly
             train_status.update(phase="crops", stage="crops")
+            busy = _dataset_busy()
+            if busy:
+                raise RuntimeError(f"pulled, but can't switch to the mirror: {busy}")
             set_active_model(cart, model)
             img_cfg = man["model_json"].get("imaging") or {}
             imaging.configure(img_cfg)
@@ -4350,10 +5196,30 @@ class _ServerCamera:
     def __init__(self, settle_s=COLLECT_SETTLE_S):
         self.center = None       # smoothed (cx, cy, r) of the last capture
         self.settle_s = settle_s
+        # monotonic seat time, set by the run loop before each capture when
+        # the transport knows it (gate choreography). The settle then counts
+        # from the SEAT: a drop cycle's SEATED is released only after the
+        # door dwell, so the old fixed sleep there was pure dead time.
+        # Measured (settle-trace, 7 feeds): frames read >= 150 ms after the
+        # seat are at rest; not_before keeps every averaged frame past it.
+        self.seated_at = None
+        self.seat_ms = None      # last capture: first frame's ms after seat
 
     def capture(self, light):
-        time.sleep(self.settle_s)
-        frame, self.center = steady_head()
+        seat, self.seated_at = self.seated_at, None
+        self.seat_ms = None
+        if seat is None:
+            time.sleep(self.settle_s)
+            frame, self.center = steady_head()
+            return frame
+        not_before = seat + self.settle_s
+        wait = not_before - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        frame, self.center = steady_head(not_before=not_before)
+        ft = _steady_last["first_t"]
+        if ft is not None:
+            self.seat_ms = round((ft - seat) * 1000)
         return frame
 
     def release(self):
@@ -4399,6 +5265,13 @@ def _persist_bin(slot, stamp):
         mj = active_model_raw()
         bins = [normalize_bin(b) for b in (mj.get("bins") or [])]
         bins += [[] for _ in range(slot + 1 - len(bins))]
+        # one stamp, one slot: it may already sit in a slot this machine
+        # trimmed off (fewer chutes than the profile) — leave it there
+        # too and the profile carries it twice, which every machine with
+        # enough slots then refuses to load
+        for i, g in enumerate(bins):
+            if i != slot and stamp in g:
+                g.remove(stamp)
         if stamp not in bins[slot]:
             bins[slot].append(stamp)
         mj["bins"] = bins
@@ -4406,19 +5279,96 @@ def _persist_bin(slot, stamp):
 
 
 def _clear_bins():
-    """Empty every non-UNMATCHED bin in the active model."""
+    """Empty every bin in the active model, keeping only the two special
+    tokens where they sit (UNMATCHED always, OVERFLOW if assigned)."""
     from sorter.config import normalize_bin
     with _config_lock:
         mj = active_model_raw()
-        mj["bins"] = [["UNMATCHED"] if "UNMATCHED" in normalize_bin(b) else []
+        mj["bins"] = [[s for s in normalize_bin(b)
+                       if s in ("UNMATCHED", "OVERFLOW")]
                       for b in (mj.get("bins") or [])]
         write_active_model(mj)
+
+
+# "CASE PRESENT" CUTOFF: a pocket holds a case when the head disc reads
+# at least this bright (mean, 0-255). One value for the whole app — sort
+# runs on every build, Collect's empty-pocket guard, camera calibration.
+# Every camera, lens and light differs, so it is a per-camera SETTING
+# (Collect > Camera setup measures it); until someone sets one, the
+# defaults are the midpoints measured on the carousel:
+#   suyin_hd  (2026-10-01): heads 41-85, empty pocket 1-7     -> 20
+#   ov3660    close mount (2026-10-03): heads 73-96, empty ~13 -> 40
+# Other cameras on the carousel get 20; the sort arm and the CS7.2 keep
+# imaging.CASE_MIN_DISC_BRIGHTNESS (40). Lives HERE, not in imaging.py:
+# that file's code feeds the crops signature, and touching it forces a
+# full crop + gallery rebuild everywhere.
+SERVO_CASE_MIN_BRIGHTNESS = {"suyin_hd": 20, "ov3660": 40}
+SERVO_CASE_MIN_DEFAULT = 20
+
+
+def case_cutoff_default(model=None):
+    if model is None:
+        model = cam_cfg_raw().get("model")
+    if machine_settings().get("firmware") == "pico-servo":
+        return SERVO_CASE_MIN_BRIGHTNESS.get(model, SERVO_CASE_MIN_DEFAULT)
+    return imaging.CASE_MIN_DISC_BRIGHTNESS
+
+
+def case_cutoff():
+    """The cutoff in force: this camera's saved value, else its default."""
+    try:
+        cam = cam_cfg_raw()
+    except (OSError, ValueError, KeyError):
+        return imaging.CASE_MIN_DISC_BRIGHTNESS
+    model = cam.get("model")
+    custom = (cam.get("case_cutoff") or {}).get(model or "")
+    return int(custom) if custom is not None else case_cutoff_default(model)
+
+
+def case_reading(img):
+    """(round_head_found, head_brightness) — what the cutoff is compared
+    against. With no round head (an empty pocket) the brightness is read
+    over find_head's fallback circle, so the empty pocket gets a number."""
+    best = imaging._head_contour(img)
+    x, y, r = best if best is not None else imaging.find_head(img)
+    g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    mask = np.zeros(g.shape, np.uint8)
+    cv2.circle(mask, (int(x), int(y)), max(int(r * 0.8), 1), 255, -1)
+    return best is not None, float(cv2.mean(g, mask)[0])
+
+
+def _case_presence(img, min_bright):
+    """imaging.case_present, with the reason when the answer is no."""
+    best = imaging._head_contour(img)
+    if best is None:
+        return False, "no round case head in view"
+    x, y, r = best
+    g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    mask = np.zeros(g.shape, np.uint8)
+    cv2.circle(mask, (x, y), max(int(r * 0.8), 1), 255, -1)
+    b = float(cv2.mean(g, mask)[0])
+    if b >= min_bright:
+        return True, f"head brightness {b:.0f}"
+    return False, f"head too dim (brightness {b:.0f}, needs {min_bright})"
 
 
 class RunManager:
     def __init__(self):
         self.lock = threading.Lock()
         self.stop_evt = threading.Event()
+        # PAUSE: the operator's request, and the Resume that ends any pause
+        # (operator, tube jam, feeder jam). The loop holds only where the
+        # wheel is at rest: a case seated at the camera, or the board
+        # waiting for brass.
+        self.pause_req = threading.Event()
+        self.resume_req = threading.Event()
+        self.prompt_act = None          # "finish" | "resume" from the no-brass ask
+        self.pause_reason = "manual"    # why pause_req is set: manual | feeder_jam
+        # FINISH (from a pause, or any time): end like the brass ran out —
+        # feeder off, the cases still coming get sorted, the end-of-brass
+        # flush walks the wheel empty. Stop, by contrast, quits at once and
+        # leaves the wheel as it is.
+        self.finish_req = threading.Event()
         self._reset()
 
     def _reset(self):
@@ -4436,7 +5386,11 @@ class RunManager:
                       "recent": [],
                       "rate": 0.0, "error": None, "score": None,
                       "auto_assign": False, "slots": [],
+                      "wait_note": None,    # e.g. waiting for the feeder
+                      "paused": None,       # {"reason": manual|tube_jam|feeder_jam, "t"}
+                      "prompt": None,       # {"kind": "no_brass", "until": monotonic}
                       "end_reason": None,   # "out_of_brass" | "stopped"
+                      "end_note": None,     # why, in words, when not obvious
                       "flushed": 0,         # in-flight cases the end-of-brass
                                             # flush placed in their true slots
                       "feed_stats": None}   # fork firmware homing telemetry,
@@ -4466,6 +5420,11 @@ class RunManager:
         # what auto-assign exists to place; only real rejects go to catch-all
         if d.reason not in ("ok", "no_bin_mapping") or not d.stamp:
             return self.catch_all
+        # a mapped read already carries its bin — the bin map resolves
+        # family tokens, which slot_stamp_inv (raw bin entries) can't see:
+        # a BLAZER under a "family:BLAZER" bin was handed a fresh tray
+        if d.reason == "ok":
+            return d.bin_id
         with self.lock:
             if d.stamp in self.slot_stamp_inv:
                 return self.slot_stamp_inv[d.stamp]
@@ -4507,6 +5466,12 @@ class RunManager:
             # flush regardless), so the UI must say "stopping" instead of
             # letting the button look ignored — field-hit during a flush
             s["stopping"] = bool(s.get("running") and self.stop_evt.is_set())
+            s["pausing"] = bool(s.get("running") and self.pause_req.is_set()
+                                and not s.get("paused"))
+            if s.get("prompt"):
+                p = dict(s["prompt"])
+                p["left_s"] = max(round(p.pop("until") - time.monotonic(), 1), 0)
+                s["prompt"] = p
             return s
 
     def start(self, params):
@@ -4516,8 +5481,14 @@ class RunManager:
             if self.state["running"]:
                 return "a run is already active"
             self.stop_evt.clear()
+            self.pause_req.clear()
+            self.resume_req.clear()
+            self.finish_req.clear()
+            self.prompt_act = None
             self._reset()
             self.state["running"] = True
+        if params.get("mode") == "serial":
+            _gate_wave["wheel_empty"] = False      # riders until a clean clear
         # capture runs never consult the decider for a bin (every case goes
         # to the catch-all — see below), so a fresh install with no model
         # yet can still batch-capture its first dataset; only a real
@@ -4532,6 +5503,24 @@ class RunManager:
 
     def stop(self):
         self.stop_evt.set()
+        self.resume_req.set()          # a paused run lets go to stop
+
+    def pause(self, reason="manual"):
+        if self.pause_req.is_set() and self.pause_reason == "feeder_jam":
+            return                      # a jam pause stays a jam pause
+        self.pause_reason = reason
+        self.resume_req.clear()
+        self.pause_req.set()
+
+    def resume(self):
+        self.pause_req.clear()
+        self.resume_req.set()
+        self.prompt_act = "resume"
+
+    def finish(self):
+        self.finish_req.set()
+        self.prompt_act = "finish"
+        self.pause_req.clear()
 
     def _run(self, params):
         cfg = load_cfg()
@@ -4541,6 +5530,8 @@ class RunManager:
         # pre-label but physically sent to the catch-all, and the whole
         # run reviews as grouped confirm-cards instead of a sort report
         self.capture = bool(params.get("capture"))
+        self.batch_class = ((params.get("batch_class") or "").strip() or None
+                            if self.capture else None)
         self.slot_count = cfg.bin_count
         self.slots_enabled = list(cfg.slots_enabled)
         self.catch_all = cfg.unmatched_bin
@@ -4568,16 +5559,22 @@ class RunManager:
         # the report can be reassigned/filed. KEEP_RUNS bounds the disk.
         # so listings can label sim runs — synthetic cases in a report are
         # confusing next to real ones
+        # the bin map as it stood for THIS run: reports of old runs label
+        # their bins from it, not from whatever the map says today
         (run_dir / "run.json").write_text(json.dumps(
-            {"mode": params.get("mode", "sim"), "capture": self.capture}))
+            {"mode": params.get("mode", "sim"), "capture": self.capture,
+             "batch_class": self.batch_class,
+             "bins": [list(g) for g in cfg.bins]}))
         _prune_runs(KEEP_RUNS)          # keep only the newest N runs on disk
         transport = camera = None
+        wheel_clear = False      # set only by a clean end-of-run clear
         machine = None
         wq = writer = None   # persistence thread; created inside the run
         t0 = time.time()
         with self.lock:
             self.state.update(run_id=run_id, mode=params.get("mode", "sim"),
-                              capture=self.capture)
+                              capture=self.capture,
+                              batch_class=self.batch_class)
         try:
             if params.get("mode") == "serial":
                 from sorter.cs72 import Cs72Transport
@@ -4589,9 +5586,31 @@ class RunManager:
                 # Connecting via the console path first also guarantees the
                 # Ready handshake + setter push have happened.
                 with _console["lock"]:
+                    # only a SERIAL link is worth adopting: a console left
+                    # in sim mode would hand the run a fake board while the
+                    # real camera photographs the nest
+                    if (_console["transport"] is not None
+                            and _console["mode"] != "serial"):
+                        _console_disconnect_locked()
                     have = _console["transport"] is not None
+                # let any console request still waiting on the board
+                # finish (Test Feed, a settings push): its reply would
+                # otherwise be read as this run's first SEATED and shift
+                # the drop-port alignment by one feed for the whole run
+                t_wait = time.monotonic() + 30
+                while _console.get("inflight", 0) and time.monotonic() < t_wait:
+                    time.sleep(0.1)
                 if not have:
-                    _console_connect("serial", port)   # waits Ready, pushes settings
+                    # waits Ready, pushes settings. for_run: the running
+                    # flag is already ours, and the connect refusal it
+                    # guards against ("a run owns the board") is this
+                    # very run — without it a Start with the console
+                    # disconnected could never succeed
+                    _console_connect("serial", port, for_run=True)
+                ms_f = machine_settings()
+                if (ms_f.get("case_feeder") and ms_f.get("feeder_auto_start")
+                        and ms_f.get("firmware") == "pico-servo"):
+                    _feeder_fill_wait(self, run_dir)
                 with _console["lock"]:
                     con = _console["transport"]
                     if con is None:
@@ -4605,6 +5624,13 @@ class RunManager:
                 # adopted link = board already booted; there is no Ready
                 # coming, so don't sit out the full boot-banner timeout
                 transport = Cs72Transport(link, ready_timeout=1.0)
+                transport.feeder_sink = _feeder_line
+                # the board's in-flight wheel recoveries, into this run's log
+                transport.info_sink = (lambda l, d=run_dir: _run_note(d, l[5:]))
+                _feeder["run_transport"] = transport
+                if ms_f.get("case_feeder") and ms_f.get("feeder_auto_start"):
+                    link.write("feeder:run:1\n")   # again: harmless if on
+                    _feeder.update(run_req=True, user_stopped=False)
                 # re-assert the SAVED lighting on the adopted link: a board
                 # reboot between the console's last push and this run leaves
                 # firmware-default lighting (field-hit: first cases of a run
@@ -4636,7 +5662,7 @@ class RunManager:
                 # kind postdates this gate and fell through to the stock
                 # sequential path, which 2.0 doesn't speak — every sort
                 # timed out, HOME, re-prime, forever (first field run).
-                pipelined = machine_settings().get("firmware") in ("ss2", "pico")
+                pipelined = machine_settings().get("firmware") in ("ss2", "pico", "pico-servo")
             else:
                 from sorter.esp32_sim import VirtualMachine, Esp32Sim
                 from sorter.transport import SimTransport
@@ -4669,16 +5695,22 @@ class RunManager:
                 # its own slot too — including the tail case the run never
                 # saw. An empty camera closes with one final FEED; every
                 # case lands in its TRUE bin and the wheel ends empty.
-                # The whole dance is proven against the ported-firmware
-                # simulator (tools/cs72_flush_selftest.py), which also
-                # reproduces the two field misplacements (#50/#52, reverted
-                # in #53) as regression evidence. Idle-loop WAITINGs
+                # Idle-loop WAITINGs
                 # (WAIT_LIMIT) still plain-stop: they only occur in states
                 # (jam recovery, mid-prime) where the in-flight picture
                 # isn't known, and blind flushing is the one thing this
                 # machine must not do.
                 from sorter.cs72 import cancel_wait
                 WAIT_LIMIT, FLUSH_WAITS, EMPTY_FEEDS = 8, 6, 4
+                # how long a vanished camera may stay vanished before the
+                # run gives up. A USB hub reset took camera and board down
+                # together mid batch capture (sort arm, 617
+                # cases in): the camera re-enumerated ~1s later, but the
+                # run had already read its blank frames as an empty pocket,
+                # burned the EMPTY_FEEDS budget on unphotographed cases and
+                # stopped as "out of brass". No frame AT ALL is a camera
+                # fault, never a verdict about brass — wait it out instead.
+                CAMERA_LOST_S = 30.0
                 # dry mode is no longer a one-way door: the wheel holds at
                 # most ~3 cases past the sensor, so if this many CONSECUTIVE
                 # flush cycles each deliver a real case, the tube is
@@ -4693,9 +5725,17 @@ class RunManager:
                 dry = False          # end-of-brass flush loop is running
                 dry_present = 0      # consecutive flush cases with brass
                 empty_left = EMPTY_FEEDS
+                # carousel: empty pockets in a row while the brass sensor
+                # keeps feeding. A gap never ends the run (the sensor-gated
+                # feed waits for brass); this many in a row means the
+                # camera can't see the cases, and the run stops and says so
+                PHANTOM_LIMIT = 6
+                phantoms = 0
+                present_cut = case_cutoff()        # this run's camera
                 flushed = 0          # cases counted while in DRY mode
                 sorted_n = 0         # local case counter; the writer
                                      # thread owns state["sorted"]
+                prev_sig = None      # signature of the last case's photo
 
                 # Persistence (PNG encodes, thumbs, log lines, state
                 # counters) rides a single writer thread. Inline it ran
@@ -4733,22 +5773,236 @@ class RunManager:
                     except OSError:
                         pass
 
+                # END-OF-BRASS CLEAR PAUSE (carousel): the flush and the
+                # drain are forced feeds back to back, so the last cases
+                # get less time to fall through their doors than they do
+                # mid-run. During the clear every index waits
+                # clear_pause_ms longer with the due doors held open (the
+                # choreography's dwell). 0 = no pause.
+                _ms = machine_settings()
+                clear_pause_s = (max(int(_ms.get("clear_pause_ms") or 0), 0)
+                                 / 1000.0
+                                 if params.get("mode") == "serial" else 0.0)
+                paused = [False]
+
+                def clear_pause(on):
+                    if not gate_mode or not clear_pause_s or on == paused[0]:
+                        return
+                    paused[0] = on
+                    transport.pause_s = clear_pause_s if on else 0.0
+                    note(f"clear pause: {round(clear_pause_s * 1000)} ms per "
+                         f"feed for the end-of-brass clear" if on else
+                         "clear pause: off")
+
+                # 12-station carousel: when the machine has gate
+                # hardware, wrap the transport in the choreography — it
+                # observes this loop's own protocol, keeps the pocket
+                # ledger, and works the gates during each dwell. The loop
+                # itself neither knows nor cares (the firmware ignores the
+                # slot in PSLOT; routing is the gates' job now).
+                gate_mode = False
+                if params.get("mode") == "serial" and pipelined:
+                    from sorter.gates import Gates
+                    if Gates.available():
+                        from sorter.choreography import GateChoreo
+                        ms2 = machine_settings()
+                        transport = GateChoreo(
+                            transport, pulses=ms2.get("gate_pulses"),
+                            open_ms=int(ms2.get("gate_open_ms", 250)),
+                            clear_ms=int(ms2.get("gate_clear_ms", 50)),
+                            warmup=int(ms2.get("gate_prefire_warmup", 12)),
+                            note=note)
+                        gate_mode = True
+                        note("gate choreography armed (12-station carousel)")
+                    elif (machine_settings().get("firmware") == "pico-servo"
+                          and not self.capture):
+                        # the servo carousel routes with its doors and
+                        # nothing else (the firmware ignores the slot): with
+                        # the gate hardware unreachable every case would
+                        # ride to the catch-all while the report claimed
+                        # bins. A capture run is fine — that IS the
+                        # catch-all.
+                        raise RuntimeError(
+                            "gate hardware is not reachable — the carousel "
+                            "cannot route cases; check the PCA9685 / I2C "
+                            "wiring and power, then start again")
+
+                # END OF BRASS IS ASKED, NOT GUESSED. The board says "waiting
+                # for brass" once a second while a sort waits at the gate.
+                # With the case feeder on this board, the feeder says why:
+                # its tube full = a TUBE JAM, its plate stalled = a FEEDER
+                # JAM (both pause the run until Resume, doors closed), cases
+                # still passing its beam = keep waiting. Nothing fed, or no
+                # feeder: the operator gets ASK_S seconds to say "a case is
+                # stuck" (Resume) before the run finishes on its own.
+                _msf = machine_settings()
+                fd_on = (params.get("mode") == "serial" and gate_mode
+                         and bool(_msf.get("case_feeder"))
+                         and _msf.get("firmware") == "pico-servo")
+                GAP_WAITS = 4 if fd_on else 2   # waits before deciding
+                ASK_S = 10.0
+                RESUME_WAITS = 30               # after "a case is stuck": ask again later
+
+                def feeder_run(on, clear=False):
+                    if not fd_on:
+                        return
+                    if clear:
+                        _feeder_send("feeder:clear")
+                    _feeder_send(f"feeder:run:{1 if on else 0}")
+
+                def hold(reason, reading):
+                    """Pause right here (wheel at rest) until Resume or Stop.
+                    `reading`: a sort ack is still owed — keep reading; a
+                    case arriving (DONE) ends a jam pause by itself."""
+                    note(f"PAUSED: {reason}")
+                    feeder_was_on = bool(fd_on and _feeder.get("run_req"))
+                    feeder_run(False)
+                    if gate_mode:
+                        try:
+                            transport.close_for_hold()
+                        except Exception as e:
+                            note(f"pause: door close FAILED ({e})")
+                    with self.lock:
+                        self.state["paused"] = {"reason": reason, "t": time.time()}
+                    out = "resume"
+                    try:
+                        while True:
+                            if self.stop_evt.is_set():
+                                out = "stop"
+                                break
+                            if self.finish_req.is_set():
+                                out = "finish"
+                                break
+                            if self.resume_req.is_set():
+                                break
+                            if not reading:
+                                time.sleep(0.25)
+                                continue
+                            line = transport.readline(timeout=0.5)
+                            if line in ("DONE", "JAM") or (
+                                    line and line.startswith("FAULT:")):
+                                out = line
+                                break
+                    finally:
+                        self.resume_req.clear()
+                        self.prompt_act = None
+                        requested = reason in ("manual", "feeder_jam")
+                        if not (requested and out == "DONE"):
+                            self.pause_req.clear()   # (a requested pause a
+                            self.pause_reason = "manual"  # case outran holds
+                        with self.lock:              # at the next seat)
+                            self.state["paused"] = None
+                        note(f"RESUMED: {reason} -> {out}")
+                        # the feeder comes back only for a resume, and never
+                        # over the operator's own Stop
+                        if (out not in ("stop", "finish")
+                                and not _feeder.get("user_stopped")
+                                and (feeder_was_on or reason != "manual")):
+                            feeder_run(True, clear=(reason == "feeder_jam"))
+                        elif reason == "feeder_jam":
+                            _feeder_send("feeder:clear")    # out of FAULT, stays off
+                    return out
+
+                def feeder_fresh():
+                    t_ask = _feeder["status_t"]
+                    _feeder_send("feeder:status")
+                    t_end = time.monotonic() + 1.5
+                    while _feeder["status_t"] <= t_ask and time.monotonic() < t_end:
+                        time.sleep(0.05)       # the door listener reads it in
+
+                def fed_recently(secs=20.0):
+                    pts = [c for t, c in _feeder["counts"] if time.time() - t <= secs]
+                    return len(pts) >= 2 and pts[-1] > pts[0]
+
+                def ask_no_brass():
+                    until = time.monotonic() + ASK_S
+                    self.prompt_act = None
+                    with self.lock:
+                        self.state["prompt"] = {"kind": "no_brass", "until": until}
+                    note(f"no brass arriving — asking (finishing in {ASK_S:.0f} s)")
+                    out = "finish"
+                    try:
+                        while time.monotonic() < until:
+                            if self.stop_evt.is_set():
+                                break
+                            if self.prompt_act in ("finish", "resume"):
+                                out = self.prompt_act
+                                break
+                            line = transport.readline(timeout=0.3)
+                            if line in ("DONE", "JAM") or (
+                                    line and line.startswith("FAULT:")):
+                                out = line
+                                break
+                    finally:
+                        self.prompt_act = None
+                        with self.lock:
+                            self.state["prompt"] = None
+                    note(f"no-brass ask -> {out}")
+                    return out
+
+                def brass_gap():
+                    if fd_on:
+                        feeder_fresh()
+                        st = _feeder.get("state")
+                        if st == "FAULT":
+                            return hold("feeder_jam", True)
+                        if st == "HOLD":
+                            return hold("tube_jam", True)
+                        if st in ("JAM_REVERSE", "JAM_PAUSE") or (
+                                st == "RUNNING" and fed_recently()):
+                            return "wait"
+                    return ask_no_brass()
+
                 def sort_reply():
-                    """Await a sort/flush ack: DONE, JAM, WAITING (means
-                    FLUSH_WAITS consecutive dry lines) or None (silence)."""
-                    deadline = time.monotonic() + cfg.serial["sort_timeout_s"]
-                    reply, waits = None, 0
+                    """Await a sort/flush ack: DONE, JAM, FAULT:..., WAITING
+                    (end of brass confirmed — flush), STOP (stopped while
+                    paused) or None (silence)."""
+                    timeout = cfg.serial["sort_timeout_s"]
+                    deadline = time.monotonic() + timeout
+                    reply, waits, gap_at = None, 0, GAP_WAITS
                     while time.monotonic() < deadline:
+                        if self.pause_req.is_set():
+                            r = hold(self.pause_reason, True)
+                            if r == "stop":
+                                return "STOP"
+                            if r == "finish":
+                                feeder_run(False)
+                                return "WAITING"    # the end-of-brass flush
+                            if r != "resume":
+                                return r
+                            waits, gap_at = 0, GAP_WAITS
+                            deadline = time.monotonic() + timeout
+                            continue
                         reply = transport.readline(
-                            timeout=max(deadline - time.monotonic(), 0.1))
-                        if reply is None or reply in ("DONE", "JAM"):
+                            timeout=max(min(deadline - time.monotonic(), 1.0), 0.1))
+                        if reply is None:
+                            continue
+                        if reply in ("DONE", "JAM"):
                             return reply
+                        if reply.startswith("FAULT:"):
+                            return reply      # a board fault/reboot mid-ack:
+                                              # never wait it out as silence
                         if reply == "WAITING":
                             waits += 1
-                            note(f"gate empty {waits}/{FLUSH_WAITS} (sort ack)")
-                            if waits >= FLUSH_WAITS:
-                                return reply
-                    return reply
+                            deadline = time.monotonic() + timeout   # alive, waiting
+                            note(f"gate empty {waits} (sort ack)")
+                            if self.finish_req.is_set():
+                                return "WAITING"    # finishing: no ask, flush now
+                            if waits < gap_at:
+                                continue
+                            v = brass_gap()
+                            if v == "finish":
+                                return "WAITING"
+                            if v == "stop":
+                                return "STOP"
+                            if v in ("resume", "wait"):
+                                gap_at = waits + (RESUME_WAITS if v == "resume"
+                                                  else GAP_WAITS)
+                                deadline = time.monotonic() + timeout
+                                continue
+                            return v          # DONE / JAM / FAULT:...
+                    # timed out: true silence from the board
+                    return None
 
                 def await_feed(timeout=12.0):
                     """Wait out a forced FEED: SEATED, JAM, FAULT or None."""
@@ -4789,24 +6043,114 @@ class RunManager:
                     if line == "JAM":
                         with self.lock:
                             self.state["jams"] += 1
+                        note("feed JAM reported by the board ("
+                             f"{getattr(transport, 'last_error', None)}) "
+                             "— re-homing")
                         transport.send("HOME")
                         prev_slot = 0     # HOME re-primes at the park slot
                         continue
                     if line != "SEATED":
                         continue
                     waiting = 0
+                    if self.pause_req.is_set():
+                        if hold(self.pause_reason, False) == "finish":
+                            feeder_run(False)       # sort what's left, then flush
 
                     t_cap = time.monotonic()
                     # 50ms light lead: a rolling-shutter frame that starts
                     # exposing across the LED transition comes out banded
                     # (half-dark wash, case 108 same run) — give the ring a
-                    # full frame period to be ON before anything averages
-                    transport.send("LIGHT:A"); time.sleep(0.05)
-                    frame = camera.capture("A")
-                    transport.send("LIGHT:OFF")
+                    # full frame period to be ON before anything averages.
+                    # Only where the light actually switches: the CS7.2/Pico
+                    # ring is a constant-on setting (LIGHT is a no-op), so
+                    # there the lead waited on nothing — 50ms every case.
+                    # the case is seated and nothing has moved yet (PFEED
+                    # goes out after the photo), so a retaken photo is the
+                    # SAME case — a camera that comes back costs the run
+                    # only the seconds it was away
+                    cam_deadline = None
+                    while True:
+                        transport.send("LIGHT:A")
+                        if getattr(transport, "switches_light", True):
+                            time.sleep(0.05)
+                        if hasattr(camera, "seated_at"):
+                            camera.seated_at = getattr(transport, "seated_at",
+                                                       None)
+                        frame = camera.capture("A")
+                        seat_ms = getattr(camera, "seat_ms", None)
+                        transport.send("LIGHT:OFF")
+                        if frame is not None:
+                            # a camera coming back from a USB reset can
+                            # hand the previous case's picture over again
+                            # with a fresh timestamp (sort arm:
+                            # cases 139/140 saved byte-identical frames —
+                            # a misfile in a sort run). Two real photos
+                            # never match: sensor noise alone differs.
+                            sig = hashlib.blake2b(frame[::16, ::16].tobytes(),
+                                                  digest_size=8).digest()
+                            if sig == prev_sig:
+                                note("camera repeated the previous case's "
+                                     "frame — retaking")
+                                frame = None
+                            else:
+                                prev_sig = sig
+                        if frame is not None or self.stop_evt.is_set():
+                            break
+                        if cam_deadline is None:
+                            cam_deadline = time.monotonic() + CAMERA_LOST_S
+                            note("no frame from the camera — waiting for it "
+                                 "to come back (the case stays at the camera)")
+                        if time.monotonic() > cam_deadline:
+                            break
+                        time.sleep(1.0)
+                    if frame is None:      # gave up, or the operator stopped
+                        if not self.stop_evt.is_set():
+                            note("run END: camera did not come back")
+                            with self.lock:
+                                self.state["end_reason"] = "camera_lost"
+                                self.state["error"] = (
+                                    "camera lost — run stopped with a case "
+                                    "still at the camera; nothing was fed "
+                                    "past it")
+                        break
                     capture_ms = (time.monotonic() - t_cap) * 1000
-                    present = frame is not None and imaging.case_present(frame)
-                    if not present:
+                    present, why_empty = (
+                        _case_presence(frame, present_cut)
+                        if frame is not None else (False, "no frame"))
+                    phantom = False
+                    if present:
+                        phantoms = 0
+                    elif not dry and gate_mode:
+                        # CAROUSEL: an empty pocket at the camera is a gap
+                        # (or a case the camera could not see), never the
+                        # end of the brass — the sensor decides that. This
+                        # pocket rides a normal sensor-gated cycle with a
+                        # catch-all verdict: a gap costs one cycle, a
+                        # missed case lands in bin 9, never a wrong bin.
+                        phantoms += 1
+                        try:
+                            ed = run_dir / "empty"
+                            ed.mkdir(exist_ok=True)
+                            cv2.imwrite(str(ed / f"after_{sorted_n:04d}_{phantoms}.jpg"),
+                                        frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                        except Exception:
+                            pass
+                        note(f"empty pocket at the camera after case {sorted_n} "
+                             f"({phantoms} in a row): {why_empty}")
+                        if phantoms >= PHANTOM_LIMIT:
+                            msg_ = (f"{phantoms} pockets in a row looked empty "
+                                    "while the brass sensor kept feeding — "
+                                    "the camera can't see the cases. Check "
+                                    "the lens and the light; those cases "
+                                    "are in bin 9.")
+                            note("run END: " + msg_)
+                            with self.lock:
+                                self.state["end_reason"] = "empty_pockets"
+                                self.state["end_note"] = msg_
+                                self.state["error"] = msg_
+                            break
+                        phantom = True
+                    if not present and not phantom:
                         if dry:
                             # the flush walked every straggler through the
                             # camera: one final forced feed replays the
@@ -4814,9 +6158,16 @@ class RunManager:
                             # (already counted) case at its slot. Wheel is
                             # now empty.
                             transport.send("FEED")
-                            await_feed()
+                            r = await_feed()
                             with self.lock:
-                                self.state["end_reason"] = "out_of_brass"
+                                if r == "JAM" and _console.get("fault"):
+                                    # a fault (or reboot) on the very last
+                                    # feed is not a clean out-of-brass
+                                    self.state["end_reason"] = "fault"
+                                    self.state["error"] = ("machine fault: "
+                                                           + _console["fault"])
+                                else:
+                                    self.state["end_reason"] = "out_of_brass"
                                 self.state["flushed"] = flushed
                             break
                         if empty_left > 0:
@@ -4835,6 +6186,9 @@ class RunManager:
                             continue
                         with self.lock:
                             self.state["end_reason"] = "out_of_brass"
+                            self.state["end_note"] = (
+                                f"{EMPTY_FEEDS} empty pockets in a row at "
+                                f"the camera ({why_empty})")
                         break
                     empty_left = EMPTY_FEEDS      # real case: refill budget
                     if dry:
@@ -4848,6 +6202,7 @@ class RunManager:
                             # needs on the next PFEED.
                             dry = False
                             waiting = 0
+                            clear_pause(False)
                             with self.lock:
                                 self.state["flushed"] = flushed
                             note(f"brass still flowing ({dry_present} "
@@ -4866,16 +6221,19 @@ class RunManager:
                     # the embedding decider is the only brain (twins
                     # retired after ~1,700 head-to-head cases:
                     # zero known-brand misfiles, one-third the rejects)
-                    sh = get_shadow()
-                    ctr = getattr(camera, "center", None)
-                    t1 = time.time()
-                    from sorter.embed_classifier import EmbedDecider
-                    d = EmbedDecider(load_cfg(), sh).classify(
-                        frame, center=ctr, probe=not self.capture)
-                    infer_ms = (time.time() - t1) * 1000
+                    if phantom:
+                        d, infer_ms, slot = None, 0.0, self.catch_all
+                    else:
+                        sh = get_shadow()
+                        ctr = getattr(camera, "center", None)
+                        t1 = time.time()
+                        from sorter.embed_classifier import EmbedDecider
+                        d = EmbedDecider(load_cfg(), sh).classify(
+                            frame, center=ctr, probe=not self.capture)
+                        infer_ms = (time.time() - t1) * 1000
 
-                    slot = (self.catch_all if self.capture
-                            else self._resolve_slot(d))
+                        slot = (self.catch_all if self.capture
+                                else self._resolve_slot(d))
                     t_feed = time.monotonic()
                     if pipelined and not dry:
                         transport.send(f"PSLOT:{slot}")
@@ -4886,6 +6244,9 @@ class RunManager:
                         transport.send(f"FLUSH:{prev_slot}:{slot}" if dry
                                        else f"SORT:{slot}")
                     reply = sort_reply()
+                    if reply == "STOP":
+                        note(f"stopped while paused after case {sorted_n}")
+                        break
                     if reply == "WAITING":
                         # a dry feeder answered the bare sort. One or two
                         # waits can be a case still falling from the
@@ -4902,14 +6263,36 @@ class RunManager:
                             dry = True
                             dry_present = 0
                             note(f"DRY/FLUSH MODE entered after case {sorted_n}")
+                            clear_pause(True)
                             transport.send(f"FLUSH:{prev_slot}:{slot}")
                             reply = sort_reply()
+                        elif outcome.startswith("FAULT:"):
+                            reply = outcome
                         else:
                             reply = "JAM"
+                    if reply and reply.startswith("FAULT:"):
+                        # a fault (or a mid-run reboot, which the transport
+                        # reports as one) landing inside the sort ack used
+                        # to fall through to HOME + re-prime and the run
+                        # carried on — on a rebooted board, with every
+                        # setting at compile default
+                        reason = reply[6:]
+                        note(f"run END: machine fault — {reason}")
+                        with self.lock:
+                            self.state["end_reason"] = "fault"
+                            self.state["error"] = "machine fault: " + reason
+                        _console["fault"] = reason
+                        break
                     if reply != "DONE":
                         if reply == "JAM":
                             with self.lock:
                                 self.state["jams"] += 1
+                        why = (getattr(transport, "last_error", None)
+                               if reply == "JAM" else None)
+                        note(f"sort ack {reply or 'timed out'} after case "
+                             f"{sorted_n}" + (f" ({why})" if why else "")
+                             + (" — end of brass, stopping" if dry
+                                else " — re-homing the wheel"))
                         if dry:
                             # never home-and-refeed blind at end of brass —
                             # remaining stragglers stay for the operator
@@ -4919,6 +6302,9 @@ class RunManager:
                             break
                         transport.send("HOME")
                         prev_slot = 0     # HOME re-primes at the park slot
+                        continue
+                    if phantom:
+                        prev_slot = slot          # nothing to count or log
                         continue
                     # ack wait = mechanical time NOT hidden under think
                     # time; with ts deltas this decomposes the cycle
@@ -4954,6 +6340,14 @@ class RunManager:
                         entry["views"] = d.extras["views"]
                     if d.extras.get("embed"):
                         entry["embed"] = d.extras["embed"]
+                    # image-quality trail: the donut sharpness the blur gate
+                    # scored, and how long after the seat the photo began —
+                    # so a speed change can be judged on the images, not
+                    # only on the reject count
+                    if d.extras.get("sharpness") is not None:
+                        entry["sharpness"] = d.extras["sharpness"]
+                    if seat_ms is not None:
+                        entry["seat_ms"] = seat_ms
 
                     # defaults bind now: frame/ctr belong to THIS capture
                     # (camera.center advances with the next case), and the
@@ -5005,6 +6399,40 @@ class RunManager:
                             self._rebuild_slots()
                     wq.put(_persist)
 
+                # carousel: cases can still be riding up to 8 stations past
+                # the camera when the loop ends — walk them to their gates
+                # before the wheel parks. Skipped on an operator Stop, a
+                # fault and a camera loss: never move blind. Riders left
+                # behind are untracked for the next run and end in the
+                # catch-all, never a wrong bin.
+                if gate_mode and not self.stop_evt.is_set():
+                    with self.lock:
+                        er = self.state.get("end_reason")
+                    # camera_lost: a case is still at the camera, never
+                    # photographed — leave it there for the next run
+                    # instead of walking it blind into the catch-all
+                    if er not in ("fault", "camera_lost"):
+                        clear_pause(True)
+                        try:
+                            transport.drain()
+                            # KNOWN empty: no targeted rider left, and any
+                            # post-HOME orphan lap has run its course
+                            wheel_clear = (
+                                not self.stop_evt.is_set()
+                                and transport.targeted() == 0
+                                and transport.rotations
+                                >= transport.suppress_until)
+                        except Exception as e:
+                            note(f"choreo drain failed: {e}")
+                    with self.lock:
+                        self.state["gate_drops"] = transport.dropped
+                        self.state["gate_misses"] = transport.missed
+                        self.state["gate_orphaned"] = transport.orphaned
+                        self.state["gate_prefired"] = transport.pre_fired
+                        self.state["gate_latefired"] = transport.late_fired
+
+                clear_pause(False)            # the pause never outlives the clear
+
                 # every queued job must land before the log files close
                 # and the report/state read the run as finished
                 wq.put(None)
@@ -5029,7 +6457,9 @@ class RunManager:
                         # headstamp owns; catch-all is a safe reject
                         if bin_id == self.catch_all:
                             rejected_known += 1
-                        elif case.stamp in (self.slot_stamp.get(bin_id) or []):
+                        elif (case.stamp in (self.slot_stamp.get(bin_id) or [])
+                              or bin_id == load_cfg().bin_map.get(
+                                  (case.stamp, None))):   # family bins
                             correct += 1
                         else:
                             misfiled += 1
@@ -5053,10 +6483,10 @@ class RunManager:
                 if not self.state["end_reason"]:
                     self.state["end_reason"] = \
                         "stopped" if self.stop_evt.is_set() else "complete"
-                self.state.update(running=False, finished=True, score=score)
+                self.state.update(finished=True, score=score)
         except Exception as e:
             with self.lock:
-                self.state.update(running=False, error=str(e))
+                self.state.update(error=str(e))
         finally:
             if wq is not None:
                 wq.put(None)          # crash path: normal runs already
@@ -5068,6 +6498,17 @@ class RunManager:
                 rj = run_dir / "run.json"
                 meta = json.loads(rj.read_text())
                 meta["duration_s"] = round(time.time() - t0, 1)
+                with self.lock:
+                    meta["end_reason"] = self.state.get("end_reason")
+                    meta["end_note"] = self.state.get("end_note")
+                if params.get("mode") == "serial":
+                    meta["wheel_clear"] = wheel_clear
+                    _gate_wave["wheel_empty"] = wheel_clear
+                # auto-assign grows the map mid-run: fold its claims in
+                for s, stamps in self.slot_stamp.items():
+                    bins = meta.setdefault("bins", [])
+                    bins += [[] for _ in range(s + 1 - len(bins))]
+                    bins[s] += [x for x in stamps if x not in bins[s]]
                 rj.write_text(json.dumps(meta))
             except (OSError, ValueError):
                 pass
@@ -5081,7 +6522,14 @@ class RunManager:
             # close the raw link ourselves — the transport's later close
             # writes into a dead link and is harmlessly swallowed.
             link = getattr(transport, "link", None)
+            _feeder["run_transport"] = None
             if link is not None:
+                ms_f = machine_settings()
+                if ms_f.get("case_feeder") and ms_f.get("feeder_auto_start"):
+                    try:
+                        link.write("feeder:run:0\n")
+                    except Exception:
+                        pass
                 try:
                     link.write("stop\n")
                     time.sleep(0.2)
@@ -5097,12 +6545,34 @@ class RunManager:
                         closer.close() if closer is transport else closer.release()
                 except Exception:
                     pass
+            if (machine_settings().get("firmware") == "pico-servo"
+                    and params.get("mode") == "serial"):
+                # every ended run closes the doors from here too, whatever
+                # the run's own close did: a jam once left door 5 held open
+                # overnight. Logged if the servo board refuses a write.
+                why = self.state.get("end_reason") or "stopped"
+                _gates_close_all(f"run ended: {why}")
             if params.get("mode") == "serial":
                 # hand the board back: auto-connect reopens the port within
                 # ~5s and re-pushes the machine settings (the reopen resets
                 # the Uno, so the re-push is exactly what we want)
                 with _console["lock"]:
                     _console["hold"] = False
+                threading.Thread(target=_reconnect_after_run, daemon=True).start()
+            # running stays True until HERE: the link is closed and the
+            # board handed back. Clearing it earlier let a console Connect
+            # or a gate test open the port a second time (a DTR pulse
+            # rebooting the Uno mid-homing) during the ~1 s handback.
+            with self.lock:
+                self.state["running"] = False
+            if self.batch_class:
+                # registered before the thread starts, so a UI polling the
+                # instant the run ends sees "checking", never "pending"
+                _one_class_jobs[run_dir.name] = {"state": "checking",
+                                                 "stamp": self.batch_class}
+                threading.Thread(target=_one_class_job,
+                                 args=(run_dir.name, self.batch_class),
+                                 daemon=True).start()
 
 
 run_mgr = RunManager()
@@ -5119,6 +6589,12 @@ def api_run_start():
         return jsonify({"error": "the mislabel scan is re-reading the "
                         "dataset — let it finish (or cancel it on the "
                         "Dataset tab), then start the run"}), 409
+    if _cam_cal["running"]:
+        # the calibration worker is sweeping white balance on the live
+        # camera; a run started under it photographs cases in the wrong
+        # colour and then has the lock written over them
+        return jsonify({"error": "camera calibration is running — wait "
+                        "for it to finish, then start the run"}), 409
     if _dup_status["running"]:
         return jsonify({"error": "the duplicate scan is running — let it "
                         "finish (or cancel it on the Dataset tab), then "
@@ -5134,9 +6610,50 @@ def api_run_start():
     if train_status.get("running"):
         return jsonify({"error": "training is running on this install — "
                         "wait for it to finish"}), 409
-    err = run_mgr.start(request.get_json() or {})
+    if _usb_status["running"]:
+        return jsonify({"error": "the dataset is copying to a USB stick — "
+                        "wait for the copy to finish"}), 409
+    body = request.get_json() or {}
+    # a one-class batch names its class up front: the run files it when
+    # the hopper empties, holding back the cases that don't look like it
+    bc = (body.get("batch_class") or "").strip()
+    if bc and (not body.get("capture") or bc not in load_cfg().stamp_labels):
+        return jsonify({"error": f"{bc!r} is not a class here"}), 400
+    err = run_mgr.start(body)
     if err:
         return jsonify({"error": err}), 409
+    return jsonify({"ok": True})
+
+
+@app.post("/api/run/pause")
+def api_run_pause():
+    if not run_mgr.state.get("running"):
+        return jsonify({"error": "no run is going"}), 409
+    run_mgr.pause()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/run/resume")
+def api_run_resume():
+    run_mgr.resume()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/run/finish")
+def api_run_finish():
+    """End the run like the brass ran out: the wheel is walked empty."""
+    if not run_mgr.state.get("running"):
+        return jsonify({"error": "no run is going"}), 409
+    run_mgr.finish()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/run/prompt")
+def api_run_prompt():
+    act = (request.get_json() or {}).get("action")
+    if act not in ("finish", "resume"):
+        return jsonify({"error": "action must be finish or resume"}), 400
+    run_mgr.prompt_act = act
     return jsonify({"ok": True})
 
 
@@ -5180,25 +6697,44 @@ def api_runs():
                 if (d / "frames").is_dir() else 0
             mode = None
             capture = False
+            rj = {}
             try:
                 rj = json.loads((d / "run.json").read_text())
                 mode = rj.get("mode")
                 capture = bool(rj.get("capture"))
             except (OSError, ValueError):
                 pass
-            # tally + duration off the log so the run list can describe
-            # each run without anyone opening its full report
-            total = dur = None
+            # tally, duration and the run's shape off the log, so the run
+            # list can describe each run without opening its full report
+            total = dur = conf_med = None
+            rejected = overflow = 0
+            top, by = [], {}
             try:
-                lines = (d / "log.jsonl").read_text().splitlines()
-                total = len(lines)
-                if lines:
-                    dur = json.loads(lines[-1]).get("ts")
+                ents = [json.loads(l) for l in
+                        (d / "log.jsonl").read_text().splitlines() if l.strip()]
+                total = len(ents)
+                if ents:
+                    dur = ents[-1].get("ts")
+                ok = [e for e in ents if e.get("reason") in ("ok", "no_bin_mapping")]
+                rejected = total - len(ok)
+                overflow = sum(1 for e in ok if e["reason"] == "no_bin_mapping")
+                confs = sorted(e.get("stamp_conf") or 0 for e in ok)
+                if confs:
+                    conf_med = round(confs[len(confs) // 2], 3)
+                for e in ok:
+                    by[e.get("stamp")] = by.get(e.get("stamp"), 0) + 1
+                top = sorted(by.items(), key=lambda kv: -kv[1])[:3]
             except (OSError, ValueError):
                 pass
             runs.append({"run": d.name, "rejects": n_rej, "mode": mode,
                          "capture": capture, "cases_left": n_frames + n_rej,
-                         "total": total, "dur_s": dur})
+                         "batch_class": rj.get("batch_class"),
+                         "total": total, "dur_s": rj.get("duration_s") or dur,
+                         "rejected": rejected, "overflow": overflow,
+                         "conf_med": conf_med, "top": top,
+                         "classes": len(by),
+                         "end_reason": rj.get("end_reason"),
+                         "end_note": rj.get("end_note")})
     return jsonify({"runs": runs[:20]})
 
 
@@ -5383,10 +6919,34 @@ def api_run_report(run_id):
     for c in cases:
         if (thumbs / f"{c['n']:04d}.jpg").exists():
             c["thumb"] = f"/api/runs/{run_id}/thumb/{c['n']}"
+    bin_map, map_src = meta.get("bins"), "run"
+    if not isinstance(bin_map, list):
+        bin_map, map_src = _bin_map_from_log(entries), "log"
     return jsonify({"run": run_id, "mode": meta.get("mode"),
                     "total": len(entries), "duration_s": duration,
                     "bins": bins_out, "reasons": reasons, "stamps": stamps,
-                    "cases": cases})
+                    "cases": cases, "bin_map": bin_map,
+                    "bin_map_source": map_src})
+
+
+def _bin_map_from_log(entries):
+    """Rebuild a run's bin map from where its cases actually went — for
+    runs saved before run.json carried the map. Accepted classes name
+    their bin; the bin that took rejects is UNMATCHED, the bin that took
+    unmapped classes is OVERFLOW."""
+    n = max([len(load_cfg().bins)] + [e["bin"] + 1 for e in entries
+                               if isinstance(e.get("bin"), int)])
+    bins = [[] for _ in range(n)]
+    for e in entries:
+        b = e.get("bin")
+        if not isinstance(b, int) or b < 0:
+            continue
+        r = e.get("reason")
+        tag = (e.get("stamp") if r == "ok"
+               else "OVERFLOW" if r == "no_bin_mapping" else "UNMATCHED")
+        if tag and tag not in bins[b]:
+            bins[b].append(tag)
+    return bins
 
 
 def _resolve_case_file(a_path, b_path, body):
@@ -5410,8 +6970,7 @@ def _resolve_case_file(a_path, b_path, body):
         if stamp == "UNKNOWN":
             udir = DATA_DIR / "unknown"
             udir.mkdir(parents=True, exist_ok=True)
-            existing = sorted(udir.glob("*_A.png"))
-            idx = int(existing[-1].name.split("_")[0]) + 1 if existing else 0
+            idx = next_index(udir)
             cv2.imwrite(str(udir / f"{idx:04d}_A.png"), frame)
             saved = f"UNKNOWN #{idx}"
         else:
@@ -5475,6 +7034,82 @@ def _case_frame(d, n):
     return None
 
 
+def _case_card(d, e, p):
+    """One review card for a run case: thumb, read, runner-up."""
+    # the run loop already saved a 200px head thumb for every
+    # classified case — re-deriving it from the full frame took a
+    # 300-case review to ~20s of server stall (starved the header
+    # poll into a false "disconnected")
+    t = d / "thumbs" / f"{e['n']:04d}.jpg"
+    if t.is_file():
+        thumb = ("data:image/jpeg;base64,"
+                 + base64.b64encode(t.read_bytes()).decode())
+    else:
+        img = cv2.imread(str(p))
+        thumb = b64_jpg(imaging.head_view(img), max_side=200)
+    out = {"n": e["n"], "stamp": e.get("stamp"),
+           "conf": e.get("stamp_conf"), "thumb": thumb}
+    # the decider's audit trail (who crowded whom): lets the review
+    # card explain a high-% case in the trouble pile — "FC 98% but
+    # R-P at 94%, margin too thin" instead of a bare percentage
+    em = e.get("embed") or {}
+    if em.get("runner"):
+        out["runner"] = em["runner"]
+        out["runner_sim"] = em.get("runner_sim")
+    return out
+
+
+def _case_vecs(d, items, sh):
+    """Embeddings of run cases [(entry, frame path)], in order; None when a
+    run is going and some still need embedding.
+
+    Per-run vector cache: the first review computes each case's embedding
+    once; every later open of the page (and each regroup after filing
+    pulled-out cases) reads it back instead of re-embedding the pile.
+    Keyed to the model so an install invalidates it."""
+    vp = d / "case_vecs.npz"
+    vcache = {}
+    if vp.is_file():
+        try:
+            with np.load(vp, allow_pickle=False) as z:
+                if str(z["model_md5"]) == (sh.model_md5 or ""):
+                    vcache = dict(zip(z["ns"].tolist(), z["vecs"]))
+        except Exception:      # torn/corrupt cache must never 500 the
+            vcache = {}        # review page — it just recomputes
+    # every uncached case costs an interpreter embed — behind the
+    # invoke lock that means STALLING a live run's think time, so a
+    # fresh pass waits its turn instead
+    need = [e["n"] for e, _ in items if e["n"] not in vcache]
+    if need and run_mgr.status().get("running"):
+        return None
+    vecs, fresh = [], False
+    with _groups_busy["lock"]:
+        _groups_busy["n"] += 1
+    try:
+        for e, p in items:
+            v = vcache.get(e["n"])
+            if v is None:
+                img = cv2.imread(str(p))
+                v = sh.embed(imaging.crop_head(img))
+                vcache[e["n"]] = v
+                fresh = True
+            vecs.append(v)
+    finally:
+        with _groups_busy["lock"]:
+            _groups_busy["n"] -= 1
+    if fresh:
+        try:
+            tmp = vp.with_suffix(".tmp.npz")
+            np.savez_compressed(
+                tmp, model_md5=sh.model_md5 or "",
+                ns=np.array(list(vcache), dtype=np.int64),
+                vecs=np.stack(list(vcache.values())))
+            os.replace(tmp, vp)        # never leave a torn file behind
+        except OSError:
+            pass                       # cache is an optimization only
+    return vecs
+
+
 @app.get("/api/runs/<run_id>/groups")
 def api_run_groups(run_id):
     """Grouped review for a capture run (works on any run with frames).
@@ -5492,7 +7127,9 @@ def api_run_groups(run_id):
         return jsonify({"error": "no log"}), 404
     entries = [json.loads(l) for l in log.read_text().splitlines()
                if l.strip()]
-    sh = get_shadow()
+    # a profile with no gallery yet (fresh, photos-first) still groups its
+    # batch by look: the recognizer alone is enough to fingerprint
+    sh = get_shadow() or get_embedder()
     confident, murky = {}, []          # class -> cases | [(n, entry, path)]
     for e in entries:
         p = _case_frame(d, e["n"])
@@ -5502,28 +7139,7 @@ def api_run_groups(run_id):
             confident.setdefault(e["stamp"], []).append((e, p))
         else:
             murky.append((e, p))
-    def card(e, p):
-        # the run loop already saved a 200px head thumb for every
-        # classified case — re-deriving it from the full frame took a
-        # 300-case review to ~20s of server stall (starved the header
-        # poll into a false "disconnected")
-        t = d / "thumbs" / f"{e['n']:04d}.jpg"
-        if t.is_file():
-            thumb = ("data:image/jpeg;base64,"
-                     + base64.b64encode(t.read_bytes()).decode())
-        else:
-            img = cv2.imread(str(p))
-            thumb = b64_jpg(imaging.head_view(img), max_side=200)
-        out = {"n": e["n"], "stamp": e.get("stamp"),
-               "conf": e.get("stamp_conf"), "thumb": thumb}
-        # the decider's audit trail (who crowded whom): lets the review
-        # card explain a high-% case in the trouble pile — "FC 98% but
-        # R-P at 94%, margin too thin" instead of a bare percentage
-        em = e.get("embed") or {}
-        if em.get("runner"):
-            out["runner"] = em["runner"]
-            out["runner_sim"] = em.get("runner_sim")
-        return out
+    card = functools.partial(_case_card, d)
     counts = _counts("stamp", DATA_DIR)
     def wellfed(c):
         return counts.get(c, 0) >= _WELLFED_MIN_IMAGES
@@ -5547,51 +7163,11 @@ def api_run_groups(run_id):
     # cluster the remainder by embedding similarity — join against every
     # member (not just the seed), so chains of look-alikes stay together
     if unknown and sh is not None:
-        # per-run vector cache: the first review computes each murky
-        # case's embedding once; every later open of the page (and each
-        # regroup after filing pulled-out cases) reads it back instead
-        # of re-embedding the pile. Keyed to the model so an install
-        # invalidates it.
-        vp = d / "case_vecs.npz"
-        vcache = {}
-        if vp.is_file():
-            try:
-                with np.load(vp, allow_pickle=False) as z:
-                    if str(z["model_md5"]) == (sh.model_md5 or ""):
-                        vcache = dict(zip(z["ns"].tolist(), z["vecs"]))
-            except Exception:      # torn/corrupt cache must never 500 the
-                vcache = {}        # review page — it just recomputes
-        # every uncached unknown costs an interpreter embed — behind the
-        # invoke lock that means STALLING a live run's think time, so a
-        # fresh clustering waits its turn instead
-        need = [e["n"] for e, _ in unknown if e["n"] not in vcache]
-        if need and run_mgr.status().get("running"):
+        vecs = _case_vecs(d, unknown, sh)
+        if vecs is None:
             return jsonify({"error": "the machine is running — this "
                             "review needs to analyze new cases first; "
                             "open it when the run ends"}), 409
-        vecs, fresh = [], False
-        _groups_busy["n"] += 1
-        try:
-            for e, p in unknown:
-                v = vcache.get(e["n"])
-                if v is None:
-                    img = cv2.imread(str(p))
-                    v = sh.embed(imaging.crop_head(img))
-                    vcache[e["n"]] = v
-                    fresh = True
-                vecs.append(v)
-        finally:
-            _groups_busy["n"] -= 1
-        if fresh:
-            try:
-                tmp = vp.with_suffix(".tmp.npz")
-                np.savez_compressed(
-                    tmp, model_md5=sh.model_md5 or "",
-                    ns=np.array(list(vcache), dtype=np.int64),
-                    vecs=np.stack(list(vcache.values())))
-                os.replace(tmp, vp)        # never leave a torn file behind
-            except OSError:
-                pass                       # cache is an optimization only
         used = [False] * len(unknown)
         for i in range(len(unknown)):
             if used[i]:
@@ -5657,13 +7233,22 @@ def api_run_bulk_resolve(run_id):
                 raw["stamp_labels"].append(stamp)
                 write_active_model(raw)
         load_cfg()
+    kept, skipped, routine = _bulk_file(d, ns, stamp,
+                                        bool(body.get("file_all")))
+    return jsonify({"ok": True, "stamp": stamp, "kept": kept,
+                    "skipped_duplicates": skipped,
+                    "skipped_routine": routine})
+
+
+def _bulk_file(d, ns, stamp, file_all=False):
+    """File run cases ns under stamp -> (kept, skipped_duplicates,
+    skipped_routine); the gates are the ones bulk_resolve documents."""
     sh = get_shadow()
     n_imgs = len(list((DATA_DIR / "stamp" / stamp).glob("*.png"))) \
         if (DATA_DIR / "stamp" / stamp).is_dir() else 0
     gate = (sh is not None and stamp != "UNKNOWN"
             and n_imgs >= NOVELTY_MIN_IMAGES)
-    intake = (gate and n_imgs >= _WELLFED_MIN_IMAGES
-              and not body.get("file_all"))
+    intake = gate and n_imgs >= _WELLFED_MIN_IMAGES and not file_all
     kept, skipped, routine = 0, 0, 0
     for n in ns:
         p = _case_frame(d, int(n))
@@ -5686,9 +7271,167 @@ def api_run_bulk_resolve(run_id):
             {"action": "save", "stamp": stamp})
         if err is None and saved:
             kept += 1
-    return jsonify({"ok": True, "stamp": stamp, "kept": kept,
-                    "skipped_duplicates": skipped,
-                    "skipped_routine": routine})
+    return kept, skipped, routine
+
+
+# ------------------------------------------------------ one-class batches ---
+# A one-class batch is loaded with a single class, but a stray case always
+# finds its way into a hopper — filing the lot blindly put an oddball
+# WIN+P into the dataset. When the batch ends, every case is read against
+# the chosen class first: the ones that look like it are filed, the rest
+# are held for the operator with the reason.
+_ONE_CLASS_FAR = 0.75      # closest photo of the class below this: an oddball
+_one_class_jobs = {}       # run_id -> {"state": "checking"|"error", ...}
+
+
+def _one_class_plan(d, stamp, sh, items):
+    """Split a batch's cases [(entry, frame)] -> (ns to file, held), held
+    being [(entry, frame, kind, why)] with kind other|far|low."""
+    raw = active_model_raw()
+    fam = {stamp}
+    for members in (raw.get("families") or {}).values():
+        if stamp in members:
+            fam.update(members)
+    vecs = _case_vecs(d, items, sh)
+    if vecs is None:
+        raise RuntimeError("a run is going — check the batch when it ends")
+    V = np.stack(vecs) if vecs else np.zeros((0, 1), np.float32)
+    ref = None
+    if getattr(sh, "all_vec", None) is not None:
+        idx = [i for i, c in enumerate(sh.all_cls) if c == stamp]
+        if len(idx) >= 3:
+            ref = sh.all_vec[idx]
+    if ref is not None:
+        near = (V @ ref.T).max(axis=1) if len(V) else np.zeros(0)
+    else:
+        # a class with no photos yet has nothing to compare against: the
+        # batch is its own reference — its biggest look-alike core is the
+        # class, and what sits outside it is the stray
+        S = V @ V.T
+        np.fill_diagonal(S, -1.0)
+        near = np.ones(len(V))
+        if len(V) > 1:
+            m = int(np.argmax((S > 0.85).sum(axis=1)))   # the most-agreed case
+            core = set(np.where(S[m] >= 0.85)[0].tolist()) | {m}
+            for i in range(len(V)):
+                others = [j for j in core if j != i]
+                near[i] = S[i, others].max() if others else 1.0
+    bar = getattr(sh, "class_tau", {}).get(stamp, getattr(sh, "tau", 0.85))
+    file_ns, held = [], []
+    for (e, p), s in zip(items, near):
+        read, conf = e.get("stamp"), e.get("stamp_conf") or 0
+        if (e.get("reason") in ("ok", "no_bin_mapping") and read
+                and read not in fam):
+            held.append((e, p, "other", f"Reads as {read} ({conf:.2f})"))
+        elif s < _ONE_CLASS_FAR:
+            held.append((e, p, "far", f"Nothing like {stamp}: closest "
+                                      f"{stamp} photo {s:.2f}"))
+        elif s < bar:
+            held.append((e, p, "low", f"Not sure: closest {stamp} "
+                                      f"photo {s:.2f}"))
+        else:
+            file_ns.append(e["n"])
+    return file_ns, held
+
+
+def _one_class_job(run_id, stamp):
+    """Check a finished one-class batch and file what looks like the class;
+    the outcome (and why each held case was held) lands in run.json."""
+    d = _run_dir(run_id)
+    if d is None:
+        return
+    _one_class_jobs[run_id] = {"state": "checking", "stamp": stamp}
+    try:
+        entries = [json.loads(l) for l in
+                   (d / "log.jsonl").read_text().splitlines() if l.strip()] \
+            if (d / "log.jsonl").is_file() else []
+        items = [(e, p) for e in entries
+                 if (p := _case_frame(d, e["n"])) is not None]
+        sh = get_shadow() or get_embedder()
+        if sh is None:
+            raise RuntimeError("no recognizer installed")
+        file_ns, held = _one_class_plan(d, stamp, sh, items)
+        kept, dup, routine = _bulk_file(d, file_ns, stamp)
+        rec = {"stamp": stamp, "checked": len(items), "filed": kept,
+               "skipped": dup + routine, "held_n": len(held),
+               "held": {str(e["n"]): {"kind": k, "why": w,
+                                      "read": e.get("stamp")}
+                        for e, _, k, w in held}}
+        rj = d / "run.json"
+        meta = json.loads(rj.read_text()) if rj.is_file() else {}
+        meta["one_class"] = rec
+        rj.write_text(json.dumps(meta))
+        _counts_dirty()
+        _one_class_jobs.pop(run_id, None)
+    except Exception as e:
+        _one_class_jobs[run_id] = {"state": "error", "stamp": stamp,
+                                   "error": f"{type(e).__name__}: {e}"}
+
+
+@app.get("/api/runs/<run_id>/one_class")
+def api_run_one_class(run_id):
+    """A one-class batch's outcome: checking / filed + the cases still held
+    (resolving one through bulk_resolve removes it from the list)."""
+    d = _run_dir(run_id)
+    if d is None:
+        return jsonify({"error": "unknown run"}), 404
+    job = _one_class_jobs.get(run_id)
+    if job:
+        return jsonify(job)
+    try:
+        meta = json.loads((d / "run.json").read_text())
+    except (OSError, ValueError):
+        meta = {}
+    rec = meta.get("one_class")
+    if not rec:
+        return jsonify({"state": "pending" if meta.get("batch_class") else "none",
+                        "stamp": meta.get("batch_class")})
+    entries = {}
+    if (d / "log.jsonl").is_file():
+        for l in (d / "log.jsonl").read_text().splitlines():
+            if l.strip():
+                e = json.loads(l)
+                entries[str(e["n"])] = e
+    held = []
+    for n, h in rec.get("held", {}).items():
+        e = entries.get(n)
+        p = _case_frame(d, int(n)) if e else None
+        if p is None:
+            continue                     # resolved since
+        c = _case_card(d, e, p)
+        c.update(kind=h["kind"], why=h["why"], read=h.get("read"))
+        held.append(c)
+    order = {"other": 0, "far": 1, "low": 2}
+    held.sort(key=lambda c: (order.get(c["kind"], 3), c["n"]))
+    return jsonify({"state": "done", "stamp": rec["stamp"],
+                    "checked": rec.get("checked"), "filed": rec.get("filed"),
+                    "skipped": rec.get("skipped"),
+                    "held_n": rec.get("held_n"), "held": held})
+
+
+@app.post("/api/runs/<run_id>/one_class")
+def api_run_one_class_start(run_id):
+    """Check and file a one-class batch whose job never ran (the app was
+    restarted as the batch ended) — idempotent: filed cases are gone."""
+    d = _run_dir(run_id)
+    if d is None:
+        return jsonify({"error": "unknown run"}), 404
+    if run_mgr.status().get("running"):
+        return jsonify({"error": "a run is going — check the batch when "
+                        "it ends"}), 409
+    if (_one_class_jobs.get(run_id) or {}).get("state") == "checking":
+        return jsonify({"ok": True})
+    try:
+        meta = json.loads((d / "run.json").read_text())
+    except (OSError, ValueError):
+        meta = {}
+    stamp = meta.get("batch_class")
+    if not stamp:
+        return jsonify({"error": "not a one-class batch"}), 400
+    _one_class_jobs[run_id] = {"state": "checking", "stamp": stamp}
+    threading.Thread(target=_one_class_job, args=(run_id, stamp),
+                     daemon=True).start()
+    return jsonify({"ok": True})
 
 
 # ------------------------------------------------------------- Pi network ---
@@ -5718,7 +7461,8 @@ def _nmcli(*args, timeout=20):
     ok, out = run(("nmcli", *args))
     if ok is None:
         return False, out
-    if not ok and "not authorized" in out.lower():
+    if not ok and ("not authorized" in out.lower()
+                   or "insufficient privileges" in out.lower()):
         ok2, out2 = run(("sudo", "-n", "nmcli", *args))
         if ok2:
             return True, out2
@@ -5821,7 +7565,16 @@ def api_network_connect():
         # security type (bench-test failure: "key-mgmt property is missing")
         _nmcli("device", "wifi", "rescan")
         time.sleep(4)
+    ok, out = _wifi_join(ssid, password)
+    if not ok:
+        if was_ap:
+            _ap_up()
+        return jsonify({"error": out}), 400
+    return jsonify({"ok": True, "detail": out})
 
+
+def _wifi_join(ssid, password):
+    """Join `ssid`; returns (ok, nmcli text)."""
     def join():
         # a saved profile for this SSID (Imager/netplan-provisioned
         # included) beats creating a duplicate: update its secret if a
@@ -5855,13 +7608,7 @@ def api_network_connect():
             if oka:
                 return _nmcli("connection", "up", ssid, timeout=60)
         return ok1, out1
-
-    ok, out = join()
-    if not ok:
-        if was_ap:
-            _ap_up()
-        return jsonify({"error": out}), 400
-    return jsonify({"ok": True, "detail": out})
+    return join()
 
 
 @app.post("/api/network/forget")
@@ -5885,9 +7632,25 @@ def api_network_forget():
 # real network. The join tears the hotspot down first (one radio) and
 # raises it again if the join fails — a bad password must not strand the
 # box twice.
+# A box that HAD a network and lost it (a mesh roam, an access point
+# rebooting) waits AP_GRACE_S first: a one-minute blip once put the
+# carousel on its own hotspot for 5 1/2 hours. And the hotspot holds the
+# only radio, so NetworkManager can never rejoin by itself — while nobody
+# is on the hotspot it stands down every AP_RETRY_S to let the saved
+# networks try again, and comes back up if none answers.
 AP_CON = "sortiq-ap"
 AP_PASSWORD = "sortbrass"       # WPA2 wants 8+; in the docs next to the SSID
-_ap = {"active": False}
+AP_GRACE_S = 300                # a network the box HAD must be gone this long
+AP_RETRY_S = 300                # hotspot up: retry the real network this often
+AP_RETRY_WAIT_S = 45            # how long each retry gives NetworkManager
+_ap = {"active": False, "last_client": 0.0}
+
+
+@app.before_request
+def _ap_note_client():
+    # someone browsing the app over the hotspot: never pull it from under them
+    if _ap["active"] and (request.remote_addr or "").startswith("10.42.0."):
+        _ap["last_client"] = time.monotonic()
 
 
 def _ap_ssid():
@@ -5934,23 +7697,645 @@ def _ap_down():
     _net_cache["resp"] = None
 
 
+def _ap_in_use():
+    """Someone is on the hotspot: browsed the app over it in the last two
+    minutes, or a device on it answered recently (the kernel's neighbour
+    table). Can't tell = in use."""
+    if time.monotonic() - _ap["last_client"] < 120:
+        return True
+    try:
+        out = subprocess.run(("ip", "neigh", "show", "dev", "wlan0"),
+                             capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+    return any(s in out for s in ("REACHABLE", "DELAY", "PROBE"))
+
+
+# NetworkManager gives up on a network after a few failed tries and never
+# comes back on its own (field: the carousel's locked 5 GHz access point
+# refused it one evening and the Pi stayed offline 15 hours). Offline, the
+# watchdog brings the saved network up itself every AP_RETRY_S; a profile
+# locked to ONE access point that keeps refusing is released after
+# LOCK_FALLBACK_TRIES (any point will do, even a slow one) and the lock
+# returns once that point is seen again.
+LOCK_FALLBACK_TRIES = 3
+RELOCK_CHECK_S = 600
+_wifi_fb = {"tries": 0, "unlocked_from": None, "relock_t": 0.0}
+
+
+def _wifi_profile():
+    """The saved Wi-Fi profile (not our hotspot)."""
+    ok, out = _nmcli("-t", "-f", "NAME,TYPE", "connection", "show")
+    for line in (out.splitlines() if ok else []):
+        name, _, typ = line.rpartition(":")
+        if typ == "802-11-wireless" and name != AP_CON:
+            return name
+    return None
+
+
+def _wait_net(seconds):
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < seconds:
+        if _net_has_link():
+            return True
+        time.sleep(3)
+    return False
+
+
+def _home_retry():
+    """Bring the saved Wi-Fi network up again (the hotspot steps aside —
+    one radio). True when the Pi is back on a real network."""
+    prof = _wifi_profile()
+    if not prof:
+        return False
+    _ap_down()
+    lock = _wifi_lock(prof)
+    if lock and _wifi_fb["tries"] >= LOCK_FALLBACK_TRIES:
+        _nmcli("connection", "modify", prof, "802-11-wireless.bssid", "")
+        _wifi_fb["unlocked_from"] = lock
+        _wifi_fb["relock_t"] = time.monotonic()
+        print(f"wifi: locked access point {lock} keeps refusing — "
+              "taking any access point for now", flush=True)
+    _nmcli("device", "wifi", "rescan")
+    time.sleep(3)
+    ok, out = _nmcli("connection", "up", prof, timeout=60)
+    if ok and _wait_net(AP_RETRY_WAIT_S):
+        _wifi_fb["tries"] = 0
+        print("wifi: back on the saved network", flush=True)
+        return True
+    _wifi_fb["tries"] += 1
+    print(f"wifi: reconnect try {_wifi_fb['tries']} failed: "
+          f"{(out or '').strip()[:100]}", flush=True)
+    return False
+
+
+def _maybe_relock():
+    """Back online after releasing a lock: once the locked access point is
+    in range again, lock to it again (and fall back again if it refuses)."""
+    was = _wifi_fb["unlocked_from"]
+    if not was or time.monotonic() - _wifi_fb["relock_t"] < RELOCK_CHECK_S:
+        return
+    _wifi_fb["relock_t"] = time.monotonic()
+    prof = _wifi_profile()
+    ok, out = _nmcli("-t", "-f", "BSSID,SIGNAL", "device", "wifi", "list",
+                     "--rescan", "yes", timeout=30)
+    seen = [l for l in (out.splitlines() if ok else [])
+            if l.replace("\\:", ":").upper().startswith(was)]
+    if not prof or not seen or int(seen[0].rsplit(":", 1)[-1] or 0) < 40:
+        return
+    _nmcli("connection", "modify", prof, "802-11-wireless.bssid", was)
+    ok, _ = _nmcli("connection", "up", prof, timeout=60)
+    if ok and _wait_net(45):
+        _wifi_fb["unlocked_from"] = None
+        print(f"wifi: locked to {was} again", flush=True)
+    else:
+        _nmcli("connection", "modify", prof, "802-11-wireless.bssid", "")
+        _nmcli("connection", "up", prof, timeout=60)
+        print(f"wifi: {was} still refuses — staying on any access point", flush=True)
+
+
+def _ap_retry():
+    """Stand the hotspot down and try the saved network; raise the hotspot
+    again if it didn't answer."""
+    if _home_retry():
+        return True
+    _ap_up()
+    return False
+
+
 def _ap_watchdog():
     time.sleep(75)                   # NetworkManager's own autoconnect window
     misses = 0
+    had_link = False                 # a real network seen since app start
+    lost_t = None                    # when the real network went missing
+    last_try = time.monotonic()
     while True:
         if _net_has_link():
-            misses = 0
+            misses, lost_t, had_link = 0, None, True
+            _wifi_fb["tries"] = 0
             _ap_down()               # a cable showed up: real network wins
-        elif not _ap["active"]:
+            try:
+                _maybe_relock()
+            except Exception as e:
+                print(f"wifi: relock check failed: {e}", flush=True)
+        elif _ap["active"]:
+            if (time.monotonic() - last_try >= AP_RETRY_S
+                    and not _ap_in_use()):
+                if _ap_retry():
+                    misses, lost_t = 0, None
+                last_try = time.monotonic()
+        else:
             misses += 1
-            if misses >= 2:          # two sightings 30s apart — not a blip
-                _ap_up()
+            lost_t = lost_t or time.monotonic()
+            # never had a network (new garage, wrong password): two
+            # sightings 30 s apart. Had one: wait out the roam or reboot.
+            if (time.monotonic() - lost_t >= AP_GRACE_S if had_link
+                    else misses >= 2):
+                # offline with no hotspot (it failed, or never came up):
+                # NetworkManager won't retry by itself — we do
+                if (had_link and time.monotonic() - last_try >= AP_RETRY_S
+                        and _home_retry()):
+                    misses, lost_t = 0, None
+                    last_try = time.monotonic()
+                    time.sleep(30)
+                    continue
+                if not _ap["active"] and not _ap_up():
+                    last_try = min(last_try, time.monotonic())
+                else:
+                    last_try = time.monotonic()
         time.sleep(30)
+
+
+# ------------------------------------------------------------ touchscreen ---
+# The machine's own 7" screen: a kiosk (cage + Chromium, sortiq-kiosk
+# service) shows /screen from localhost. The app owns the screen's sleep:
+# any touch, read straight from the input devices, wakes it, and
+# screen_sleep_min minutes without one switch the HDMI output off through
+# the compositor (wlr-randr). Never during a run, and a run starting wakes
+# it. The page puts a shield over itself while asleep, so the tap that
+# wakes the screen presses nothing.
+_screen = {"available": False, "asleep": False, "sleep_t": 0.0,
+           "wake_t": 0.0, "last_touch": time.monotonic(), "mins": 10,
+           "beat": time.monotonic(), "kick_t": 0.0}
+SCREEN_HANG_S = 60
+
+
+def _screen_local():
+    """The request came from the machine's own screen (the kiosk browses
+    from localhost). Network changes are taken only from there: a phone
+    or PC can't strand the box on a network it can't reach."""
+    return request.remote_addr in ("127.0.0.1", "::1")
+
+
+def _wl_env():
+    return {**os.environ, "XDG_RUNTIME_DIR": f"/run/user/{os.getuid()}",
+            "WAYLAND_DISPLAY": "wayland-0"}
+
+
+def _screen_output(on):
+    try:
+        r = subprocess.run(["wlr-randr"], capture_output=True, text=True,
+                           timeout=5, env=_wl_env())
+        name = next((l.split()[0] for l in r.stdout.splitlines()
+                     if l.strip() and not l[0].isspace()), None)
+        if not name:
+            return False
+        r = subprocess.run(["wlr-randr", "--output", name,
+                            "--on" if on else "--off"],
+                           capture_output=True, text=True, timeout=5,
+                           env=_wl_env())
+        return r.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _screen_output_enabled():
+    """True/False from the compositor, None when it can't be asked."""
+    try:
+        r = subprocess.run(["wlr-randr"], capture_output=True, text=True,
+                           timeout=5, env=_wl_env())
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0 or "Enabled:" not in r.stdout:
+        return None
+    return "Enabled: yes" in r.stdout
+
+
+def _screen_set_asleep(asleep):
+    if asleep == _screen["asleep"]:
+        return True
+    if not _screen_output(not asleep):
+        print(f"screen: switching {'off' if asleep else 'on'} FAILED", flush=True)
+        return False
+    print(f"screen: {'asleep' if asleep else 'awake'}", flush=True)
+    _screen["asleep"] = asleep
+    if asleep:
+        _screen["sleep_t"] = time.monotonic()
+    else:
+        _screen["wake_t"] = time.monotonic()
+        _screen["last_touch"] = time.monotonic()
+    return True
+
+
+def _screen_inputs():
+    """Touch panels, keyboards and mice — not the HDMI ports' own CEC and
+    jack inputs, which would wake the screen on their own."""
+    import glob
+    found = []
+    for p in glob.glob("/dev/input/event*"):
+        try:
+            name = Path(f"/sys/class/input/{Path(p).name}/device/name"
+                        ).read_text().strip()
+        except OSError:
+            name = ""
+        if "hdmi" in name.lower():
+            continue
+        found.append(p)
+    return found
+
+
+def _screen_loop():
+    while True:
+        try:
+            _screen_loop_body()
+        except Exception as e:           # never let the screen go unminded
+            print(f"screen: loop error ({e!r}) — carrying on", flush=True)
+            time.sleep(2)
+
+
+def _screen_loop_body():
+    import select
+    fds = {}                       # path -> fd
+    last_scan = last_cfg = 0.0
+    while True:
+        now = time.monotonic()
+        if now - last_scan > 20:   # hot-plugged keyboards, a reseated panel
+            last_scan = now
+            for p in _screen_inputs():
+                if p not in fds:
+                    try:
+                        fds[p] = os.open(p, os.O_RDONLY | os.O_NONBLOCK)
+                    except OSError:
+                        pass
+        if now - last_cfg > 10:
+            last_cfg = now
+            # a restarted kiosk comes up with the screen on: believe the
+            # compositor, not the flag, or the page keeps its sleep shield
+            if _screen["asleep"] and _screen_output_enabled():
+                _screen["asleep"] = False
+                _screen["wake_t"] = _screen["last_touch"] = now
+            try:
+                _screen["mins"] = int(machine_settings().get("screen_sleep_min") or 0)
+            except (OSError, ValueError, TypeError):
+                pass
+        touched = False
+        if fds:
+            try:
+                ready, _, _ = select.select(list(fds.values()), [], [], 1.0)
+            except (OSError, ValueError):
+                ready = []
+            for fd in ready:
+                try:
+                    while os.read(fd, 4096):
+                        touched = True
+                except BlockingIOError:
+                    pass
+                except OSError:        # unplugged: drop it, rescan later
+                    for p, f in list(fds.items()):
+                        if f == fd:
+                            del fds[p]
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+        else:
+            time.sleep(1.0)
+        now = time.monotonic()
+        running = bool(run_mgr.state.get("running"))
+        if touched:
+            # the finger lifting off "Screen off now" must not wake it
+            if not (_screen["asleep"] and now - _screen["sleep_t"] < 1.5):
+                _screen["last_touch"] = now
+                if _screen["asleep"]:
+                    _screen_set_asleep(False)
+        if running and _screen["asleep"]:
+            _screen_set_asleep(False)
+        if (_screen["mins"] and not _screen["asleep"] and not running
+                and now - _screen["last_touch"] > _screen["mins"] * 60):
+            _screen_set_asleep(True)
+        # the page polls /api/screen every second. Silent for a minute =
+        # its browser hung (a dark screen that ignores touch, while the
+        # app sorts on): restart the kiosk, back in ~10 s
+        if (not _screen["asleep"] and now - _screen["wake_t"] > 120
+                and now - _screen["beat"] > SCREEN_HANG_S
+                and now - _screen["kick_t"] > SCREEN_HANG_S * 2):
+            _screen["kick_t"] = now
+            if subprocess.run(("systemctl", "is-active", "--quiet",
+                               "sortiq-kiosk")).returncode == 0:
+                print("screen: page stopped checking in — restarting the "
+                      "kiosk", flush=True)
+                # a hung browser ignores SIGTERM (a stop would wait out
+                # systemd's 90 s): kill it outright, restart without waiting
+                # Chromium moves its processes into a scope of their own, out
+                # of the kiosk service: kill them by name (same user) first
+                try:
+                    subprocess.run(("pkill", "-KILL", "-x", "chromium"),
+                                   capture_output=True, timeout=10)
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+                for cmd in (("kill", "--signal=SIGKILL", "sortiq-kiosk"),
+                            ("restart", "--no-block", "sortiq-kiosk")):
+                    try:
+                        subprocess.run(("sudo", "-n", "systemctl", *cmd),
+                                       capture_output=True, timeout=10)
+                    except (OSError, subprocess.TimeoutExpired):
+                        pass
+                _screen["beat"] = time.monotonic()
+
+
+@app.get("/screen")
+def screen_page():
+    return send_from_directory(app.static_folder, "screen.html")
+
+
+@app.get("/api/screen")
+def api_screen():
+    now = time.monotonic()
+    if _screen_local():
+        _screen["beat"] = now           # the kiosk page is alive
+    return jsonify({"available": _screen["available"],
+                    "asleep": _screen["asleep"],
+                    "woke_s": round(now - _screen["wake_t"], 1)
+                              if _screen["wake_t"] else None,
+                    "sleep_min": int(machine_settings().get("screen_sleep_min") or 0)})
+
+
+@app.post("/api/screen")
+def api_screen_set():
+    body = request.get_json() or {}
+    if "sleep_min" in body:
+        save_machine_settings({"screen_sleep_min": body["sleep_min"]})
+        _screen["mins"] = int(machine_settings().get("screen_sleep_min") or 0)
+        _screen["last_touch"] = time.monotonic()
+    if body.get("wake"):
+        _screen["last_touch"] = time.monotonic()
+        if _screen["asleep"] and not _screen_set_asleep(False):
+            return jsonify({"error": "could not switch the screen on"}), 500
+    if body.get("off"):
+        if not _screen["available"]:
+            return jsonify({"error": "screen control only works on the machine"}), 400
+        if run_mgr.state.get("running"):
+            return jsonify({"error": "the screen stays on during a run"}), 409
+        if not _screen_set_asleep(True):
+            return jsonify({"error": "could not switch the screen off"}), 500
+    return jsonify({"ok": True})
+
+
+def _board_version():
+    if (not _screen.get("board_version") and _console["transport"] is not None
+            and not run_mgr.state.get("running")):
+        # ask once: the reply lands in the console log, read just below
+        _console_request("version", lambda l: "SortIQ-" in l, timeout=2.0)
+    for e in reversed(_console["log"]):
+        m = re.search(r"SortIQ-[A-Za-z]+-[0-9][0-9.]*", e.get("line", ""))
+        if m:
+            _screen["board_version"] = m.group(0)
+            break
+    return _screen.get("board_version")
+
+
+@app.get("/api/system/info")
+def api_system_info():
+    import shutil
+    import socket
+    ms = machine_settings()
+    cfg = load_cfg()
+    info = {"host": socket.gethostname(),
+            "version": (ROOT / "VERSION").read_text().strip()
+                       if (ROOT / "VERSION").exists() else None,
+            "firmware": ms.get("firmware"), "board": ms.get("board"),
+            "board_version": _board_version(),
+            "cartridge": cfg.cartridge, "model": cfg.model_name}
+    try:
+        du = shutil.disk_usage(str(ROOT))
+        info["disk_used"], info["disk_total"] = du.used, du.total
+    except OSError:
+        pass
+    try:
+        info["uptime_s"] = int(float(Path("/proc/uptime").read_text().split()[0]))
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        info["cpu_c"] = round(int(Path("/sys/class/thermal/thermal_zone0/temp")
+                                  .read_text()) / 1000, 1)
+    except (OSError, ValueError):
+        pass
+    return jsonify(info)
+
+
+# ---- network controls for the screen. Every change runs in the background
+# and checks itself: no working network within NET_CHANGE_WAIT_S and the
+# previous setup comes back on its own.
+NET_CHANGE_WAIT_S = 60
+_netchg = {"busy": False, "what": None, "ok": None, "msg": None, "t": 0.0}
+
+
+def _nm_split(line):
+    """nmcli -t fields: ':' separates, '\\:' is a literal colon."""
+    return [p.replace("\\:", ":") for p in re.split(r"(?<!\\):", line)]
+
+
+def _wifi_conn():
+    """The active Wi-Fi profile (not our hotspot), or None."""
+    ok, out = _nmcli("-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device")
+    for line in (out.splitlines() if ok else []):
+        p = _nm_split(line)
+        if (len(p) >= 4 and p[1] == "wifi" and p[2] == "connected"
+                and p[3] != AP_CON):
+            return p[3]
+    return None
+
+
+def _wifi_lock(conn):
+    ok, out = _nmcli("-g", "802-11-wireless.bssid", "connection", "show", conn)
+    return out.replace("\\:", ":").strip().upper() if ok and out.strip() else None
+
+
+def _wifi_up(conn):
+    return _nmcli("connection", "up", conn, timeout=60)
+
+
+def _wait_link(seconds):
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < seconds:
+        if _wifi_conn() or _net_has_link():
+            return True
+        time.sleep(3)
+    return False
+
+
+def _net_change(what, apply_fn, revert_fn):
+    """Run one network change in the background; revert it when the Pi
+    has no working network a minute later."""
+    if _netchg["busy"]:
+        return False
+    _netchg.update(busy=True, what=what, ok=None, msg="working…",
+                   t=time.time())
+
+    def run():
+        try:
+            ok, out = apply_fn()
+            if ok and _wait_link(NET_CHANGE_WAIT_S):
+                _netchg.update(ok=True, msg="done")
+            else:
+                _netchg["msg"] = "no network — going back to the previous one"
+                revert_fn()
+                back = _wait_link(NET_CHANGE_WAIT_S)
+                _netchg.update(ok=False, msg=(
+                    (out or "it didn't connect") + " — back on the previous network"
+                    if back else "it didn't connect, and the previous network "
+                                 "didn't come back yet"))
+        except Exception as e:          # never leave busy stuck
+            _netchg.update(ok=False, msg=str(e))
+        finally:
+            _netchg["busy"] = False
+            _net_cache["resp"] = None
+    threading.Thread(target=run, daemon=True).start()
+    return True
+
+
+@app.get("/api/network/detail")
+def api_network_detail():
+    conn = _wifi_conn()
+    d = {"connection": conn, "hotspot": _ap_ssid() if _ap["active"] else None,
+         "change": dict(_netchg), "local": _screen_local()}
+    ok, out = _nmcli("-t", "-f", "IN-USE,SSID,BSSID,CHAN,FREQ,SIGNAL",
+                     "device", "wifi", "list")
+    aps = []
+    for line in (out.splitlines() if ok else []):
+        p = _nm_split(line)
+        if len(p) < 6:
+            continue
+        freq = int(re.sub(r"\D", "", p[4]) or 0)
+        ap = {"in_use": p[0] == "*", "ssid": p[1], "bssid": p[2].upper(),
+              "chan": p[3], "band": "5 GHz" if freq >= 4900 else "2.4 GHz",
+              "signal": int(p[5] or 0)}
+        aps.append(ap)
+        if ap["in_use"]:
+            d["now"] = ap
+    if d.get("now"):
+        d["aps"] = sorted((a for a in aps if a["ssid"] == d["now"]["ssid"]),
+                          key=lambda a: -a["signal"])
+    if conn:
+        d["lock"] = _wifi_lock(conn)
+    ok, out = _nmcli("-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device")
+    for line in (out.splitlines() if ok else []):
+        p = _nm_split(line)
+        if len(p) >= 4 and p[1] in ("wifi", "ethernet"):
+            ok2, out2 = _nmcli("-t", "-f", "IP4.ADDRESS", "device", "show", p[0])
+            ip = (out2.split(":", 1)[1].split("/")[0]
+                  if ok2 and ":" in out2 else None)
+            if p[1] == "wifi":
+                d["ip"] = ip
+            elif p[2] == "connected":
+                d["ethernet"] = ip or True
+    return jsonify(d)
+
+
+@app.post("/api/network/lock")
+def api_network_lock():
+    """Access point lock for a mesh with several points: locked to the one
+    the Pi is on now, any (the mesh steers it), or locked to the strongest
+    one here — 5 GHz first when it's usable, since this Pi's drive jams
+    2.4 GHz."""
+    if not _screen_local():
+        return jsonify({"error": "change the network from the machine's own screen"}), 403
+    mode = (request.get_json() or {}).get("mode")
+    conn = _wifi_conn()
+    if not conn:
+        return jsonify({"error": "not on a Wi-Fi network right now"}), 409
+    old = _wifi_lock(conn) or ""
+    if mode == "any":
+        target = ""
+    elif mode == "locked":
+        ok, out = _nmcli("-t", "-f", "IN-USE,BSSID", "device", "wifi", "list")
+        cur = [_nm_split(l)[1] for l in (out.splitlines() if ok else [])
+               if l.startswith("*")]
+        if not cur:
+            return jsonify({"error": "can't tell which access point is in use"}), 409
+        ok, out = _nmcli("connection", "modify", conn,
+                         "802-11-wireless.bssid", cur[0].upper())
+        return (jsonify({"ok": True, "lock": cur[0].upper()}) if ok
+                else (jsonify({"error": out}), 400))
+    elif mode == "strongest":
+        ok, out = _nmcli("-t", "-f", "IN-USE,SSID,BSSID,FREQ,SIGNAL",
+                         "device", "wifi", "list", "--rescan", "yes", timeout=30)
+        ssid = None
+        rows = []
+        for l in (out.splitlines() if ok else []):
+            p = _nm_split(l)
+            if len(p) < 5:
+                continue
+            if p[0] == "*":
+                ssid = p[1]
+            rows.append((p[1], p[2].upper(), int(re.sub(r"\D", "", p[3]) or 0),
+                         int(p[4] or 0)))
+        mine = [r for r in rows if r[0] == ssid]
+        if not mine:
+            return jsonify({"error": "no access points found for this network"}), 409
+        five = [r for r in mine if r[2] >= 4900 and r[3] >= 40]
+        target = max(five or mine, key=lambda r: r[3])[1]
+    else:
+        return jsonify({"error": "mode must be locked, any or strongest"}), 400
+
+    def apply():
+        ok, out = _nmcli("connection", "modify", conn,
+                         "802-11-wireless.bssid", target)
+        return _wifi_up(conn) if ok else (ok, out)
+
+    def revert():
+        _nmcli("connection", "modify", conn, "802-11-wireless.bssid", old)
+        _wifi_up(conn)
+    if not _net_change("lock", apply, revert):
+        return jsonify({"error": "another network change is still running"}), 409
+    return jsonify({"ok": True, "lock": target or None})
+
+
+@app.post("/api/network/reconnect")
+def api_network_reconnect():
+    if not _screen_local():
+        return jsonify({"error": "change the network from the machine's own screen"}), 403
+    conn = _wifi_conn()
+
+    def apply():
+        _nmcli("device", "disconnect", "wlan0")
+        time.sleep(3)
+        return _wifi_up(conn) if conn else _nmcli("device", "connect", "wlan0", timeout=60)
+
+    def revert():
+        if conn:
+            _wifi_up(conn)
+    if not _net_change("reconnect", apply, revert):
+        return jsonify({"error": "another network change is still running"}), 409
+    return jsonify({"ok": True})
+
+
+@app.post("/api/network/join")
+def api_network_join():
+    """Join a network from the screen; back to the previous one if the
+    new one isn't working within a minute."""
+    if not _screen_local():
+        return jsonify({"error": "change the network from the machine's own screen"}), 403
+    body = request.get_json() or {}
+    ssid = (body.get("ssid") or "").strip()
+    password = body.get("password") or ""
+    if not ssid:
+        return jsonify({"error": "ssid is required"}), 400
+    prev = _wifi_conn()
+
+    def apply():
+        if _ap["active"]:
+            _ap_down()
+            _nmcli("device", "wifi", "rescan")
+            time.sleep(4)
+        return _wifi_join(ssid, password)
+
+    def revert():
+        if prev:
+            _wifi_up(prev)
+    if not _net_change("join", apply, revert):
+        return jsonify({"error": "another network change is still running"}), 409
+    return jsonify({"ok": True})
 
 
 # --------------------------------------------------------------- console ---
 _console = {"transport": None, "log": [], "stop": None, "mode": None,
-            "hold": False, "lock": threading.Lock()}
+            "hold": False, "lock": threading.Lock(), "last_rx": 0.0,
+            "inflight": 0}     # console requests awaiting a reply
+# idle silence that makes the link suspect. A board with nothing to do
+# says nothing, so this only has to beat an operator's patience, not a
+# protocol timeout.
+CONSOLE_QUIET_S = 25.0
 
 # Monotonic id per log entry. Replies are matched by id, never by list
 # index: the log is trimmed to its last 300 entries as it grows, and an
@@ -5960,6 +8345,66 @@ _console = {"transport": None, "log": [], "stop": None, "mode": None,
 # session crossed 300 console lines).
 _console_seq = itertools.count(1)
 
+# the door wave is a self-test for a FRESH board: once per app start, and
+# again whenever the board itself powers up (Power button, an external
+# supply, a reboot on a live link) — never on the routine reconnects (run
+# handback, manual). It always starts by driving every door CLOSED: a jam
+# can end a run with a door held open, and closing never drops a case.
+# (The wave itself used to wait for a wheel known to be empty; the user
+# chose 2026-10-10 to always run it after the close.)
+_gate_wave_done = False
+_gate_wave = {"pending": None,       # (why, monotonic t): a power-up wave owed
+              "wheel_empty": None}   # None = not read yet (from the runs log)
+GATE_WAVE_PENDING_S = 60.0           # a power-up claim older than this is stale
+
+
+def _last_run_cleared():
+    """App start: the wheel is known empty only if the newest real run
+    ended with a clean clear (or there has been no real run at all)."""
+    try:
+        for d in sorted((ROOT / "runs").glob("run_*"), reverse=True):
+            try:
+                meta = json.loads((d / "run.json").read_text())
+            except (OSError, ValueError):
+                continue
+            if meta.get("mode") != "serial" or meta.get("duration_s") is None:
+                continue
+            if "wheel_clear" in meta:
+                return bool(meta["wheel_clear"])
+            ev = d / "events.log"           # runs from before wheel_clear
+            return ev.is_file() and " 0 unresolved" in ev.read_text()
+    except OSError:
+        pass
+    return True
+
+
+def _wheel_known_empty():
+    if _gate_wave["wheel_empty"] is None:
+        _gate_wave["wheel_empty"] = _last_run_cleared()
+    return _gate_wave["wheel_empty"]
+
+
+def _gate_wave_owed():
+    p = _gate_wave["pending"]
+    if p and time.monotonic() - p[1] < GATE_WAVE_PENDING_S:
+        return p[0]
+    return None
+
+
+def _maybe_gate_wave(reason):
+    """Run the door wave if this machine has doors, no run owns them, and
+    the wheel is known to be empty; otherwise say why it was skipped."""
+    global _gate_wave_done
+    if machine_settings().get("firmware") != "pico-servo":
+        return
+    if run_mgr.state.get("running"):
+        _gate_wave["pending"] = None   # the run supersedes a power-up claim;
+        return                         # the app-start wave stays owed
+    _gate_wave_done = True
+    _gate_wave["pending"] = None
+    threading.Thread(target=_gate_startup_wave, args=(reason,),
+                     daemon=True).start()
+
 
 def _console_log_append(dir_, line):
     """Append a console log entry (caller holds the lock). Returns its id."""
@@ -5967,6 +8412,8 @@ def _console_log_append(dir_, line):
     _console["log"].append({"n": n, "t": time.strftime("%H:%M:%S"),
                             "dir": dir_, "line": line})
     _console["log"] = _console["log"][-300:]
+    if dir_ == "<":
+        _console["last_rx"] = time.monotonic()
     return n
 
 
@@ -5981,9 +8428,121 @@ def _console_disconnect_locked():
     _console.update(transport=None, stop=None, mode=None)
 
 
-def _console_connect(mode, port=None):
-    """Open the console link. Shared by the endpoint and auto-connect.
-    Raises on failure (port missing, busy, ...)."""
+def _probe_version():
+    """The board's version line, or None. RETRY: the SKR Pico does not
+    reset on Pi-header port open (no fresh "Ready") and spams "waiting
+    for brass", so the first probe can miss the reply; a couple of
+    retries with a version-specific match make it reliable (field bug: a
+    servo board stuck on firmware=stock, arm view shown)."""
+    def _is_ver(l):
+        return "SortIQ" in l or "-SS" in l or "-PICO" in l or "7.2." in l
+    for _ in range(4):
+        ver = _console_request("version", _is_ver, timeout=2.0)
+        if ver:
+            return ver
+        time.sleep(0.3)
+    return None
+
+
+def _record_firmware(ver):
+    """Save which world the board lives in — stock "7.2.x", the fork's
+    "-SS2", "-PICO", "-PICO-SERVO" — so the Machine page shows only the
+    knobs this board actually has and the run loop speaks its cycle.
+    SS1 is retired (every fork board runs SS2 now): a pre-SS2 fork
+    version is treated as stock — its extra knobs stay hidden, and stock
+    handling is safe on it (setters answer "ok", no pf/ps). Returns the
+    firmware kind."""
+    kind = ("pico-servo" if "-PICO-SERVO" in ver
+            else "pico" if "-PICO" in ver
+            else "ss2" if "-SS2" in ver
+            else "stock")
+    before = machine_settings().get("firmware")
+    save_machine_settings({"firmware": kind,
+                           "board": "SKR Pico" if "-PICO" in ver else "CS7.2"})
+    if kind != before:
+        _adopt_firmware_profile(kind)
+    return kind
+
+
+def _adopt_firmware_profile(kind):
+    """First sight of a SortIQ machine design: move every setting still at
+    its generic (stock CS7.2) default to that design's reference value, and
+    give the servo carousel its 9-slot layout (8 doors + the open pocket)
+    with UNMATCHED and OVERFLOW on the pocket. Values someone already
+    tuned are left alone. Safe to call more than once."""
+    prof = FIRMWARE_PROFILES.get(kind) or {}
+    m = machine_settings()
+    upd = {k: v for k, v in prof.items()
+           if m.get(k) == MACHINE_DEFAULTS.get(k)}
+    if kind == "pico-servo" and int(m.get("slots_total") or 8) == 8:
+        upd["slots_total"] = 9
+        upd["slots_enabled"] = list(range(8))
+    if upd:
+        save_machine_settings(upd)
+    if kind == "pico-servo":
+        from sorter.config import normalize_bin
+        total = int(machine_settings()["slots_total"])
+        with _config_lock:
+            raw = active_model_raw()
+            bins = [normalize_bin(b) for b in (raw.get("bins") or [])]
+            tokens_only = all(s in ("UNMATCHED", "OVERFLOW")
+                              for g in bins for s in g)
+            if tokens_only:
+                # a map with no classes yet (fresh profile): the tokens go
+                # to the open pocket, every door starts empty
+                new = [[] for _ in range(total - 1)] + [["UNMATCHED", "OVERFLOW"]]
+            else:
+                new = [list(g) for g in bins]
+                _servo_fill_tokens(new, total)
+            if new != bins:
+                raw["bins"] = new
+                write_active_model(raw)
+
+
+def _identify_firmware():
+    """Probe + record on a live link; returns a short description or None."""
+    ver = _probe_version()
+    if not ver:
+        return None
+    before = machine_settings().get("firmware")
+    kind = _record_firmware(ver)
+    return (f"{ver.strip()} ({kind})" if kind == before
+            else f"{ver.strip()} — firmware kind changed {before} -> {kind}")
+
+
+def _console_repush(transport):
+    """The board rebooted on a LIVE link (reflash, brownout): its RAM
+    settings are compile defaults again, and the Pico doesn't reset on
+    port open, so the connect-time push never re-runs. Re-push once its
+    boot home has settled (<= ~1.1 s at creep). Runs off the reader
+    thread — _console_request waits on replies only the reader collects."""
+    try:
+        time.sleep(2.0)
+        with _console["lock"]:
+            if _console["transport"] is not transport:
+                return                         # link closed/replaced meanwhile
+        if run_mgr.state.get("running"):
+            return                             # a run owns the board
+        # a reboot can be a REFLASH: identify the firmware again before
+        # pushing, so a board that came back as different hardware (Pico
+        # -> PicoServo, fork -> stock) gets the setters and the Machine
+        # page it actually has, not the ones the last connect recorded
+        ident = _identify_firmware()
+        if machine_settings().get("init_on_startup"):
+            n = _apply_machine_settings(machine_settings())
+            with _console["lock"]:
+                if _console["transport"] is transport:
+                    _console_log_append("<", f"[board rebooted — {ident or 'firmware not identified'}"
+                                             f" — re-pushed {n} settings]")
+        _maybe_gate_wave("board powered up")
+    finally:
+        _console["repush_pending"] = False
+
+
+def _console_connect(mode, port=None, for_run=False):
+    """Open the console link. Shared by the endpoint, auto-connect and the
+    run loop (for_run=True: the run that holds the running flag is the
+    caller, not a stranger). Raises on failure (port missing, busy, ...)."""
     from sorter.cs72 import (RawCs72Console, FakeCs72Link,
                              SerialCs72Link, FW_BAUD)
     # An active run OWNS the board: it adopted the console's link, and
@@ -5991,7 +8550,7 @@ def _console_connect(mode, port=None):
     # mid-run (settings, queue state and wheel position gone, mid-motion).
     # Refuse every console connect until the run ends; auto-connect
     # retries on its own a few seconds after the handback.
-    if run_mgr.state.get("running"):
+    if run_mgr.state.get("running") and not for_run:
         raise RuntimeError("a run owns the board — stop the run first")
     if mode == "serial" and _power_get() is False:
         raise RuntimeError("board power is off — press the Power button first")
@@ -6004,7 +8563,8 @@ def _console_connect(mode, port=None):
         else:
             transport = RawCs72Console(FakeCs72Link())
         _console.update(transport=transport, mode=mode, hold=False,
-                        port=(port if mode == "serial" else None))
+                        port=(port if mode == "serial" else None),
+                        connecting=transport, connect_t=time.monotonic())
         stop = threading.Event()
         _console["stop"] = stop
 
@@ -6015,10 +8575,26 @@ def _console_connect(mode, port=None):
                 except Exception:
                     break                     # the port itself died
                 if line:
+                    if line.startswith("feeder:"):
+                        _feeder_line(line)
+                        if line.startswith("feeder:status "):
+                            continue
                     if line.startswith("fault:"):
                         _console["fault"] = line[6:]
                     with _console["lock"]:
                         _console_log_append("<", line)
+                        # a Ready outside this link's own connect handshake
+                        # = the board rebooted under us: re-push settings
+                        # endswith: a UART still resyncing after the
+                        # board's reset can prefix the banner with junk
+                        reboot = (line.strip().endswith("Ready")
+                                  and _console.get("connecting") is not transport
+                                  and not _console.get("repush_pending"))
+                        if reboot:
+                            _console["repush_pending"] = True
+                    if reboot:
+                        threading.Thread(target=_console_repush,
+                                         args=(transport,), daemon=True).start()
             # ZOMBIE FIX: a USB re-enumeration kills the port under us. If
             # we're still the active transport, mark the console properly
             # disconnected so the UI tells the truth and auto-connect can
@@ -6033,28 +8609,51 @@ def _console_connect(mode, port=None):
     if mode == "serial":
         # the Uno auto-resets when the port opens; wait for its Ready so
         # pushed settings don't land in the bootloader void
-        deadline = time.monotonic() + 6.0
+        no_reset = machine_settings().get("board") == "SKR Pico"
+        deadline = time.monotonic() + (1.0 if no_reset else 6.0)
         while time.monotonic() < deadline:
             if any(l["dir"] == "<" and l["line"].strip() == "Ready"
                    for l in list(_console["log"])):
                 break
             time.sleep(0.2)
     # firmware auto-detect: the version reply says which world we're in
-    # (stock "7.2.x" vs the fork's "-SS" suffix) — recorded so the Machine
-    # page shows only the knobs this board actually has
-    ver = _console_request("version", lambda l: "7.2" in l, timeout=3.0)
+    # (stock "7.2.x" vs the fork's "-SS"/"-PICO" suffixes) — recorded so the
+    # Machine page shows only the knobs this board actually has. RETRY: the
+    # SKR Pico does not reset on Pi-header port open (no fresh "Ready") and
+    # spams "waiting for brass", so the first probe can miss the reply; a
+    # couple of retries with a version-specific match make it reliable
+    # (field bug: a servo board stuck on firmware=stock, arm view shown).
+    ver = _probe_version()
+    if (mode == "serial" and not ver
+            and not any(l["dir"] == "<" for l in list(_console["log"]))):
+        # NOTHING came back: an open port is not a board. The Pi's header
+        # UART exists whether or not the board has power, so an unpowered
+        # board used to read CONNECTED and swallow the whole settings push
+        # (field: Pi 4 sort arm, board off — 34 setters sent, 0 lines back).
+        # Drop the link; auto-connect retries and finds the board once it
+        # is powered.
+        with _console["lock"]:
+            if _console["transport"] is transport:
+                _console_log_append("<", f"[no board answered on {port}]")
+                _console_disconnect_locked()
+        raise RuntimeError(f"no board answered on {port} — is the board powered on?")
     if ver:
-        # SS1 is retired (every fork board runs SS2 now): a pre-SS2 fork
-        # version is treated as stock — its extra knobs stay hidden, and
-        # stock handling is safe on it (setters answer "ok", no pf/ps).
-        save_machine_settings({"firmware": "pico" if "-PICO" in ver
-                               else "ss2" if "-SS2" in ver
-                               else "stock",
-                               "board": "SKR Pico" if "-PICO" in ver
-                               else "CS7.2"})
+        _record_firmware(ver)
     # push the saved motor settings on connect, if the user asked to
     if machine_settings().get("init_on_startup"):
         _apply_machine_settings(machine_settings())
+    # handshake done: any Ready on this link from here on is a reboot
+    # (a raise above leaves the flag set = the old no-re-push behavior)
+    if _console.get("connecting") is transport:
+        _console["connecting"] = None
+    # servo carousel door wave: after the wheel's boot home + settings push
+    # (own thread so connect returns). Only the FIRST connect after app
+    # start, or a connect that follows a board power-up (Power button, or
+    # auto-connect finding a board that had stopped answering). The run
+    # handback and manual reconnects are neither, and skip it.
+    owed = _gate_wave_owed()
+    if not _gate_wave_done or owed:
+        _maybe_gate_wave(owed or "app start")
 
 
 @app.post("/api/console/connect")
@@ -6072,27 +8671,130 @@ def _auto_connect_loop():
     """Appliance behavior: if a real board is on the configured port and the
     console isn't connected (fresh boot, USB drop, board power-cycle),
     connect automatically — unless the user explicitly disconnected."""
+    misses = 0          # attempts that found no board since the last link
     while True:
         time.sleep(5)
         try:
-            if _console["transport"] is not None or _console["hold"]:
+            if (_console["transport"] is not None or _console["hold"]
+                    or run_mgr.state.get("running")):
+                misses = 0      # a run's own link or handback is not a boot
                 continue
             serial_cfg = load_cfg().serial
             if not serial_cfg.get("auto_connect", True):
                 continue
             port = serial_cfg.get("port") or ""
-            if not port.startswith("/dev/") or not os.path.exists(port):
-                continue
             # the Pi-header UART exists whether or not the board has power:
             # with the relay pin readable, a known-off board is not a target
             if _power_get() is False:
                 continue
-            _console_connect("serial", port)
+            if misses:          # it wasn't answering: if it answers now, it
+                _gate_wave["pending"] = ("board powered on",   # just powered up
+                                         time.monotonic())
+            _auto_connect_once(port)
+            if _console["transport"] is None:
+                misses += 1
         except Exception:
-            pass                              # board mid-boot etc.: retry later
+            misses += 1                       # board mid-boot etc.: retry later
+
+
+# where a SortIQ board can live: the Pi's header UART (SKR Pico builds),
+# then USB (a CS7.2 Uno shows up as ttyUSB0 or ttyACM0)
+_BOARD_PORTS = ("/dev/serial0", "/dev/ttyUSB0", "/dev/ttyACM0")
+
+
+_autoconn_lock = threading.Lock()
+
+
+def _auto_connect_once(port):
+    """One auto-connect at a time: the background loop and the power-on
+    bring-up both call this, and two opens of one port race each other."""
+    if not _autoconn_lock.acquire(timeout=20):
+        return
+    try:
+        if _console["transport"] is None:
+            _auto_connect_once_unlocked(port)
+    finally:
+        _autoconn_lock.release()
+
+
+def _auto_connect_once_unlocked(port):
+    """Connect to the configured port; if that is one of the default ports
+    and no board answers there, look on the other defaults and adopt the
+    port a board answers on. A fresh install therefore finds its board
+    with no port to pick, whichever machine it is. A port someone typed
+    in is never second-guessed. An SKR Pico is only ever adopted on the
+    header UART: its USB port is for flashing, and a Pico that answers
+    only on USB means the TX/RX wires to the Pi need checking."""
+    cands = [port] if port.startswith("/dev/") else []
+    if not port or port in _BOARD_PORTS:
+        cands += [p for p in _BOARD_PORTS if p != port]
+    for cand in cands:
+        if not os.path.exists(cand):
+            continue
+        try:
+            _console_connect("serial", cand)
+        except Exception:
+            continue                          # nothing answered there
+        fw = str(machine_settings().get("firmware", ""))
+        if fw.startswith("pico") and cand != "/dev/serial0":
+            with _console["lock"]:
+                _console_log_append("<", f"[an SKR Pico answered on {cand} "
+                                         "(USB) but not on the Pi's header "
+                                         "UART - check the TX/RX/GND wires]")
+                _console_disconnect_locked()
+            continue
+        if cand != port:
+            with _config_lock:
+                raw = json.loads(CONFIG_PATH.read_text())
+                raw.setdefault("serial", {})["port"] = cand
+                write_cfg_raw(raw)
+            with _console["lock"]:
+                _console_log_append("<", f"[board found on {cand} - "
+                                         "saved as the machine's port]")
+        return True
+    return False
 
 
 threading.Thread(target=_auto_connect_loop, daemon=True).start()
+
+
+def _console_liveness_loop():
+    """Drop a link whose board has gone quiet.
+
+    A dead board on the Pi's header UART is INVISIBLE: the port stays open
+    and simply never speaks again, so the page kept saying CONNECTED with
+    the 24 V off. The
+    connect handshake only proves a board was there THEN. Poll it here.
+
+    Never during a run: the run owns the link and a stray ping would land
+    in the middle of its protocol. A busy board answers constantly anyway,
+    so silence only means anything while idle.
+    """
+    while True:
+        time.sleep(5)
+        try:
+            if (_console["transport"] is None or _console["mode"] != "serial"
+                    or run_mgr.status().get("running")):
+                continue
+            quiet = time.monotonic() - _console.get("last_rx", 0.0)
+            if quiet < CONSOLE_QUIET_S:
+                continue
+            transport = _console["transport"]
+            alive = any(_console_request(
+                "ping", lambda l: l.strip() != "", timeout=2.0)
+                for _ in range(2))
+            if alive or _console["transport"] is not transport:
+                continue
+            with _console["lock"]:
+                if _console["transport"] is transport:
+                    _console_log_append("<", "[board stopped answering — "
+                                             "link dropped]")
+                    _console_disconnect_locked()
+        except Exception:
+            pass
+
+
+threading.Thread(target=_console_liveness_loop, daemon=True).start()
 
 
 def _frame_watchdog():
@@ -6134,6 +8836,31 @@ def api_console_send():
 # ground — the control pair the relay wants. State is read back from the
 # pin itself, so the button can never lie about what the relay sees.
 POWER_GPIO = 25
+
+
+# The LED ring hangs on GPIO 18's hardware PWM, but the CHANNEL behind that
+# pin is not the same on every Pi: GPIO18 is PWM0_CHAN0 on a Pi 4 and
+# PWM0_CHAN2 on a Pi 5 (RP1). Writing the Pi 4's channel on a Pi 5 succeeds
+# and lights nothing - the duty lands on a channel routed to no pin (field:
+# a carousel moved to a Pi 5 came up with a dark ring while the slider
+# "worked"). Ask pinctrl which channel the pin actually is, once.
+_ring_pwm = {"duty": None}
+
+
+def _ring_pwm_duty_path():
+    if _ring_pwm["duty"]:
+        return _ring_pwm["duty"]
+    ch = 0
+    try:
+        out = subprocess.run(("pinctrl", "get", "18"), capture_output=True,
+                             timeout=2).stdout.decode(errors="replace")
+        m = re.search(r"PWM\d_CHAN(\d)", out)
+        if m:
+            ch = int(m.group(1))
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        pass
+    _ring_pwm["duty"] = f"/sys/class/pwm/pwmchip0/pwm{ch}/duty_cycle"
+    return _ring_pwm["duty"]
 _power_cache = {"t": 0.0, "on": None}
 
 
@@ -6191,6 +8918,181 @@ def _power_get(fresh=False):
     return on
 
 
+# ---- carousel servo gates: PCA9685 on the Pi's I2C bus (addr 0x40) -------
+# Gates are DRIVEN-RETURN (springs cannot back-drive the servo gear trains):
+# open = drive + hold powered; close = drive, settle, release — spring +
+# gear friction hold the closed cam at zero current. MAINTENANCE mode opens
+# all eight and HOLDS them so the cams clear the feed wheel for removal.
+GATE_OPEN_US = 2150     # sliding-door build; per-gate overrides in the
+GATE_CLOSED_US = 900    # machine settings "gate_pulses" table
+
+
+def _gate_pulses():
+    """Per-gate [closed_us, open_us]; settings table wins, defaults fill."""
+    t = machine_settings().get("gate_pulses") or []
+    out = []
+    for i in range(8):
+        try:
+            c, o = int(t[i][0]), int(t[i][1])
+        except (IndexError, TypeError, ValueError):
+            c, o = GATE_CLOSED_US, GATE_OPEN_US
+        out.append((c, o))
+    return out
+_gates = {"available": None, "maintenance": False}
+
+
+def _i2cset(*args):
+    try:
+        return subprocess.run(
+            ("/usr/sbin/i2cset", "-y", "1", "0x40") + tuple(str(a) for a in args),
+            capture_output=True, timeout=2).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _gates_available():
+    if _gates["available"] is None:
+        try:
+            _gates["available"] = (sys.platform.startswith("linux") and
+                subprocess.run(("/usr/sbin/i2cget", "-y", "1", "0x40", "0x00"),
+                               capture_output=True, timeout=2).returncode == 0)
+        except (OSError, subprocess.TimeoutExpired):
+            _gates["available"] = False
+    return _gates["available"]
+
+
+def _gates_init():
+    # sleep+AI, 50 Hz prescale, wake, totem-pole — idempotent, and re-run
+    # before every action so a power-cycled chip is always re-configured
+    _i2cset(0x00, 0x30); _i2cset(0xFE, 0x79); _i2cset(0x00, 0x20)
+    time.sleep(0.01)
+    _i2cset(0x01, 0x04)
+
+
+def _gate_set(ch, us):
+    """Drive one door channel; False if any write to the servo board failed."""
+    base = 0x06 + 4 * ch
+    if us <= 0:
+        return _i2cset(base + 3, 0x10)     # full-off bit: no pulses, limp
+    off = int(us * 4096 / 20000)
+    return all((_i2cset(base, 0), _i2cset(base + 1, 0),
+                _i2cset(base + 2, off & 0xFF), _i2cset(base + 3, off >> 8)))
+
+
+def _gates_close_all(reason):
+    """Drive every door closed, then release. Closing never drops a case,
+    so this is safe whenever no run owns the doors. A failed write to the
+    servo board is logged on the console, never swallowed (a jam once left
+    a door held open overnight with no sign of why)."""
+    if not _gates_available():
+        return False
+    _gates_init()
+    pulses = _gate_pulses()
+    ok = all([_gate_set(ch, pulses[ch][0]) for ch in range(8)])
+    time.sleep(0.4)                        # servo travel before release
+    ok = all([_gate_set(ch, 0) for ch in range(8)]) and ok
+    _gates["open_set"] = []
+    _gates["maintenance"] = False
+    with _console["lock"]:
+        _console_log_append("<", f"[doors closed ({reason})]" if ok else
+                            f"[doors: a write to the servo board FAILED while "
+                            f"closing ({reason}) — check the doors]")
+    return ok
+
+
+def _gate_startup_wave(reason="app start"):
+    """Boot flourish + servo self-test: close every door first (a jam can
+    leave one held open), then open doors 1->8 one at a time and hold, then
+    once #8 is open, close them all and release. Runs once per app start
+    and on every board power-up (see the caller), after the feed wheel's
+    own boot home. Refused during a run so it can't fight the
+    choreography."""
+    if not _gates_available() or run_mgr.state.get("running"):
+        return
+    _gates_close_all(reason)
+    time.sleep(0.3)
+    print("gate boot wave: doors 1-8 self-test", flush=True)
+    try:
+        _gates_init()
+        pulses = _gate_pulses()
+        for ch in range(8):
+            _gate_set(ch, pulses[ch][1])       # open, hold
+            time.sleep(0.22)
+        time.sleep(0.6)                        # all held open
+        for ch in range(8):
+            _gate_set(ch, pulses[ch][0])       # drive closed
+        time.sleep(0.4)
+        for ch in range(8):
+            _gate_set(ch, 0)                   # release (linkage holds closed)
+    except Exception:
+        pass
+
+
+@app.get("/api/gates/state")
+def api_gates_state():
+    return jsonify({"available": _gates_available(),
+                    "maintenance": _gates["maintenance"],
+                    "open": sorted(_gates.get("open_set") or []),
+                    "pulses": _gate_pulses()})
+
+
+@app.post("/api/gates/maintenance")
+def api_gates_maintenance():
+    if not _gates_available():
+        return jsonify({"error": "no servo gate hardware on this machine"}), 400
+    want = bool((request.get_json() or {}).get("open"))
+    if want and run_mgr.state.get("running"):
+        return jsonify({"error": "a sorting run is active — stop it first"}), 409
+    _gates_init()
+    pulses = _gate_pulses()
+    if want:
+        for ch in range(8):
+            _gate_set(ch, pulses[ch][1])   # held powered: doors stay open
+        _gates["maintenance"] = True
+    else:
+        for ch in range(8):
+            _gate_set(ch, pulses[ch][0])
+        time.sleep(0.4)                    # servo travel before release
+        for ch in range(8):
+            _gate_set(ch, 0)               # spring + friction hold closed
+        _gates["maintenance"] = False
+    return jsonify({"ok": True, "maintenance": _gates["maintenance"]})
+
+
+@app.post("/api/gates/test")
+def api_gates_test():
+    """Machine-page door exerciser: drive one door (or all) open or
+    closed. Open holds powered; closed settles then releases (the geared
+    linkage holds at zero current). Refused while a run owns the gates."""
+    if not _gates_available():
+        return jsonify({"error": "no servo gate hardware on this machine"}), 400
+    if run_mgr.state.get("running"):
+        return jsonify({"error": "a sorting run is active — stop it first"}), 409
+    body = request.get_json() or {}
+    want_open = bool(body.get("open"))
+    g = body.get("gate")
+    chans = list(range(8)) if g in (None, "all") else [int(g)]
+    if any(ch < 0 or ch > 7 for ch in chans):
+        return jsonify({"error": "gate must be 0-7 or 'all'"}), 400
+    _gates_init()
+    pulses = _gate_pulses()
+    opened = set(_gates.get("open_set") or [])
+    if want_open:
+        for ch in chans:
+            _gate_set(ch, pulses[ch][1])
+        opened |= set(chans)
+    else:
+        for ch in chans:
+            _gate_set(ch, pulses[ch][0])
+        time.sleep(0.4)
+        for ch in chans:
+            _gate_set(ch, 0)
+        opened -= set(chans)
+    _gates["open_set"] = sorted(opened)
+    _gates["maintenance"] = len(opened) == 8
+    return jsonify({"ok": True, "open": sorted(opened)})
+
+
 @app.get("/api/power")
 def api_power_get():
     return jsonify({"on": _power_get(fresh=True), "gpio": POWER_GPIO})
@@ -6235,12 +9137,64 @@ def api_power_post():
     except (OSError, subprocess.TimeoutExpired) as e:
         return jsonify({"error": f"gpio set failed: {e}"}), 500
     _power_cache.update(t=0.0, on=None)      # next poll reads the real pin
+    if on:                                   # the reconnect that follows is
+        _gate_wave["pending"] = ("board powered on", time.monotonic())  # a boot
+        threading.Thread(target=_power_on_bringup, daemon=True).start()
     return jsonify({"ok": True, "on": _power_get(fresh=True)})
+
+
+POWER_WAVE_DELAY_S = 2.0      # servo rail up + the wheel's own boot home
+
+
+def _reconnect_after_run():
+    """A run just handed the board back: reconnect now, retrying every
+    second, instead of showing "not connected" until the 5 s auto-connect
+    tick comes round."""
+    port = load_cfg().serial.get("port") or ""
+    for _ in range(10):
+        time.sleep(1.0)
+        if (_console["transport"] is not None or _console.get("hold")
+                or run_mgr.state.get("running") or _power_get() is False):
+            return
+        try:
+            _auto_connect_once(port)
+        except Exception:
+            pass
+
+
+def _power_on_bringup():
+    """24 V just came on. The door wave needs only the Pi's servo board,
+    so it runs as soon as the rail is up and the feed wheel has done its
+    boot home — not after the board link and the whole settings push
+    (that was 12 s). The link connects in parallel, retrying every second
+    until the board answers, instead of waiting for the 5 s auto-connect."""
+    def wave():
+        time.sleep(POWER_WAVE_DELAY_S)
+        if _gate_wave_owed():                # not already run by a connect
+            _maybe_gate_wave("board powered on")
+    threading.Thread(target=wave, daemon=True).start()
+    port = load_cfg().serial.get("port") or ""
+    for _ in range(15):
+        time.sleep(1.0)
+        if (_console["transport"] is not None or _console.get("hold")
+                or run_mgr.state.get("running") or _power_get() is False):
+            return
+        try:
+            _auto_connect_once(port)
+        except Exception:
+            pass                             # board still booting: next second
 
 
 @app.get("/api/console/log")
 def api_console_log():
-    return jsonify({"connected": _console["transport"] is not None,
+    live = _console["transport"] is not None
+    # mid-handshake is not a board yet: the port opens at once (a Pi header
+    # UART always exists) and the board may never answer. Bounded, so a
+    # handshake that raised part-way can't pin the UI on CONNECTING.
+    handshaking = (live and _console.get("connecting") is _console["transport"]
+                   and time.monotonic() - _console.get("connect_t", 0.0) < 30.0)
+    return jsonify({"connected": live and not handshaking,
+                    "connecting": handshaking,
                     "mode": _console["mode"], "log": _console["log"][-200:],
                     "port": _console.get("port"),
                     "board": machine_settings().get("board") or "",
@@ -6274,6 +9228,24 @@ MACHINE_DEFAULTS = {"feed_speed": 94, "feed_steps": 60, "sort_speed": 94,
                     "air_drop": False, "air_drop_pre_delay": 30,
                     "air_drop_signal_ms": 100, "air_drop_post_delay": 100,
                     "motor_standby": 0, "camera_led": 200,
+                    # PICO-SERVO: wheel usteps per revolution — 9216 for the
+                    # shipped 72T:25T geared mount (3200 x 72/25); another
+                    # gear sets its own (measure via feedjog + a tape mark)
+                    "feed_wheel_rev": 9216,
+                    # carousel: extra door dwell per index during the
+                    # end-of-brass clear (flush + drain), ms; 0 = no pause
+                    "clear_pause_ms": 0,
+                    # carousel gates, per door: open_ms = the servo's full
+                    # open stroke, counted from that door's open command (a
+                    # door closed mid-stroke leaves the case riding);
+                    # clear_ms = margin once fully open before it closes.
+                    # Per-gate pulse table from door tuning.
+                    "gate_open_ms": 250, "gate_clear_ms": 50,
+                    "gate_pulses": None,   # [[closed_us, open_us] x8]
+                    # pre-fire warmup: indexes before pre-open arms (orphan
+                    # safety after cold-start/HOME). 0 = arm immediately —
+                    # ONLY for a known-empty single-case bench test.
+                    "gate_prefire_warmup": 12,
                     "led_color": "#ffffff",   # WS2812 ring mix (SKR Pico only)
                     "slots_total": 8, "slots_enabled": None,   # None = all
                     # per-slot physical capacity in cases; None/0 entries =
@@ -6283,17 +9255,21 @@ MACHINE_DEFAULTS = {"feed_speed": 94, "feed_steps": 60, "sort_speed": 94,
                     # None/"" = brass default). Machine-scoped like
                     # bin_sizes: it describes the tray on the table
                     "bin_colors": None,
-                    "init_on_startup": False,
-                    # SortIQ firmware fork (7.2.250925.6.1-SS1) knobs.
+                    "init_on_startup": True,   # new machines apply their
+                    # saved tuning to the board on every connect by default
+                    # SortIQ firmware fork (7.2.250925.6.2-SS2) knobs.
                     # Stock firmware answers "ok" to the setters and ignores
                     # them, so pushing these is harmless on either firmware.
                     # Defaults mirror the fork's baked-in boot values.
                     "board": "",           # "CS7.2" | "SKR Pico" — from the version line on connect
                     "power_relay": False,  # an IoT Relay on POWER_GPIO switches the board's
-                                           # mains — dev/Pico builds only; hides the UI when off
-                    "firmware": "stock",   # "stock" | "ss2" (SS1 retired);
+                                           # power — any build (every machine runs on a
+                                           # Pi); the Power button shows only when on
+                    "firmware": "stock",   # "stock" | "ss2" | "pico" |
+                                           # "pico-servo" (SS1 retired);
                                            # auto-detected from the version
-                                           # reply on connect
+                                           # reply on connect and after a
+                                           # board reboot
                     "sort_accel": 1200, "sort_home_backoff": 160,
                     "sort_flag_offset": 0, "sort_flag_width": 240,
                     "sort_decel": 1200, "feed_accel": 1200,
@@ -6308,16 +9284,53 @@ MACHINE_DEFAULTS = {"feed_speed": 94, "feed_steps": 60, "sort_speed": 94,
                     # arm-move spacing (~820ms in sorting). Zero-travel
                     # moves skip it, so batch capture pays nothing.
                     "arm_dwell": 0,
+                    # OPTIONAL CASE FEEDER on the carousel's own SKR Pico
+                    # (PicoServo 0.9+: motor on E, beam on Z-STOP). Off =
+                    # the app and board behave exactly as without one.
+                    "case_feeder": False,
+                    "feeder_auto_start": True,   # start/stop with sorting
+                    "feeder_speed": 60,          # % of the feeder's range
+                    "feeder_warn_s": 30,         # nothing fed this long: empty warning
+                    "feeder_shutoff_s": 120,     # ...and this long: the feeder stops
+                    "feeder_reversed": False,    # motor direction
+                    "feeder_beam_high": False,   # beam reads HIGH with a case in it
+                    "feeder_jam_detect": True,
+                    # the machine's own touchscreen: minutes without a
+                    # touch before it sleeps (0 = never)
+                    "screen_sleep_min": 10,
                     "slot_positions": None}   # None = the firmware's default
                                               # grid (i * sort_steps * 16)
-_MACHINE_BOOLS = ("init_on_startup", "feed_decel", "air_drop", "stall_guard", "power_relay")
+# Reference setup per SortIQ machine design, applied the first time a
+# board of that kind is identified (fresh install, or a board swap). Only
+# keys still at their generic default change, so a value someone tuned is
+# never overwritten. The generic defaults above describe a stock CS7.2;
+# these are the published SortIQ builds (hardware/carousel, the sort arm).
+FIRMWARE_PROFILES = {
+    "pico-servo": {"feed_steps": 3, "feed_speed": 92, "feed_current": 1400,
+                   "feed_accel": 1500, "feed_decel_rate": 1500,
+                   "feed_homing_offset": 2, "notification_delay": 0,
+                   "clear_pause_ms": 300},
+    "pico": {"sort_speed": 90, "sort_steps": 21, "sort_homing_offset": 2,
+             "sort_flag_offset": 1200, "sort_flag_width": 64,
+             "feed_homing_offset": 0},
+}
+_MACHINE_BOOLS = ("init_on_startup", "feed_decel", "air_drop", "stall_guard", "power_relay",
+                  "case_feeder", "feeder_auto_start", "feeder_reversed",
+                  "feeder_beam_high", "feeder_jam_detect")
 MAX_SLOTS = 12                # matches the fork's slot table size
 
-# the six user-pickable bin-badge colors. Fixed on purpose: every entry
+# the seven user-pickable bin-badge colors. Fixed on purpose: every entry
 # keeps dark badge text readable, and red/blue never appear — they stay
 # the reserved meanings (UNMATCHED / OVERFLOW)
-BIN_PALETTE = ("#e8d44d", "#4cc46a", "#a78bfa",
-               "#f08c3a", "#3fc8c8", "#e879b9")
+BIN_PALETTE = ("#e5e7eb", "#4cc46a", "#a78bfa",
+               "#f08c3a", "#3fc8c8", "#e879b9", "#a3e635")
+# retired palette entries -> their replacement, applied wherever saved
+# colors are read or re-saved (yellow read too close to brass on a tray)
+_BIN_COLOR_RENAMED = {"#e8d44d": "#e5e7eb"}
+
+
+def _bin_colors(colors):
+    return [_BIN_COLOR_RENAMED.get(c, c) for c in (colors or [])]
 
 # (min, max) per numeric setting — values outside are CLAMPED on save, so
 # no amount of Machine-tab experimentation can push the board somewhere
@@ -6327,9 +9340,19 @@ BIN_PALETTE = ("#e8d44d", "#4cc46a", "#a78bfa",
 # every sensible bench value with margin (the bench-tuned defaults sit
 # comfortably inside).
 MACHINE_BOUNDS = {
+    "feeder_speed": (1, 100), "feeder_warn_s": (0, 3600),
+    "screen_sleep_min": (0, 240),
+    "feeder_shutoff_s": (0, 3600),
     "feed_speed": (1, 100),          # firmware maps 1-100 to step delay
+    "clear_pause_ms": (0, 3000),     # 0 = no pause during the clear
     "sort_speed": (1, 100),
-    "feed_steps": (30, 200),         # official guide: 70/80; ours: 60
+    "feed_wheel_rev": (2000, 20000),
+    "gate_open_ms": (0, 2000),
+    "gate_clear_ms": (0, 1000),
+    "gate_prefire_warmup": (0, 24),
+    "feed_steps": (2, 200),   # PICO-SERVO: the 12-station pitch is ~533
+                              # usteps — blind must fit inside one pitch,
+                              # so the old 30-step floor (480u) is too high         # official guide: 70/80; ours: 60
     "sort_steps": (5, 50),           # 8-slot disc = 20
     "feed_current": (300, 1200),     # mA; CS7.2 StepSticks top out at 1.2A —
     "sort_current": (300, 1200),     # the Pico's onboard drivers get 1.6A (below)
@@ -6363,9 +9386,12 @@ SLOTPOS_MAX = 4000  # µsteps; > a full revolution past the fork grid's end
 def _clamp_machine(key, value):
     lo, hi = MACHINE_BOUNDS.get(key, (None, None))
     if lo is None:
+        if value is None or isinstance(value, (list, dict, bool, str)):
+            return value            # structured settings (gate_pulses etc.)
         return int(value)
     return min(max(int(value), lo), hi)
 _SETTER_CMD = {"feed_speed": "feedspeed", "feed_steps": "feedsteps",
+               "feed_wheel_rev": "feedwheelrev",
                "sort_speed": "sortspeed", "sort_steps": "sortsteps",
                "feed_current": "feedmotorcurrent", "sort_current": "sortmotorcurrent",
                "feed_homing_offset": "feedhomingoffset",
@@ -6445,7 +9471,8 @@ def save_machine_settings(update):
             if k not in update:
                 continue
             if k == "firmware":
-                m[k] = (update[k] if update[k] in ("stock", "ss2", "pico")
+                m[k] = (update[k]
+                        if update[k] in ("stock", "ss2", "pico", "pico-servo")
                         else "stock")
             elif k == "board":
                 m[k] = str(update[k] or "")[:40]
@@ -6459,7 +9486,7 @@ def save_machine_settings(update):
                 m[k] = sorted({int(s) for s in (update[k] or [])})
             elif k in ("feed_current", "sort_current"):
                 lo, hi = MACHINE_BOUNDS[k]
-                if m.get("firmware") == "pico" or update.get("firmware") == "pico":
+                if str(m.get("firmware")).startswith("pico") or                         str(update.get("firmware", "")).startswith("pico"):
                     hi = 1600            # onboard TMC2209s, actively cooled
                 m[k] = min(max(int(update[k]), lo), hi)
             elif k == "slot_positions":
@@ -6480,7 +9507,7 @@ def save_machine_settings(update):
                 # only the fixed palette is legal — red/blue stay the
                 # reserved meanings and never arrive here from the UI
                 m[k] = ([(v if v in BIN_PALETTE else None)
-                         for v in update[k]][:MAX_SLOTS]
+                         for v in _bin_colors(update[k])][:MAX_SLOTS]
                         if isinstance(update[k], list) else None)
             else:
                 m[k] = _clamp_machine(k, update[k])
@@ -6504,13 +9531,18 @@ def _console_request(line, predicate, timeout=3.0):
             return None
         _console["transport"].send(line)
         sent = _console_log_append(">", line)
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        for e in list(_console["log"]):
-            if e["n"] > sent and e["dir"] == "<" and predicate(e["line"]):
-                return e["line"]
-        time.sleep(0.05)
-    return None
+        _console["inflight"] = _console.get("inflight", 0) + 1
+    try:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            for e in list(_console["log"]):
+                if e["n"] > sent and e["dir"] == "<" and predicate(e["line"]):
+                    return e["line"]
+            time.sleep(0.05)
+        return None
+    finally:
+        with _console["lock"]:
+            _console["inflight"] = max(0, _console.get("inflight", 0) - 1)
 
 
 def _apply_machine_settings(settings):
@@ -6521,15 +9553,33 @@ def _apply_machine_settings(settings):
                  "sort_flag_offset", "sort_flag_width"}
     fork_only = {"sort_accel", "sort_home_backoff", "sort_home_slow",
                  "feed_launch", "feed_decel", "arm_dwell", "slot_positions"}
-    on_stock = not (fw.startswith("ss") or fw == "pico")
+    # both Pico builds (pico, pico-servo) speak the whole pico set — the
+    # servo kind was added without widening this test, so the carousel got
+    # its accel/decel, stall-guard and flag settings as compile defaults
+    # on every connect and re-push
+    is_pico = fw.startswith("pico")
+    on_stock = not (fw.startswith("ss") or is_pico)
     for key, cmd in _SETTER_CMD.items():
         if on_stock and key in fork_only:
             continue
-        if fw != "pico" and key in pico_only:
+        if not is_pico and key in pico_only:
             continue
         if key in settings and settings[key] is not None and _console_request(
                 f"{cmd}:{int(settings[key])}", lambda l: l.strip() == "ok", timeout=2.0):
             applied += 1
+    # PICO-SERVO machines: the LED ring hangs on the PI's GPIO18 hardware
+    # PWM (20 kHz sysfs), not the board — the firmware accepts cameraledlevel
+    # as a no-op and the Pi drives the light. Mirror camera_led to the PWM
+    # duty whenever the channel exists; console push above stays for the
+    # stepper build. (Root sysfs write via sudo -n tee, like the power GPIO.)
+    if settings.get("camera_led") is not None and sys.platform.startswith("linux"):
+        try:
+            duty = int(int(settings["camera_led"]) * 50000 / 255)
+            subprocess.run(("sudo", "-n", "tee", _ring_pwm_duty_path()),
+                           input=str(duty).encode(), capture_output=True,
+                           timeout=2)
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            pass
     # the ring color is a Pico-only command; the fork board has no RGB
     if settings.get("led_color") and             machine_settings().get("board") == "SKR Pico":
         c = str(settings["led_color"]).lstrip("#")
@@ -6540,6 +9590,15 @@ def _apply_machine_settings(settings):
         if _console_request(f"ledcolor:{r},{g},{b}",
                             lambda l: l.strip() == "ok", timeout=2.0):
             applied += 1
+    if fw == "pico-servo" and settings.get("case_feeder"):
+        applied += _feeder_push(settings)
+    elif (fw == "pico-servo" and "case_feeder" in settings
+          and (_feeder["status"] or {}).get("enabled")):
+        # switched off on the Machine page: stop it and park its driver
+        if _console_request("feeder:enable:0",
+                            lambda l: l.startswith("feeder:ok"), timeout=2.0):
+            applied += 1
+        _feeder.update(status=None, state=None)
     # the per-slot table goes LAST: the firmware's sortsteps setter (pushed
     # above) refills the whole table, clobbering any earlier slotpos
     if settings.get("slot_positions") and not on_stock:
@@ -6549,6 +9608,302 @@ def _apply_machine_settings(settings):
                     timeout=2.0):
                 applied += 1
     return applied
+
+
+# =====================================================================
+# CASE FEEDER — optional, on the carousel's own SKR Pico (PicoServo 0.9+).
+# The board runs the feeder by itself (beam hold, jam reverse, empty
+# shutoff); the app switches it on and off, sets the speed, and shows
+# what it reports. Every line it sends starts with "feeder:", and both
+# readers (the console's and a run's) hand those lines to _feeder_line.
+# =====================================================================
+FEEDER_PRESETS = (20, 40, 60, 80, 100)
+_FEEDER_SETTERS = (("feeder_speed", "speed"), ("feeder_warn_s", "warn"),
+                   ("feeder_shutoff_s", "shutoff"),
+                   ("feeder_reversed", "reversed"),
+                   ("feeder_beam_high", "beamhigh"),
+                   ("feeder_jam_detect", "jamdetect"))
+_FEEDER_ALERTS = {"empty": "feeder empty — nothing fed for a while (still running)",
+                  "shutoff": "feeder stopped — empty for too long",
+                  "jam": "feeder jam it could not clear — clear it, then Resume",
+                  "driver": "feeder motor driver not answering"}
+_feeder = {"status": None, "status_t": 0.0, "state": None, "alerts": [],
+           "counts": [], "run_transport": None,
+           "run_req": False,        # the last run:0/1 sent — the truth for Go/Stop
+           "user_stopped": False}   # the operator pressed Stop: nothing restarts it
+
+
+def _run_note(run_dir, msg):
+    try:
+        with open(run_dir / "events.log", "a") as f:
+            f.write(time.strftime("%H:%M:%S") + " " + msg + "\n")
+    except OSError:
+        pass
+
+
+def _feeder_line(line):
+    """One "feeder:..." line from the board, from whichever reader has it."""
+    line = line.strip()
+    now = time.time()
+    if line.startswith("feeder:status "):
+        try:
+            st = json.loads(line[len("feeder:status "):])
+        except ValueError:
+            return
+        _feeder.update(status=st, status_t=now, state=st.get("state"),
+                       run_req=bool(st.get("run")))
+        _feeder["counts"] = (_feeder["counts"]
+                             + [(now, int(st.get("count") or 0))])[-120:]
+    elif line.startswith("feeder:state:"):
+        _feeder["state"] = line[len("feeder:state:"):]
+        if _feeder["status"] is not None:
+            _feeder["status"]["state"] = _feeder["state"]
+        if _feeder["state"] == "FAULT":
+            _feeder_jam_pause()
+    elif line.startswith("feeder:alert:"):
+        kind = line[len("feeder:alert:"):]
+        text = (_FEEDER_ALERTS.get(kind)
+                or ("feeder driver hot" if kind.startswith("hot") else kind))
+        _feeder["alerts"].append({"t": now, "kind": kind, "text": text})
+        _feeder["alerts"] = _feeder["alerts"][-20:]
+        with _console["lock"]:
+            _console_log_append("<", f"[{text}]")
+
+
+def _feeder_jam_pause():
+    """The feeder gave up on a jam: a sorting run pauses right away (the
+    wheel parks at the next case, doors close) instead of sorting the
+    tube dry and reading a stalled feeder as the end of the brass.
+    Resume clears the feeder's fault and restarts it with the run."""
+    if (run_mgr.state.get("running") and not run_mgr.state.get("capture")
+            and not run_mgr.state.get("paused")):
+        run_mgr.pause("feeder_jam")
+
+
+def _note_feeder_run(cmd):
+    if cmd.startswith("feeder:run:"):
+        _feeder["run_req"] = cmd.endswith(":1")
+
+
+def _feeder_send(cmd):
+    """Send a feeder command over whichever link owns the board: a run's
+    (a raw write between its sort lines) or the console's."""
+    _note_feeder_run(cmd)
+    t = _feeder.get("run_transport")
+    if t is not None and run_mgr.state.get("running"):
+        with t._lock:
+            t.link.write(cmd + "\n")
+        return True
+    with _console["lock"]:
+        con = _console["transport"]
+        if con is None:
+            return False
+        con.send(cmd)
+        _console_log_append(">", cmd)
+    return True
+
+
+def _feeder_push(settings):
+    """Enable the feeder on the board and push its settings (connect and
+    re-push). Returns how many landed."""
+    ok = lambda l: l.startswith("feeder:ok") or l.startswith("feeder:error")
+    n = 1 if _console_request("feeder:enable:1", ok, timeout=2.0) else 0
+    for key, cmd in _FEEDER_SETTERS:
+        v = settings.get(key)
+        if v is None:
+            continue
+        v = int(v) if not isinstance(v, bool) else int(v)
+        if _console_request(f"feeder:{cmd}:{v}", ok, timeout=2.0):
+            n += 1
+    return n
+
+
+FEEDER_FILL_CASES = 10        # cases past the beam before the wheel starts
+FEEDER_FILL_TIMEOUT_S = 180   # an empty hopper never holds a run forever
+
+
+def _feeder_status_fresh(timeout=2.5):
+    """Ask the board for the feeder's status and wait for the answer."""
+    t0 = _feeder["status_t"]
+    _feeder_send("feeder:status")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _feeder["status_t"] > t0:
+            return _feeder["status"] or {}
+        time.sleep(0.05)
+    return None
+
+
+def _feeder_fill_wait(run, run_dir):
+    """Run start with the feeder on auto-start: start the feeder, and when
+    the machine is COMPLETELY empty (nothing at the feeder's beam, nothing
+    at the wheel's case sensor) hold the wheel until FEEDER_FILL_CASES
+    cases have passed the feeder's beam. The drop tube is 20-odd inches:
+    an empty wheel started at once only meets empty pockets and reads
+    them as the end of the brass. A tube that is already filling (beam
+    blocked or a case at the wheel) starts at once."""
+    def log(msg):
+        try:
+            with open(run_dir / "events.log", "a") as f:
+                f.write(time.strftime("%H:%M:%S") + " feeder fill: " + msg + "\n")
+        except OSError:
+            pass
+
+    ok = lambda l: l.startswith("feeder:ok") or l.startswith("feeder:error")
+    _console_request("feeder:clear", ok, timeout=2.0)   # out of a shutoff
+    # START IT, AND SEE IT START: a start once went unanswered with the
+    # wheel left waiting on a stopped feeder. Confirm the board reports it
+    # feeding (or holding a case) and send it again if not.
+    st = None
+    for attempt in range(1, 4):
+        reply = _console_request("feeder:run:1", ok, timeout=2.0)
+        st = _feeder_status_fresh()
+        state = (st or {}).get("state")
+        log(f"start #{attempt}: board said {reply or 'nothing'}, "
+            f"feeder {state or 'not reporting'}")
+        if state in ("RUNNING", "HOLD", "JAM_REVERSE", "JAM_PAUSE"):
+            break
+        time.sleep(0.5)
+    else:
+        log("the feeder would not start; the wheel starts without waiting")
+        return
+    sensors = _console_request("sensors", lambda l: l.startswith('{"feedHoming"'),
+                               timeout=2.0)
+    try:
+        prox = json.loads(sensors).get("prox") if sensors else None
+    except ValueError:
+        prox = None
+    if st is None or prox is None or prox or st.get("raw") or st.get("beam"):
+        return                                # brass is already on its way
+    start, t0 = int(st.get("count") or 0), time.monotonic()
+    n, state = 0, st.get("state")
+    words = {"RUNNING": "feeding", "HOLD": "case hold", "STOPPED": "feeder stopped",
+             "JAM_REVERSE": "clearing a jam", "JAM_PAUSE": "clearing a jam"}
+    while (not run.stop_evt.is_set()
+           and time.monotonic() - t0 < FEEDER_FILL_TIMEOUT_S):
+        with run.lock:
+            run.state["wait_note"] = (f"waiting for the feeder · "
+                                      f"{min(n, FEEDER_FILL_CASES)}/"
+                                      f"{FEEDER_FILL_CASES} cases · "
+                                      f"{words.get(state, state or 'not reporting')}")
+        st = _feeder_status_fresh() or {}
+        n = int(st.get("count") or 0) - start
+        if st.get("state") != state:
+            state = st.get("state")
+            log(f"feeder {state or 'not reporting'} after "
+                f"{time.monotonic() - t0:.0f} s, {n} case(s) so far")
+            if state == "STOPPED":                 # something stopped it:
+                _console_request("feeder:run:1", ok, timeout=2.0)   # again
+        if n >= FEEDER_FILL_CASES or state in ("FAULT", "IDLE_SHUTOFF"):
+            break
+        time.sleep(0.5)
+    with run.lock:
+        run.state["wait_note"] = None
+    log(f"{n} case(s) past the feeder's beam in "
+        f"{time.monotonic() - t0:.0f} s before the wheel started")
+
+
+def _feeder_rate():
+    """Cases per hour over the last minute of status reports."""
+    pts = [p for p in _feeder["counts"] if p[0] >= time.time() - 60]
+    if len(pts) < 2 or pts[-1][0] - pts[0][0] < 20:
+        return None
+    dc = pts[-1][1] - pts[0][1]
+    if dc < 5:                 # a few breaks (a hand test, a hold just
+        return None            # cleared) is no rate: don't extrapolate it
+    return round(dc * 3600 / (pts[-1][0] - pts[0][0]))
+
+
+def _feeder_poll_loop():
+    """Ask for the feeder's status: every 2 s at the console, every 15 s
+    while a run shares the 9600-baud link with its sort traffic (the
+    feeder runs itself; its state changes and alerts arrive unasked)."""
+    while True:
+        running = bool(run_mgr.state.get("running"))
+        time.sleep(15.0 if running else 2.0)
+        try:
+            ms = machine_settings()
+            if not (ms.get("case_feeder") and ms.get("firmware") == "pico-servo"):
+                continue
+            if running and _feeder.get("run_transport") is None:
+                continue
+            _feeder_send("feeder:status")
+        except Exception:
+            pass
+
+
+threading.Thread(target=_feeder_poll_loop, daemon=True).start()
+
+
+@app.get("/api/feeder")
+def api_feeder():
+    ms = machine_settings()
+    st = _feeder["status"]
+    # during a run the status is polled every 15 s (the board's bus stays
+    # quiet for the wheel) while state changes arrive the moment they
+    # happen: a run keeps them valid longer
+    running = bool(run_mgr.state.get("running"))
+    fresh = st is not None and time.time() - _feeder["status_t"] < (40 if running else 12)
+    return jsonify({"enabled": bool(ms.get("case_feeder")),
+                    "status": st if fresh else None,
+                    "state": _feeder["state"] if (fresh or running) else None,
+                    "run": bool(_feeder.get("run_req")),
+                    "user_stopped": bool(_feeder.get("user_stopped")),
+                    "rate": _feeder_rate() if fresh else None,
+                    "alerts": _feeder["alerts"][-5:],
+                    "presets": FEEDER_PRESETS,
+                    "speed": ms.get("feeder_speed"),
+                    "auto_start": bool(ms.get("feeder_auto_start"))})
+
+
+@app.post("/api/feeder")
+def api_feeder_cmd():
+    """{"run": true|false} | {"speed": 1-100} | {"clear": true}."""
+    b = request.get_json() or {}
+    if not machine_settings().get("case_feeder"):
+        return jsonify({"error": "the case feeder is not enabled (Machine page)"}), 400
+    cmds = []
+    if "speed" in b:
+        try:
+            v = max(1, min(100, int(b["speed"])))
+        except (TypeError, ValueError):
+            return jsonify({"error": "speed is 1-100"}), 400
+        save_machine_settings({"feeder_speed": v})
+        cmds.append(f"feeder:speed:{v}")
+    if "clear" in b:
+        cmds.append("feeder:clear")
+    if "run" in b:
+        cmds.append(f"feeder:run:{1 if b['run'] else 0}")
+    for cmd in cmds:
+        err = _feeder_cmd(cmd)
+        if err:
+            return jsonify({"error": err}), 409
+    if "run" in b:                      # the operator's word on the feeder
+        _feeder["user_stopped"] = not b["run"]
+    _feeder_send("feeder:status")
+    return jsonify({"ok": True})
+
+
+def _feeder_cmd(cmd):
+    """One feeder command; None when the board took it, else why not.
+    During a run it rides the run's link unanswered (the run's reader owns
+    the replies); otherwise the board's reply is read, and a board that
+    has lost the feeder enable gets it back and the command again."""
+    if run_mgr.state.get("running"):
+        return None if _feeder_send(cmd) else "board is not connected"
+    if _console["transport"] is None:
+        return "board is not connected"
+    _note_feeder_run(cmd)
+    ok = lambda l: l.startswith("feeder:ok") or l.startswith("feeder:error")
+    reply = _console_request(cmd, ok, timeout=2.0)
+    if reply and "not enabled" in reply:
+        _feeder_push(machine_settings())
+        reply = _console_request(cmd, ok, timeout=2.0)
+    if reply is None:
+        return "the board didn't answer"
+    if reply.startswith("feeder:error"):
+        return "feeder: " + reply.split(":", 2)[-1]
+    return None
 
 
 @app.get("/api/machine/settings")
@@ -6564,9 +9919,14 @@ def api_machine_settings_get():
 def _sanitize_bins_for_slots(enabled):
     """Keep the active model's bin map consistent with the enabled slots:
     stamps on now-disabled slots lose their bin, and UNMATCHED relocates to
-    the first enabled slot if its slot was disabled. Returns what moved."""
+    the first enabled slot if its slot was disabled. Returns what moved.
+    On the servo carousel the last slot is the open pocket: it is never in
+    slots_enabled (no door, no tray to disable) but it is where UNMATCHED
+    and OVERFLOW live by default, so it counts as enabled here."""
     from sorter.config import normalize_bin
     en = set(enabled)
+    if machine_settings().get("firmware") == "pico-servo":
+        en.add(int(machine_settings()["slots_total"]) - 1)
     cleared, moved = [], False
     with _config_lock:
         raw = active_model_raw()
@@ -6611,12 +9971,16 @@ def api_machine_settings_post():
         applied = (_apply_machine_settings(push)
                    if _console["transport"] is not None else 0)
         return jsonify({"ok": True, "preview": True, "applied": applied})
+    before_fw = machine_settings().get("firmware")
     m = save_machine_settings(body)
     cleared, moved = [], False
     if "slots_enabled" in body or "slots_total" in body:
         cleared, moved = _sanitize_bins_for_slots(m["slots_enabled"])
     # push only what changed — a slider drag shouldn't re-send every setter
     push = {k: m[k] for k in body if k in _SETTER_CMD}
+    if any(k == "case_feeder" or k.startswith("feeder_") for k in body):
+        push["case_feeder"] = m.get("case_feeder")
+        push.update({k: m[k] for k, _ in _FEEDER_SETTERS if k in m})
     if "led_color" in body:
         push["led_color"] = m["led_color"]
     if "air_drop" in body:
@@ -6633,9 +9997,31 @@ def api_machine_settings_post():
         push["slot_positions"] = m.get("slot_positions")
         if push["slot_positions"] and "sort_steps" in body:
             push.setdefault("sort_steps", m["sort_steps"])
+    serial_port = None
+    if "firmware" in body and body["firmware"] != before_fw:
+        _adopt_firmware_profile(m["firmware"])
+        m = machine_settings()
+        push.update({k: m[k] for k in _SETTER_CMD if k in m})
+    if "firmware" in body:
+        # the link lives where the hardware puts it: SortIQ-Pico boards on
+        # the Pi's header UART, CS7.2 boards on USB. Follow the hardware
+        # choice so a new unit connects without typing a port, but only
+        # while the saved port is still one of those defaults — a port the
+        # user typed in is never overwritten.
+        want = ("/dev/serial0" if str(m.get("firmware", "")).startswith("pico")
+                else "/dev/ttyUSB0")
+        with _config_lock:
+            raw = json.loads(CONFIG_PATH.read_text())
+            ser = raw.setdefault("serial", {})
+            if ser.get("port") in (None, "", "/dev/ttyUSB0", "/dev/serial0"):
+                if ser.get("port") != want:
+                    ser["port"] = want
+                    write_cfg_raw(raw)
+            serial_port = ser.get("port")
     applied = _apply_machine_settings(push) if _console["transport"] is not None else 0
     return jsonify({"ok": True, "settings": m, "applied": applied,
-                    "bins_cleared": cleared, "unmatched_moved": moved})
+                    "bins_cleared": cleared, "unmatched_moved": moved,
+                    "serial_port": serial_port})
 
 
 @app.post("/api/machine/slotpos")
@@ -6715,6 +10101,7 @@ def api_machine_test():
         # test feed can keep dropping cases at the operator's selected
         # slot instead of snapping the arm back to 0 on every press
         slot = int(body.get("slot", 0))
+        _gate_wave["wheel_empty"] = False          # a case is on the wheel now
         r = _console_request(f"xf:{slot}", lambda l: l.strip() in
                              ("done", "error:feed overtravel detected"),
                              timeout=25.0)
@@ -6769,6 +10156,7 @@ if __name__ == "__main__":
     ap.add_argument("--port", type=int, default=5000)
     ap.add_argument("--host", default="0.0.0.0")  # reachable on the LAN, like the Pi will be
     args = ap.parse_args()
+    _instance_lock = _single_instance(args.port)   # before any thread starts
     # probe the GPU sandbox once per boot so the Train page can show its
     # state up front (trainer PCs only — the Pi has no WSL)
     if _gpu_supported():
@@ -6779,7 +10167,13 @@ if __name__ == "__main__":
     import shutil as _sh_main
     if sys.platform.startswith("linux") and _sh_main.which("nmcli"):
         threading.Thread(target=_ap_watchdog, daemon=True).start()
+    # the touchscreen's sleep (machine with the kiosk installed only)
+    if sys.platform.startswith("linux") and _sh_main.which("wlr-randr"):
+        _screen["available"] = True
+        threading.Thread(target=_screen_loop, daemon=True).start()
     _power_init()   # relay pin: firmly low on first boot, untouched after
+    # saved machine addresses follow their hostnames (router changes)
+    threading.Thread(target=_peer_keeper, daemon=True).start()
     # warm the code-digest cache off the critical path: the first digest
     # after a restart hashes the whole tree (seconds from a Pi's SD),
     # and that cold hit used to land on whoever asked first — a fleet

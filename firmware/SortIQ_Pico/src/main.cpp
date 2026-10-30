@@ -1,18 +1,15 @@
-// SortIQ-Pico 2.0 — the rewrite. BigTreeTech SKR Pico, FastAccelStepper core.
-//
-// Speaks the same serial protocol as the CS7.2 fork / 1.x port, so the app
-// is unchanged. What's new is everything underneath:
-//   - FastAccelStepper generates steps on the RP2040 PIO: the CPU never
-//     bit-bangs, moves are true linear-accel trapezoids, and nothing the
-//     loop does (serial, UART reads, sensors) can disturb motion timing.
+// SortIQ-Pico — firmware for the SortIQ sort-arm machine on a BigTreeTech
+// SKR Pico (FastAccelStepper core). A feed wheel on the X driver and a
+// stepper sort arm on the Y driver, under the CS7.2 fork's serial protocol,
+// so the app drives it like any other board.
+//   - Steps come from the RP2040 PIO: the CPU never bit-bangs, moves are
+//     true linear-accel trapezoids, and nothing the loop does (serial, TMC
+//     UART reads, sensors) can disturb motion timing.
 //   - Flag-relative coordinates: homing MEASURES where each flag is; the
 //     library's position counter is never written (its writes are async).
 //   - Sort jam detection = the FLAG AUDIT: if the home flag is seen far
 //     from where the frame says it should be, steps were lost — abort.
-//     Bench-proven to catch jams StallGuard reads straight through.
-//   - Feed jam detection = StallGuard load sampling at cruise (validated
-//     on the 1.x port: free reads 300+, a wedge reads <80), plus the
-//     flag-seek overtravel budget.
+//   - Feed jam detection = the flag-seek overtravel budget.
 //   - Non-blocking state machines throughout; both hosts (Pi UART + USB)
 //     have their own receive buffers.
 
@@ -22,7 +19,7 @@
 #include <EEPROM.h>
 #include <hardware/gpio.h>
 
-#define FIRMWARE_VERSION "SortIQ-Pico-2.1 (7.2-SS2-PICO)"
+#define FIRMWARE_VERSION "SortIQ-Pico-2.8 (7.2-SS2-PICO)"
 
 // ---------------- pins (SKR Pico) ----------------
 #define FEED_STEP 11
@@ -31,21 +28,19 @@
 #define SORT_STEP 6
 #define SORT_DIR  5
 #define SORT_EN   7
-// Ring-swap pin map (v2.1): each sensor on its motor's own label, ring PWM
-// on the freed E0-STOP, Z-STOP spare. DIAG jumpers PULLED — the feed jam
-// detector is the overtravel budget (bench-proven); SG is telemetry only.
+// Each homing opto on its motor's own endstop label. DIAG jumpers PULLED:
+// the endstop inputs carry the optos.
 #define FEED_HOME 4           // X-STOP slotted opto, LOW = blocked
 #define SORT_HOME 3           // Y-STOP slotted opto, LOW = blocked
 #define PROX_PIN  22          // WD-DET conditioned prox, HIGH = brass
-#define AUX_FAN1  17          // Pi/board cooling, on at boot
-#define AUX_FAN2  20
-#define CASEFAN   18          // camera fan, fan: 0-100
+#define AUX_FAN1  17          // FAN1: controller case fan, full at boot
+#define AUX_FAN2  20          // FAN3: camera fan, full at boot
+#define CASEFAN   18          // FAN2: controller case fan, full at boot
+                              // (fan: 0-100 exists; the app never sends it)
 #define AIRDROP_PIN 23        // HE0, optional mod
-#define RING_PIN  24          // RGB header (old NeoPixel data): PWM -> MOSFET
-                              // module -> 5V ring. NOT E0-STOP: the endstop
-                              // input conditioning (connector pull-up ahead
-                              // of the MCU's series R) wins against a driven
-                              // low — fine as an input, never as an output.
+// The LED ring's MOSFET is triggered by the Pi's GPIO 18, not this board,
+// which leaves the pin map identical to the carousel build's (one harness
+// fits either). cameraledlevel: is accepted and echoed only.
 #define R_SENSE   0.110f
 #define FEED_ADDR 0b00
 #define SORT_ADDR 0b10
@@ -61,20 +56,23 @@ int sortAccF = 2400, sortDecF = 2400;
 int feedHomingOffset = 5, sortHomingOffset = 0;    // full steps past the flag
 int slotDropDelay = 550, armDwellMs = 0;
 int notificationDelay = 120;
-int debounceTime = 300, debouncePause = 500;
+// debounce 100 + launch 0: the same feeder timing as the carousel. Both run
+// BEFORE the wheel moves, so the arm's chute timing (drop -> next arm move)
+// is untouched. Both are settable from the console (debounceTime:,
+// launchsettle:).
+int debounceTime = 100;
+int launchSettle = 0;
 int motorStandby = 0;
 int cameraLEDLevel = 200;
-int caseFanLevel = 100; bool caseFanSw = false;
+int caseFanLevel = 100;
 bool airDrop = false; int airPre = 30, airSignal = 100, airPost = 100;
 bool feedDecelOverOffset = true;
 int feedLaunchSteps = 48;                          // accepted; FAS ramps supersede
 int sortHomeBackoff = 160, sortHomeSlow = 1400;    // us creep for the slow edge
 #define MAX_SLOTS 12
 long slotPosTab[MAX_SLOTS];                        // usteps from slot 0
-bool sgEnabled = true;
-int feedSgThrs = 40, sortSgThrs = 0;               // sort SG = telemetry only
-uint32_t sgTcool = 0xFFFFF;
-bool sortAxis = true;                              // EEPROM-persisted
+bool sgEnabled = true;                             // accepted and echoed only
+int feedSgThrs = 40;
 bool motorPower = false;
 
 // ---------------- objects ----------------
@@ -85,9 +83,9 @@ FastAccelStepper *feedSt = nullptr, *sortSt = nullptr;
 
 // ---------------- dual host ----------------
 // Host TX is BUFFERED and pumped from loop(). A raw print to the Pi link
-// (9600 baud) blocks for 100+ ms once the UART FIFO fills — and unlike the
-// 1.x core, the PIO keeps stepping while the CPU is stuck, so a blocked
-// loop() means missed sensor edges. Nothing may write a host port directly.
+// (9600 baud) blocks for 100+ ms once the UART FIFO fills, and the PIO keeps
+// stepping while the CPU is stuck, so a blocked loop() means missed edges.
+// Nothing may write a host port directly.
 class BufferedOut {
  public:
   explicit BufferedOut(Stream &s) : port(s) {}
@@ -119,7 +117,6 @@ class DualHost : public Print {
 };
 DualHost host;
 String inPi, inUsb, input;
-bool cmdReady = false;
 uint32_t rxPiBytes = 0, rxUsbBytes = 0;
 
 static bool recvFrom(Stream &port, String &buf) {
@@ -128,8 +125,16 @@ static bool recvFrom(Stream &port, String &buf) {
     if (c < 0) return false;
     if (&port == (Stream *)&Serial1) rxPiBytes++; else rxUsbBytes++;
     if (c == '\r') continue;
-    if (c != '\n') { buf += (char)c; }
-    else { input = buf; buf = ""; host.active = &port; cmdReady = true; return true; }
+    if (c != '\n') {
+      // cap the line: a break or noise burst without a newline used to
+      // grow the String until the heap ran out, then glue garbage onto
+      // the next real command. Past the cap the line is discarded whole.
+      if (buf.length() < 120) buf += (char)c;
+      else buf = "\x01";                          // marker: overflowed
+    } else {
+      if (buf.length() && buf[0] == '\x01') { buf = ""; return false; }
+      input = buf; buf = ""; host.active = &port; return true;
+    }
   }
   return false;
 }
@@ -147,18 +152,7 @@ static uint32_t accFToSS2(int c0) {                // AVR446 c0 us -> steps/s^2
   return (uint32_t)a;
 }
 
-// ---------------- driver + peripherals ----------------
-void ringShow() {
-  // plain hardware-PWM duty; 20 kHz (set in setup) keeps the camera free of
-  // banding and stays inside the MOSFET module's rated switching range
-  analogWrite(RING_PIN, cameraLEDLevel);
-  // the stepper PIO claim stomps pin muxes (GPIO 0's UART TX died the same
-  // way — README caveat 2) and analogWrite caches "already PWM" so it never
-  // re-muxes. Force the pad back onto its PWM slice on every write; without
-  // this the board's endstop pull-up holds the MOSFET trigger high and the
-  // ring sits at full bright regardless of level. (Bench-hit on day one.)
-  gpio_set_function(RING_PIN, GPIO_FUNC_PWM);
-}
+// ---------------- drivers ----------------
 
 void applyDriverConfig() {
   for (TMC2209Stepper *d : {&feedDrv, &sortDrv}) {
@@ -168,16 +162,12 @@ void applyDriverConfig() {
     d->pwm_freq(2);
     d->microsteps(USTEP);
     d->pwm_autoscale(true);
-    d->en_spreadCycle(false);            // StealthChop: StallGuard needs it
+    d->en_spreadCycle(false);            // StealthChop
     d->intpol(true);
-    d->TCOOLTHRS(sgTcool);
+    d->TCOOLTHRS(0xFFFFF);
   }
   feedDrv.rms_current(feedCurrent); feedDrv.ihold(8);
-  // sort ihold was 16 (50% hold) for StallGuard-at-rest experiments; SG is
-  // telemetry-only now and the motor sat warm at idle. 8 = same as feed.
   sortDrv.rms_current(sortCurrent); sortDrv.ihold(8);
-  // both DIAG jumpers pulled (ring swap): SGTHRS kept only so SG_RESULT
-  // telemetry stays comparable to old bench numbers
   feedDrv.SGTHRS(feedSgThrs); sortDrv.SGTHRS(0);
 }
 
@@ -189,17 +179,15 @@ void fillSlotTab() {
   for (int i = 0; i < MAX_SLOTS; i++) slotPosTab[i] = (long)i * sortSteps * USTEP;
 }
 
-void feedHardStop();
 void sortHardStop();
 void motorsWake();
 void enterFault(uint8_t code, const __FlashStringHelper *msg);
-extern uint8_t faultCode, feedAbortStreak, sortHomeFailStreak, sortSkipStreak;
+extern uint8_t sortHomeFailStreak, sortSkipStreak;
 
 // ---------------- stats ----------------
-uint32_t feedCycles = 0, feedStalls = 0, sortStalls = 0, sortSkips = 0;
+uint32_t feedCycles = 0, sortStalls = 0;
 uint32_t powerFlaps = 0, restOffTab = 0;
 long lastSeek = 0, maxSeek = 0;
-uint32_t sgLastN = 0, sgLastSum = 0; uint16_t sgLastMin = 1023;
 
 // =====================================================================
 // SORT axis — flag-relative state machine
@@ -210,10 +198,8 @@ enum SortState { S_IDLE, S_UNHOMED, S_SEEK, S_BACKOFF_LEAVE, S_BACKOFF_RUN,
 SortState sortState = S_UNHOMED;
 long sortFlagPos = 0;                    // absolute ustep position of the flag edge
 bool sortHomed = false;
-int  sortSlot = 0;                       // logical slot the arm sits at / heads to
 uint32_t sortT0 = 0;                     // state timer
 uint32_t lastSortArrive = 0;
-bool sortMoveQueuedDone = false;         // a cycle waits on this arm move
 
 // Mid-position flag support: the tab may be mounted anywhere along the
 // slot arc. sortFlagOffset = usteps from SLOT 0 up to the flag's upper
@@ -236,6 +222,17 @@ void sortHomeIsr() {
   if (sortEdgeArm && !sortEdgeSeen) { sortEdgeUs = micros(); sortEdgeSeen = true; }
 }
 
+// "parked at the slot" allows a few microsteps: the homing settle lands
+// within ~4 usteps of the computed target and a correction move that
+// small is not executed, so an exact comparison never became true and
+// every feed timed out as "sort arm not ready". 8 usteps = half a full
+// step at 16x, far inside a slot's width.
+long sortTargetAbs(int slot);
+bool sortAtSlot(int slot) {
+  long d = (long)sortSt->getCurrentPosition() - sortTargetAbs(slot);
+  return d >= -8 && d <= 8;
+}
+
 long sortTargetAbs(int slot) {
   return sortFlagPos + (long)sortHomingOffset * USTEP - (long)sortFlagOffset
          + slotPosTab[slot];
@@ -247,8 +244,10 @@ void sortApplyMotion() {
 }                                                  // decel factor -> future FAS api
 
 void sortStartHoming() {
-  if (!sortAxis || !motorPower) { sortState = S_IDLE; sortHomed = sortAxis ? false : true; return; }
+  if (!motorPower) { sortState = S_IDLE; sortHomed = false; return; }
   motorsWake();
+  digitalWrite(SORT_EN, LOW);   // armfree:1 leaves the driver released; a home
+                                // over a dead driver reported "cannot find its sensor"
   if (sortSt->isRunning()) sortHardStop();    // re-home over any motion
   sortHomed = false;
   sortSt->setAcceleration(accFToSS2(sortAccF));
@@ -264,9 +263,7 @@ void sortStartHoming() {
     return;
   }
   // FAS swallows a motion command issued in the same breath as a
-  // forceStop (async stop processing, same family as its async position
-  // writes — spike-documented, then forgotten here: the seek 'ran' with
-  // the motor frozen for its whole timeout). Arm the seek lazily.
+  // forceStop (async stop processing): arm the seek lazily.
   sortT0 = millis();
   sortState = S_SEEK_ARM;
 }
@@ -281,7 +278,7 @@ void sortHomingFailed() {
 
 void sortSkipAbort() {                             // steps were lost: frame dead
   sortHardStop();
-  sortStalls++; sortSkips++;
+  sortStalls++;
   sortEdgeArm = false; sortCrossExpect = false;
   sortState = S_IDLE; sortHomed = false;
   host.println(F("error:sort stall detected"));
@@ -295,18 +292,16 @@ void sortSkipAbort() {                             // steps were lost: frame dea
 void sortGoTo(int slot) {                          // called only when S_IDLE+homed
   if (slot < 0) slot = 0; if (slot >= MAX_SLOTS) slot = MAX_SLOTS - 1;
   uint32_t since = millis() - lastSortArrive;      // settle: rapid commands
-  // 1.x parity: AirDrop REPLACES the baseline rest (blasted cases clear
-  // the chute faster); Arm dwell is extra margin on top in both modes
+  // AirDrop REPLACES the baseline rest (blasted cases clear the chute
+  // faster); Arm dwell is extra margin on top in both modes
   int base = airDrop ? airPost : slotDropDelay;
   uint32_t dwell = (uint32_t)(base > 0 ? base : 150) + (uint32_t)armDwellMs;
   if (since < dwell) delay(dwell - since);         // bounded, protocol-visible
-  sortSlot = slot;
   sortApplyMotion();
-  sgLastN = 0; sgLastSum = 0; sgLastMin = 1023;
   long start = (long)sortSt->getCurrentPosition();
   long target = sortTargetAbs(slot);
   long zLow = sortFlagPos - sortFlagWidth, zHigh = sortFlagPos;
-  sortCrossExpect = sortAxis && sortFlagOffset > 0 &&
+  sortCrossExpect = sortFlagOffset > 0 &&
                     ((start < zLow - 64 && target > zHigh + 64) ||
                      (start > zHigh + 64 && target < zLow - 64));
   sortMovingDown = target < start;
@@ -339,7 +334,7 @@ void sortService() {
         sortSt->setSpeedInHz(1500);
         sortSt->runForward();                      // leave the flag UPWARD
         sortT0 = millis(); sortState = S_BACKOFF_RUN;
-      }
+      } else if (millis() - sortT0 > 4000) sortHomingFailed();
       return;
     case S_BACKOFF_RUN:
       if (digitalRead(SORT_HOME) != LOW) {         // flag released: margin, stop
@@ -369,7 +364,7 @@ void sortService() {
           sortState = S_WIDTH_ARM;
           return;
         }
-        sortHomed = true; sortSlot = 0;
+        sortHomed = true;
         sortHomeFailStreak = 0;                    // a good home = healthy
         lastSortArrive = millis();
         sortApplyMotion();
@@ -395,7 +390,7 @@ void sortService() {
           host.print(F("info:tab width measured "));
           host.println(sortFlagWidth);
         }
-        sortHomed = true; sortSlot = 0;
+        sortHomed = true;
         sortHomeFailStreak = 0;                    // a good home = healthy
         lastSortArrive = millis();
         sortApplyMotion();
@@ -431,10 +426,6 @@ void sortService() {
         if (pos > zLow - 240 && pos < zHigh + 240) sortSawFlag = true;
         else { sortSkipAbort(); return; }
       }
-      // SG telemetry (blocking UART read costs the motion nothing on PIO)
-      uint16_t r = sortDrv.SG_RESULT();
-      if (r == 0) r = sortDrv.SG_RESULT();
-      if (r > 0) { sgLastN++; sgLastSum += r; if (r < sgLastMin) sgLastMin = r; }
       if (!sortSt->isRunning()) {
         // absence check: a crossing move that never saw the flag lost
         // steps somewhere (or the sensor is dead) — same recovery
@@ -453,11 +444,16 @@ void sortService() {
 // FEED axis — cycle state machine (blind travel -> flag seek -> offset)
 // =====================================================================
 enum FeedState { F_IDLE, F_WAIT_SORT, F_WAIT_BRASS, F_DEBOUNCE, F_BLIND,
-                 F_SEEK, F_OFFSET, F_NOTIFY, F_HOME, F_LAUNCH };
+                 F_OFFSET, F_NOTIFY, F_HOME, F_LAUNCH };
 FeedState feedState = F_IDLE;
 bool forceFeed = false;
 bool slotQueued = true;
 int qSlot = 0;
+Stream *cycleHost = &Serial1;   // who started the cycle: gets its done/errors
+bool stopPending = false;       // stop received mid-motion: ack when landed
+int feedPendingSlot = 0;   // the slot THIS feed's drop belongs to: the arm
+                           // must sit there before the wheel moves, even
+                           // after a self-heal re-home parked it at 0
 uint32_t feedT0 = 0, waitMsgT = 0;
 long feedSeekStart = 0;
 int feedSortHomeTries = 0;
@@ -468,15 +464,14 @@ int feedCruiseCatch = 0;
 
 // Flag edge by INTERRUPT, not loop polling: the PIO keeps stepping while the
 // CPU services serial or TMC UART, so a polled edge is seen late (or a narrow
-// tab is missed outright — bench-measured 100+ usteps of jitter). The ISR
+// tab is missed outright). The ISR
 // timestamps the true edge; the service latency-corrects the position with
 // elapsed-time * current-rate.
 //
 // ONLY a falling edge counts — never a level read. A level read on a wheel
 // that stopped inside the tab yields a mid-tab pseudo-edge, and that error
-// carries into the next cycle's start with nothing to reset it (bench:
-// cycles alternating between instant stop, a barely-move, and a full extra
-// pitch). A true leading edge each cycle is an absolute reference.
+// carries into the next cycle's start with nothing to reset it. A true
+// leading edge each cycle is an absolute reference.
 //
 // The ISR is NOT armed at cycle start: a cycle begins parked at/near the
 // tab edge, and launch vibration chatters the opto — a bogus falling edge
@@ -489,26 +484,21 @@ volatile bool feedEdgeSeen = false;
 volatile uint32_t feedEdgeUs = 0;
 bool feedEdgeCalced = false;
 long feedEdgeAbs = 0;
-bool feedEdgeInBlind = false;
 long feedCycleStart = 0;
 long feedClearStart = 0;
 bool feedDebug = false;
 long feedArmAt = 0;
 uint32_t feedEdgeLatUs = 0;
 // Predictive creep: braking from cruise inside the small offset is
-// physically impossible (bench: ~25 full steps of forward rotor slip at
-// speed 96 — 1.x commanded the same stop and simply never knew). 2.0
-// learns the tab pitch, ramps down to a creep BEFORE the predicted edge,
-// and takes the edge at creep speed: an exact, slip-free stop.
+// physically impossible, so the feed learns the tab pitch, ramps down to a
+// creep BEFORE the predicted edge, and takes the edge at creep speed: an
+// exact, slip-free stop.
 long feedPrevEdge = LONG_MIN;
 long feedPitchEst = 0;                             // EMA of tab pitch, usteps
 long feedCreepAt = 0;
 bool feedCreeping = false;
 #define FEED_CREEP_HZ 4000
 #define FEED_CREEP_RAMP 200000
-// lead covers the FAS step queue (~300 usteps at cruise), the ramp-down
-// distance, and tab placement jitter
-#define FEED_CREEP_LEAD 450
 volatile uint32_t feedFallCount = 0;               // every falling edge, all cycle
 void feedHomeIsr() {
   feedFallCount++;
@@ -547,19 +537,15 @@ void feedApplyMotion() {
 }
 
 // The feed stepper must NEVER forceStop(): with its short forward-planning
-// queue (set for the predictive creep), FAS's forceStop wedges the queue —
-// isRunning() sticks true until reboot and every later cycle dies in
-// F_LAUNCH (bench-bisected: any feed forceStop killed the wheel for the
-// rest of the boot; the sort, on default planning, is unaffected). A
-// max-decel stopMove() is the same near-dead stop through the sane path.
+// queue, FAS's forceStop wedges the queue (isRunning() sticks true until
+// reboot). A max-decel stopMove() is the same near-dead stop, safely.
 void feedHardStop() {
   feedSt->setAcceleration(4000000);
   feedSt->stopMove();
 }
 
-// same disease on the sort axis (field trace: the homing dance's runForward
-// swallowed after a forceStop, position frozen through every retry): the
-// sort never forceStops either.
+// the sort never forceStops either: a motion command issued right after a
+// forceStop is swallowed.
 void sortHardStop() {
   sortSt->setAcceleration(4000000);
   sortSt->stopMove();
@@ -578,7 +564,7 @@ void motorsWake() {
   digitalWrite(FEED_EN, LOW);
   digitalWrite(SORT_EN, LOW);
   delay(60);
-  sortHomed = false; sortState = S_UNHOMED;
+  sortHomed = false; sortState = S_UNHOMED;       // a limp arm can be nudged
   host.println(F("info:motors wake"));
 }
 void checkMotorStandby() {
@@ -611,8 +597,10 @@ void enterFault(uint8_t code, const __FlashStringHelper *msg) {
   feedHardStop(); sortHardStop();
   feedEdgeArm = false; sortEdgeArm = false;
   feedState = F_IDLE; forceFeed = false;
+  feedHomeResume = false; feedRealigned = false;   // a wait's realign is over
   sortState = S_IDLE; sortHomed = false;
   host.print(F("fault:")); host.println(msg);
+  if (stopPending) { stopPending = false; host.println(F("done")); }
 }
 
 void feedAbort(const __FlashStringHelper *err) {
@@ -620,18 +608,22 @@ void feedAbort(const __FlashStringHelper *err) {
   feedEdgeArm = false;
   feedPrevEdge = LONG_MIN;   // edge chain broken: don't learn a fake pitch
   feedState = F_IDLE; forceFeed = false;
+  // the wait's realign flags belong to the cycle that just died: left set,
+  // the operator's next Home feeder turned into an uncommanded feed cycle
+  feedHomeResume = false; feedRealigned = false;
   host.println(err);
+  if (stopPending) { stopPending = false; host.println(F("done")); }
   if (++feedAbortStreak >= 2)
     enterFault(1, F("feed jam - wheel cannot reach its sensor"));
 }
 
-// bare feed home: slow seek to the tab edge, stop AT it, no offset.
+// bare feed home: slow seek to the tab edge, then park at the operating
+// rest (edge + homing offset), exactly where a cycle parks.
 // A wheel already resting on the tab is home (the feed frame re-anchors
 // every cycle; it does not need the absolute edge at rest).
 // deliberate=true (the Home feeder button): an on-tab wheel is NOT trusted
 // as aligned — a stop that slipped under brass load can rest misaligned yet
-// still on the wide tab (field-hit: rehome was a silent no-op until the
-// operator dragged the wheel off the tab by hand). A deliberate home rides
+// still on the wide tab. A deliberate home rides
 // forward out of the tab and anchors on the NEXT tab's true leading edge —
 // forward-only, advancing one pocket. Automatic homes (boot, run-end, the
 // mid-run realign) stay deliberate=false: on-tab is a no-op so they can
@@ -639,11 +631,13 @@ void feedAbort(const __FlashStringHelper *err) {
 void feedStartManualHome(bool deliberate) {
   if (feedState != F_IDLE) return;               // busy — a cycle owns the wheel
   motorsWake();
+  cycleHost = host.active;
+  feedHomeResume = false; feedRealigned = false;
   bool onTab = digitalRead(FEED_HOME) == LOW;
   if (onTab && !deliberate) return;
   feedApplyMotion();
-  feedSt->setSpeedInHz(2500);                    // 1.x homefeeder pace (400 us)
-  feedEdgeSeen = false; feedEdgeCalced = false; feedEdgeInBlind = false;
+  feedSt->setSpeedInHz(2500);                    // homefeeder pace (400 us/step)
+  feedEdgeSeen = false; feedEdgeCalced = false;
   feedEdgeArm = false;
   feedSeekStart = (long)feedSt->getCurrentPosition();
   if (onTab) {
@@ -662,9 +656,9 @@ void feedStartManualHome(bool deliberate) {
 }
 
 // tab edge in hand (feedEdgeAbs): ONE deceleration to edge + offset,
-// forward-only. 1.x parity: crisp mode crosses the offset at cruise and
-// dead-stops; decel-over-offset shapes the whole offset down to the
-// feeddecel end speed. Never reverse across the drop port — an overrun
+// forward-only. Crisp mode crosses the offset at cruise and dead-stops;
+// decel-over-offset shapes the whole offset down to the feeddecel end
+// speed. Never reverse across the drop port — an overrun
 // stops just past home (bounded; the next cycle re-anchors on its edge).
 void feedFinishHome() {
   feedEdgeArm = false;
@@ -734,23 +728,17 @@ void feedFinishHome() {
 
 void feedStartCycle() {                            // after the arm is parked
   feedApplyMotion();
-  feedEdgeSeen = false; feedEdgeCalced = false; feedEdgeInBlind = false;
+  feedEdgeSeen = false; feedEdgeCalced = false;
   feedEdgeArm = false;                             // armed once confirmed clear
   feedCycleStart = (long)feedSt->getCurrentPosition();
   feedClearStart = feedCycleStart;
   feedSeekStart = feedCycleStart;
-  sgLastN = 0; sgLastSum = 0; sgLastMin = 1023;
-  // ONE continuous run to the flag, 1.x-style. The port's blind-move /
-  // stop / re-launch / seek / stop shape put three violent transitions
-  // where 1.x has one, and the motor slipped steps at them (bench: pitch
-  // readings wandering 685-1316 on a wheel proven even to +/-2 steps).
-  // "Blind" is now only a distance during which the edge is not yet
-  // trusted, not a separate move.
+  // ONE continuous run to the flag. "Blind" is only a distance during
+  // which the edge is not yet trusted, not a separate move.
   feedFallCount = 0;
   feedCreeping = false;
   // the creep lead must fit the ACTUAL cruise speed: ramp-down distance
-  // + the 5ms planning queue + jitter margin. The old fixed 450 was sized
-  // for speed 96 and left speed 98 catching edges mid-ramp (slipped stops).
+  // + the 5ms planning queue + jitter margin.
   uint32_t vc = speedToHz(feedSpeedSet);
   long lead = 100 + (long)(vc / 200) +
       (long)(((uint64_t)vc * vc - (uint64_t)FEED_CREEP_HZ * FEED_CREEP_HZ) /
@@ -765,17 +753,31 @@ void feedStartCycle() {                            // after the arm is parked
     feedCreepAt = bootstrap;                       // stale frame: be safe
   if (feedCreepAt < feedCycleStart + 64) feedCreepAt = feedCycleStart + 64;
   feedT0 = millis();
-  feedState = F_LAUNCH;                            // same forceStop-swallow
-}                                                  // guard as the sort seek
+  feedState = F_LAUNCH;
+}
 
 void feedService() {
   switch (feedState) {
     case F_IDLE: return;
     case F_WAIT_SORT:
-      if (sortState == S_IDLE && (sortHomed || !sortAxis)) {
+      if (millis() - feedT0 > 10000) {             // an arm that never parks:
+        feedAbort(F("error:sort arm not ready"));  // say so instead of waiting forever
+        return;
+      }
+      // the wheel moves only over an arm that is PARKED AT THIS FEED'S
+      // SLOT: S_IDLE alone is not enough — the homing settle issues its
+      // move to slot 0 and goes idle at once (a full swing with a flag
+      // offset), a skip-heal re-home parks the arm at 0 with the case
+      // still owed to feedPendingSlot, and a stop mid-move leaves it
+      // between slots. Check the position, and finish the move first.
+      if (sortState == S_IDLE && sortHomed && !sortSt->isRunning()) {
+        if (!sortAtSlot(feedPendingSlot)) {
+          sortGoTo(feedPendingSlot);               // dwell inside; next tick waits on S_MOVING
+          return;
+        }
         feedStartCycle();
       } else if ((sortState == S_IDLE || sortState == S_UNHOMED) &&
-                 sortAxis && !sortHomed) {
+                 !sortHomed) {
         // arm idle but unhomed (a stopped run, a failed home): self-heal —
         // home it now and keep waiting; the cycle proceeds once the frame
         // is real. Feeding over an unhomed arm mis-bins every case.
@@ -796,7 +798,7 @@ void feedService() {
       }
       // a slip event that misaligns the pocket kills brass STAGING, and
       // with no cycles running nothing re-anchors — the wheel starves
-      // until the app's end-of-brass flush (field-hit). If the wait drags
+      // until the app's end-of-brass flush. If the wait drags
       // and the wheel is NOT resting on its tab, re-home it once: a
       // misaligned pocket realigns (brass usually stages right after); a
       // truly dry hopper pays nothing (on-tab home is a no-op).
@@ -807,7 +809,7 @@ void feedService() {
         host.println(F("info:feed wheel re-aligning"));
         feedApplyMotion();
         feedSt->setSpeedInHz(2500);
-        feedEdgeSeen = false; feedEdgeCalced = false; feedEdgeInBlind = false;
+        feedEdgeSeen = false; feedEdgeCalced = false;
         feedEdgeArm = false;
         feedSeekStart = (long)feedSt->getCurrentPosition();
         feedCycleStart = feedSeekStart - 160;
@@ -827,19 +829,16 @@ void feedService() {
       if (millis() - feedT0 >= (uint32_t)debounceTime) feedState = F_WAIT_SORT;
       return;
     case F_LAUNCH:                                 // standstill + settle before
-      if (!feedSt->isRunning() && millis() - feedT0 > 150) {
-        feedSt->runForward();                      // motion: FAS swallows a run
-        feedT0 = millis();                         // issued right on a forceStop
+      if (!feedSt->isRunning() && millis() - feedT0 >= (uint32_t)launchSettle) {
+        feedSt->runForward();
+        feedT0 = millis();
         feedState = F_BLIND;
       } else if (millis() - feedT0 > 4000) {
         feedAbort(F("error:feed overtravel detected"));
       }
       return;
     case F_BLIND: {
-      // feed jam detection is the overtravel budget below. The 1.x DIAG
-      // tripwire retired with the ring swap (jumpers pulled, X-STOP is the
-      // feed opto now); overtravel caught every bench-provoked jam the
-      // tripwire did, without the false-trip and UART-read costs.
+      // feed jam detection is the overtravel budget below
       feedEdgeMaybeArm();
       if (!feedCreeping &&
           (long)feedSt->getCurrentPosition() >= feedCreepAt) {
@@ -851,7 +850,6 @@ void feedService() {
       feedEdgeResolve();
       if (feedEdgeCalced) { feedFinishHome(); return; }
       // overtravel: two pitches past the blind with no tab = jammed wheel
-      // skipping under the wedge (the SG tripwire is creep-blind by design)
       long budget = feedPitchEst > 0 ? 2 * feedPitchEst : 3200;
       long trav = (long)feedSt->getCurrentPosition() - feedCycleStart;
       if (trav > (long)feedSteps * USTEP + budget ||
@@ -878,18 +876,17 @@ void feedService() {
         if (digitalRead(FEED_HOME) == HIGH) restOffTab++;  // stop slipped off tab
         feedState = F_IDLE; forceFeed = false;
         host.println(F("done"));
+        if (stopPending) { stopPending = false; host.println(F("done")); }
       }
       return;
-    case F_HOME: {                               // bare home: slow seek, stop
-      feedEdgeMaybeArm();                        // AT the edge, no offset
+    case F_HOME: {                               // bare home: slow seek to the
+      feedEdgeMaybeArm();                        // edge, park at edge + offset
       feedEdgeResolve();
       if (feedEdgeCalced) {
         feedEdgeArm = false;
         long pos = (long)feedSt->getCurrentPosition();
         // park at the OPERATING rest (edge + offset), exactly where a
-        // cycle parks — a bare home used to stop at edge+0, leaving the
-        // wheel 7 steps short of the tuned alignment after every
-        // run-end/boot home ("off home" on inspection, field-hit)
+        // cycle parks
         long stopAt = feedEdgeAbs + (long)feedHomingOffset * USTEP;
         if (stopAt < pos + 4) stopAt = pos + 4;  // forward-only
         feedSt->setAcceleration(500000);
@@ -915,12 +912,12 @@ void feedService() {
 
 void startPipelinedFeed(int slot, bool force) {    // pf / xf:N
   motorsWake();
+  cycleHost = host.active;                         // this host owns the cycle
+  stopPending = false;                             // a new cycle supersedes
   if (feedState != F_IDLE) {
-    // recovery paths overlap: the app's HOME (a seconds-long homing dance)
-    // is chased by its re-prime xf within ~1s, and blindly overwriting the
-    // state machine left the wheel running into a mangled cycle -> error ->
-    // HOME again, forever (the first field run died in this loop). Yield
-    // whatever is in flight — every cycle re-anchors on its own edge.
+    // recovery paths overlap (the app's HOME is chased by its re-prime xf
+    // within ~1 s): yield whatever is in flight — every cycle re-anchors
+    // on its own edge.
     feedHardStop();
     feedEdgeArm = false;
     feedPrevEdge = LONG_MIN; // edge chain broken: don't learn a fake pitch
@@ -929,8 +926,21 @@ void startPipelinedFeed(int slot, bool force) {    // pf / xf:N
   forceFeed = force;
   feedSortHomeTries = 0;
   feedRealigned = false; feedHomeResume = false;
-  if (sortAxis && sortHomed) sortGoTo(slot);       // arm first (dwell inside)
-  qSlot = slot;
+  feedPendingSlot = slot;
+  if (sortHomed) {                                 // arm first (dwell inside)
+    // a sortto: just before (the app's flush pair) may still be moving:
+    // finish it rather than re-target mid-move, which re-reads the flag
+    // crossing from a half-travelled start
+    while (sortState == S_MOVING) { sortService(); outPi.pump(); outUsb.pump(); }
+    // 7.2 parity: a zero-travel move skips the dwell — the arm is not
+    // swinging, so a case in the chute has nothing to fight. Judged on
+    // the arm's POSITION, not the slot it was last sent to: after a home
+    // the settle move to slot 0 can still be in flight, and a stop
+    // mid-move leaves the arm short of where it was sent.
+    if (sortHomed && (sortSt->isRunning() || !sortAtSlot(slot)))
+      sortGoTo(slot);
+  }
+  qSlot = slot;                                    // pf: placeholder until ps:
   // brass wait + debounce run CONCURRENTLY with the arm move (pure sensor
   // time, no motion); the wheel's MOTION gates on the parked arm in
   // F_WAIT_SORT afterwards — brass still cannot drop before the arm is
@@ -950,9 +960,9 @@ bool requireMotorPower() {
 }
 
 void checkMotorPower() {
-  // poll only at true rest: a glitched TMC read mid-homing used to declare
-  // power lost and strand the arm S_UNHOMED (S_UNHOMED itself must still
-  // poll — it IS the power-off resting state)
+  // poll only at true rest: a glitched TMC read mid-homing must not read
+  // as power lost (S_UNHOMED itself must still poll — it IS the power-off
+  // resting state)
   if (feedState != F_IDLE ||
       (sortState != S_IDLE && sortState != S_UNHOMED)) return;
   if (millis() - lastPowerPoll < 1000) return;
@@ -965,7 +975,7 @@ void checkMotorPower() {
     host.println(F("info:motor power on"));
     sortState = S_UNHOMED; sortHomed = false;
     sortStartHoming();                             // positions unknown: re-home
-    feedStartManualHome(false);                    // both axes, 1.x boot parity
+    feedStartManualHome(false);                    // both axes
   } else {
     powerFlaps++;
     host.println(F("info:motor power off"));
@@ -973,8 +983,16 @@ void checkMotorPower() {
   }
 }
 
-void persistSortAxis() {
-  EEPROM.write(0, 0xA5); EEPROM.write(1, sortAxis ? 1 : 0); EEPROM.commit();
+#define FHO_MAGIC_ADDR 9
+#define FHO_DATA_ADDR  10
+#define FHO_MAGIC      0x5B
+void persistFeedHomingOffset() {                   // like the carousel build:
+  int stored = -1;                                 // the tuned offset survives a
+  if (EEPROM.read(FHO_MAGIC_ADDR) == FHO_MAGIC) EEPROM.get(FHO_DATA_ADDR, stored);
+  if (stored == feedHomingOffset) return;          // reflash and lands the boot
+  EEPROM.write(FHO_MAGIC_ADDR, FHO_MAGIC);         // home where the app expects
+  EEPROM.put(FHO_DATA_ADDR, feedHomingOffset);
+  EEPROM.commit();
 }
 
 // =====================================================================
@@ -1004,11 +1022,10 @@ void sendConfig() {
   host.print(F(",\"SortFlagOffset\":")); host.print(sortFlagOffset);
   host.print(F(",\"SortFlagWidth\":")); host.print(sortFlagWidth);
   host.print(F(",\"AutoMotorStandbyTimeout\":")); host.print(motorStandby);
-  host.print(F(",\"CaseFanSpeedEnabled\":")); host.print(caseFanSw ? 1 : 0);
   host.print(F(",\"CaseFanLevel\":")); host.print(caseFanLevel);
   host.print(F(",\"CameraLEDLevel\":")); host.print(cameraLEDLevel);
   host.print(F(",\"DebounceTimeout\":")); host.print(debounceTime);
-  host.print(F(",\"DebouncePauseTime\":")); host.print(debouncePause);
+  host.print(F(",\"LaunchSettle\":")); host.print(launchSettle);
   host.print(F(",\"SortAccelFactor\":")); host.print(sortAccF);
   host.print(F(",\"SortDecelFactor\":")); host.print(sortDecF);
   host.print(F(",\"FeedAccelFactor\":")); host.print(feedAccF);
@@ -1027,9 +1044,7 @@ void sendConfig() {
   host.print(F("\""));
   host.print(F(",\"StallGuardEnabled\":")); host.print(sgEnabled ? 1 : 0);
   host.print(F(",\"FeedStallThreshold\":")); host.print(feedSgThrs);
-  host.print(F(",\"SortStallThreshold\":")); host.print(sortSgThrs);
   host.print(F(",\"MotorPower\":")); host.print(motorPower ? 1 : 0);
-  host.print(F(",\"SortAxis\":")); host.print(sortAxis ? 1 : 0);
   host.print(F(",\"Core\":\"FAS\""));
   host.print(F(",\"Board\":\"SKR_PICO\"}"));
   host.println();
@@ -1049,17 +1064,28 @@ void handleCommand() {
   if (input == "version") { host.println(F(FIRMWARE_VERSION)); return; }
   if (input == "getconfig") { sendConfig(); return; }
   if (input == "stop") {
+    // 7.2 defers every command until the cycle lands, and the app's
+    // cancel logic is written for that ("the waiting feed fires first,
+    // its done arrives, then the stop's"). Halting the wheel mid-pitch
+    // instead left a half-dropped case over the port for the next arm
+    // move. So: a stop during MOTION lets the cycle land at its aligned
+    // rest and is acknowledged after the cycle's own done.
+    if (feedState == F_LAUNCH || feedState == F_BLIND ||
+        feedState == F_OFFSET || feedState == F_NOTIFY) {
+      stopPending = true;
+      return;
+    }
     feedHardStop(); sortHardStop();
     feedEdgeArm = false;
     feedPrevEdge = LONG_MIN; // edge chain broken: don't learn a fake pitch
     feedState = F_IDLE; forceFeed = false;
+    feedHomeResume = false; feedRealigned = false;
     if (sortState == S_MOVING) {
       sortState = S_IDLE;                          // position frame intact
     } else if (sortState != S_IDLE && sortState != S_UNHOMED) {
       // stop landed mid-HOMING: the frame is not established. Leaving the
-      // homing state running with a dead motor let its timeout fire
-      // 'sort homing failed' seconds later and strand the arm unhomed
-      // (field-hit on the first real sort run's stop/restart).
+      // homing state running with a dead motor would let its timeout fire
+      // 'sort homing failed' seconds later and strand the arm unhomed.
       sortState = S_UNHOMED;
       sortHomed = false;
     }
@@ -1074,11 +1100,6 @@ void handleCommand() {
     host.print(F("FEED current: ")); host.println(feedDrv.rms_current());
     host.print(F("FEED Stealth: ")); host.println(feedDrv.stealth());
     host.print(F("Motor power: ")); host.println(motorPower ? F("on") : F("off"));
-    return;
-  }
-  if (input == "pitx") {                       // test: force a line out the Pi UART
-    Serial1.println(F("pitx-hello"));
-    host.println(F("ok"));
     return;
   }
   if (input == "diag") {
@@ -1118,27 +1139,10 @@ void handleCommand() {
   host.print(F(",\"LastHomingSteps\":")); host.print(lastSeek);
     host.print(F(",\"MaxHomingSteps\":")); host.print(maxSeek);
     host.print(F(",\"FeedCycles\":")); host.print(feedCycles);
-    host.print(F(",\"FeedStalls\":")); host.print(feedStalls);
     host.print(F(",\"SortStalls\":")); host.print(sortStalls);
     host.println(F("}"));
     return;
   }
-  if (input == "sgstats") {
-    host.print(F("{\"enabled\":")); host.print(sgEnabled ? 1 : 0);
-    host.print(F(",\"feedThrs\":")); host.print(feedSgThrs);
-    host.print(F(",\"sortThrs\":")); host.print(sortSgThrs);
-    host.print(F(",\"lastN\":")); host.print(sgLastN);
-    host.print(F(",\"lastMin\":")); host.print(sgLastMin == 1023 ? 0 : sgLastMin);
-    host.print(F(",\"lastAvg\":")); host.print(sgLastN ? sgLastSum / sgLastN : 0);
-    host.print(F(",\"feedStalls\":")); host.print(feedStalls);
-    host.print(F(",\"sortStalls\":")); host.print(sortStalls);
-    host.print(F(",\"sortSkips\":")); host.print(sortSkips);
-    host.print(F(",\"sortHomed\":")); host.print(sortHomed ? 1 : 0);
-    host.print(F(",\"motorPower\":")); host.print(motorPower ? 1 : 0);
-    host.println(F("}"));
-    return;
-  }
-
   if (input == "bootloader") {
     // drop to the UF2 bootloader (RPI-RP2 drive) — reachable over the Pi
     // UART link so the Pi can flash the board without anyone touching it
@@ -1159,9 +1163,10 @@ void handleCommand() {
     host.println(F("ok"));
     return;
   }
+  // a faulted machine starts no cycle or arm move, whichever command asks
   if (faultCode &&
       (input.startsWith(F("pf")) || input.startsWith(F("xf:")) ||
-       input.startsWith(F("sortto:")) || input.startsWith(F("sorttest:")))) {
+       input.startsWith(F("sortto:")) || isDigit(input[0]))) {
     host.print(F("fault:"));
     host.println(faultCode == 1 ? F("feed jam - wheel cannot reach its sensor")
                : faultCode == 2 ? F("sort arm cannot find its sensor")
@@ -1170,7 +1175,7 @@ void handleCommand() {
   }
   if (input.startsWith(F("armfree:"))) {
     // guided-setup helper: release ONLY the sorter arm so the operator can
-    // position it by hand (feed stays held; fans, ring, board untouched).
+    // position it by hand (feed stays held; fans and board untouched).
     // armfree:0 re-energizes and re-homes — the frame is unknown after
     // hand moves by definition.
     bool freeArm = input.substring(8).toInt() != 0;
@@ -1199,6 +1204,7 @@ void handleCommand() {
   if (input == "homesorter") {
     if (!requireMotorPower()) return;
     host.println(F("ok"));
+    qSlot = 0; slotQueued = true;                  // 7.2: queue rebuilt at park
     sortStartHoming();
     return;
   }
@@ -1217,35 +1223,23 @@ void handleCommand() {
   }
   if (input.startsWith(F("xf:"))) {
     if (!requireMotorPower()) return;
+    // 7.2 queue semantics: the arm goes to the slot ALREADY queued (the
+    // case at the drop port belongs to it), and N is queued for the NEXT
+    // feed. The app's end-of-brass flush (sortto:prev, xf:last) and its
+    // closing xf:0 are written for this.
     int s = clampi(input.substring(3).toInt(), 0, MAX_SLOTS - 1);
-    slotQueued = true; qSlot = s;
-    startPipelinedFeed(s, true);
+    startPipelinedFeed(qSlot, true);
+    qSlot = s; slotQueued = true;
     return;
   }
   if (input.startsWith(F("sortto:"))) {
     if (!requireMotorPower()) return;
     host.println(F("ok"));
     int s = clampi(input.substring(7).toInt(), 0, MAX_SLOTS - 1);
+    qSlot = s; slotQueued = true;                  // 7.2: sortto collapses the queue
     if (!sortHomed) sortStartHoming();             // will park at 0; then move
     while (sortState != S_IDLE && sortState != S_UNHOMED) { sortService(); }
     if (sortHomed) sortGoTo(s);
-    return;
-  }
-  if (input.startsWith(F("sorttest:"))) {          // 1.x parity: random slots
-    if (!requireMotorPower()) return;
-    host.println(F("testing started"));
-    int n = clampi(input.substring(9).toInt(), 1, 100);
-    for (int i = 0; i < n && sortHomed; i++) {
-      int slot = (int)(rp2040.hwrand32() % 8);
-      host.print(i); host.print(F(" - Sorting to: ")); host.println(slot);
-      sortGoTo(slot);
-      while (sortState == S_MOVING) { sortService(); outPi.pump(); outUsb.pump(); }
-    }
-    if (sortHomed) {
-      sortGoTo(0);
-      while (sortState == S_MOVING) { sortService(); outPi.pump(); outUsb.pump(); }
-    }
-    host.println(F("Sort Test Completed"));
     return;
   }
   if (input.startsWith(F("slotpos:"))) {           // slotpos:i:v (usteps)
@@ -1268,7 +1262,7 @@ void handleCommand() {
   SET_INT("feeddec:", feedDecF, 100, 5000, );
   SET_INT("sortaccel:", sortAccF, 100, 5000, );
   SET_INT("sortdecel:", sortDecF, 100, 5000, );
-  SET_INT("feedhomingoffset:", feedHomingOffset, 0, 30, );
+  SET_INT("feedhomingoffset:", feedHomingOffset, 0, 30, persistFeedHomingOffset());
   SET_INT("sorthomingoffset:", sortHomingOffset, 0, 100, );
   SET_INT("sortflagoffset:", sortFlagOffset, 0, 3520, );
   SET_INT("sortflagwidth:", sortFlagWidth, 32, 1000, );
@@ -1276,7 +1270,7 @@ void handleCommand() {
   SET_INT("armdwell:", armDwellMs, 0, 1000, );
   SET_INT("notificationdelay:", notificationDelay, 0, 1000, );
   SET_INT("debounceTime:", debounceTime, 0, 2000, );
-  SET_INT("debounceTimeout:", debounceTime, 0, 2000, );
+  SET_INT("launchsettle:", launchSettle, 0, 1000, );
   SET_INT("automotorstandbytimeout:", motorStandby, 0, 3600, );
   SET_INT("sorthomebackoff:", sortHomeBackoff, 0, 400, );
   SET_INT("sorthomeslow:", sortHomeSlow, 100, 5000, );
@@ -1284,9 +1278,8 @@ void handleCommand() {
   SET_INT("airdroppredelay:", airPre, 0, 500, );
   SET_INT("airdropdsignalduration:", airSignal, 0, 500, );
   SET_INT("airdroppostdelay:", airPost, 0, 3000, );
-  SET_INT("cameraledlevel:", cameraLEDLevel, 0, 255, ringShow());
+  SET_INT("cameraledlevel:", cameraLEDLevel, 0, 255, );
   SET_INT("sgfeed:", feedSgThrs, 0, 255, feedDrv.SGTHRS(feedSgThrs));
-  SET_INT("sgsort:", sortSgThrs, 0, 255, );
   SET_INT("fan:", caseFanLevel, 0, 100,
           analogWrite(CASEFAN, caseFanLevel * 255 / 100));
 
@@ -1302,36 +1295,21 @@ void handleCommand() {
     sgEnabled = toBool(input.substring(3));
     host.println(F("ok")); return;
   }
-  if (input.startsWith(F("sgtcool:"))) {
-    sgTcool = (uint32_t)input.substring(8).toInt();
-    feedDrv.TCOOLTHRS(sgTcool); sortDrv.TCOOLTHRS(sgTcool);
-    host.println(F("ok")); return;
+  if (input.startsWith(F("feedwheelrev:"))) {      // the carousel's wheel ratio:
+    host.println(F("ok"));                         // accepted, since the app pushes
+    return;                                        // one setter list to every board
   }
-  if (input.startsWith(F("sgprobe:"))) {           // 2.0: telemetry always on
-    host.println(F("ok")); return;
+  if (input.startsWith(F("ledcolor:"))) {          // accepted for the app;
+    host.println(F("ok"));                         // the ring is the Pi's
+    return;
   }
-  if (input.startsWith(F("sortaxis:"))) {
-    sortAxis = toBool(input.substring(9));
-    persistSortAxis();
-    if (!sortAxis) { sortState = S_IDLE; sortHomed = true; }
-    else { sortState = S_UNHOMED; sortHomed = false; }
-    host.println(F("ok")); return;
-  }
-  if (input.startsWith(F("ledcolor:"))) {          // WS2812 era; single-color
-    host.println(F("ok"));                         // PWM ring now — accepted
-    return;                                        // no-op for app compat
-  }
-  if (input.startsWith(F("chop:"))) {              // toff,tbl,pwmfreq (sort)
-    int c1 = input.indexOf(',', 5), c2 = input.indexOf(',', c1 + 1);
-    if (c1 > 0 && c2 > c1) {
-      int t = clampi(input.substring(5, c1).toInt(), 2, 15);
-      int b = clampi(input.substring(c1 + 1, c2).toInt(), 0, 3);
-      int p = clampi(input.substring(c2 + 1).toInt(), 0, 3);
-      sortDrv.toff(t);
-      sortDrv.blank_time(b == 0 ? 16 : b == 1 ? 24 : b == 2 ? 36 : 54);
-      sortDrv.pwm_freq(p);
-      host.println(F("ok"));
-    } else host.println(F("error:chop wants toff,tbl,pwmfreq"));
+  if (input.length() && isDigit(input[0])) {
+    // 7.2's bare "<n>": arm to the queued slot and feed, queue n (the
+    // app's non-pipelined path)
+    if (!requireMotorPower()) return;
+    int s = clampi(input.toInt(), 0, MAX_SLOTS - 1);
+    startPipelinedFeed(qSlot, false);
+    qSlot = s; slotQueued = true;
     return;
   }
   host.println(F("?"));
@@ -1346,7 +1324,10 @@ void setup() {
                                         // read blocks the loop ~2.5 ms, not
                                         // ~10 ms; TMC2209 auto-bauds, <500k)
   EEPROM.begin(64);
-  if (EEPROM.read(0) == 0xA5) sortAxis = EEPROM.read(1) != 0;
+  if (EEPROM.read(FHO_MAGIC_ADDR) == FHO_MAGIC) {   // tuned offset -> boot home
+    int v = -1; EEPROM.get(FHO_DATA_ADDR, v);
+    if (v >= 0 && v <= 30) feedHomingOffset = v;
+  }
 
   pinMode(FEED_HOME, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(FEED_HOME), feedHomeIsr, FALLING);
@@ -1360,10 +1341,7 @@ void setup() {
   pinMode(CASEFAN, OUTPUT); analogWrite(CASEFAN, caseFanLevel * 255 / 100);
   pinMode(AIRDROP_PIN, OUTPUT); digitalWrite(AIRDROP_PIN, LOW);
 
-  pinMode(RING_PIN, OUTPUT);
-  analogWriteFreq(20000);               // above camera-exposure beat, inside
-                                        // the MOSFET module's switching spec
-  ringShow();
+  analogWriteFreq(20000);               // case-fan PWM base (inaudible)
   fillSlotTab();
   delay(400);
 
@@ -1385,13 +1363,15 @@ void setup() {
   // HOMING SEEK runs the other way — down onto the flag from the slot
   // side — handled by the homing state machine, not the polarity.
   if (sortSt) { sortSt->setDirectionPin(SORT_DIR, true); sortApplyMotion(); }
-  // FastAccelStepper's PIO claim stomps GPIO 0's pin mux (UART0 TX = the
-  // Pi machine link) on this core — bisected on the bench: TX died at the
-  // first stepperConnectToPin, RX untouched. Hand the pins back to UART.
+  // FastAccelStepper's PIO claim overwrites GPIO 0's pin mux (UART0 TX =
+  // the Pi machine link): hand the pins back to UART.
   gpio_set_function(0, GPIO_FUNC_UART);
   gpio_set_function(1, GPIO_FUNC_UART);
-  ringShow();                           // re-assert ring PWM post-claim too
 
+  // TX was dead through the PIO claim until just above: 100 ms of idle-high
+  // lets the Pi's UART resync, so "Ready" arrives intact and the app sees
+  // the reboot.
+  delay(100);
   host.println(F("Ready"));
   if (!motorPower) {
     host.println(F("info:motor power off"));
@@ -1402,9 +1382,11 @@ void setup() {
 }
 
 void loop() {
-  if (recvFrom(Serial1, inPi) || recvFrom(Serial, inUsb)) {
-    if (cmdReady) { cmdReady = false; handleCommand(); }
-  }
+  if (recvFrom(Serial1, inPi) || recvFrom(Serial, inUsb)) handleCommand();
+  // cycle-lifetime lines (done, waiting for brass, error:, fault:) go to
+  // the host that STARTED the cycle, not whichever port sent the latest
+  // command: a "diag" typed on USB mid-cycle used to steal the Pi's done
+  host.active = cycleHost;
   sortService();
   feedService();
   checkMotorPower();

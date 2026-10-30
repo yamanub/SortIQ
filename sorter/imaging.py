@@ -125,6 +125,39 @@ def sharpness(img):
     return cv2.Laplacian(g, cv2.CV_64F).var()
 
 
+DONUT_SIZE = 224       # judge blur at model-input scale: machine/zoom-agnostic
+
+
+def donut_sharpness(img, center=None, rim_scale=None, pocket_frac=None):
+    """Blur metric over the ring the headstamp model actually reads.
+
+    Laplacian variance inside the donut — just outside the primer pocket to
+    just inside the rim — of the UNMASKED head crop (the primer mask's hard
+    edge would inflate it), resized to model-input scale so one floor fits
+    every machine's zoom. The whole-frame sharpness() is dominated by the
+    printed nest texture around the case, which the model never sees and
+    which drifts for minutes after the camera stream starts: it rejected
+    sharp, readable heads (field: 5 WIN cases read at 0.95-0.99)."""
+    cx, cy, r = center if center is not None else find_head(img)
+    r = _rim(r, rim_scale)
+    frac = POCKET_FRAC if pocket_frac is None else float(pocket_frac)
+    crop = _square(img, cx, cy, int(r * HEAD_MARGIN))
+    if crop is img or min(crop.shape[:2]) < 16:
+        return 0.0                           # no usable head in frame
+    g = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    g = cv2.resize(g, (DONUT_SIZE, DONUT_SIZE), interpolation=cv2.INTER_AREA)
+    lap = cv2.Laplacian(g, cv2.CV_64F)
+    c = DONUT_SIZE / 2.0
+    rim = c / HEAD_MARGIN                    # the crop's half-size is r*MARGIN
+    yy, xx = np.ogrid[:DONUT_SIZE, :DONUT_SIZE]
+    d = np.hypot(xx - c + 0.5, yy - c + 0.5)
+    if CROP_MODE == "primer_only":           # primer models read the pocket
+        region = d <= rim * frac - 2
+    else:
+        region = (d >= rim * frac + 2) & (d <= rim * 0.95)
+    return float(lap[region].var())
+
+
 def _head_contour(img):
     """The bright round case-sized contour, or None if the scene lacks one.
 

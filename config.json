@@ -19,7 +19,6 @@
   },
   "serial": {
     "port": "/dev/ttyUSB0",
-    "baud": 115200,
     "sort_timeout_s": 10.0,
     "auto_connect": true
   },
@@ -29,16 +28,16 @@
   "machine": {
     "feed_speed": 94,
     "feed_steps": 60,
-    "sort_speed": 90,
-    "sort_steps": 21,
+    "sort_speed": 94,
+    "sort_steps": 20,
     "feed_current": 1000,
     "sort_current": 1000,
-    "feed_homing_offset": 7,
-    "sort_homing_offset": 2,
+    "feed_homing_offset": 5,
+    "sort_homing_offset": 0,
     "slot_drop_delay": 300,
     "notification_delay": 120,
     "motor_standby": 0,
-    "camera_led": 110,
+    "camera_led": 200,
     "slots_total": 8,
     "slots_enabled": [
       0,
@@ -60,7 +59,7 @@
           "height": 720,
           "zoom": {
             "factor": 1.0,
-            "x": -0.05,
+            "x": 0.0,
             "y": 0.0
           },
           "controls": {
@@ -74,10 +73,6 @@
           "camera_led": 100
         }
       },
-      "saved": null
-    },
-    "imx415": {
-      "presets": {},
       "saved": null
     }
   },

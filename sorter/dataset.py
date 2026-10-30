@@ -43,6 +43,19 @@ def parse_label(label):
     return label, None
 
 
+def next_index(folder):
+    """The next free pair index in a raw/stamp class folder: numeric max
+    + 1, never the last name in sort order (past 9999 a lexical sort puts
+    "9999" after "10000" and every save lands on the same index)."""
+    best = -1
+    for p in Path(folder).glob("*_[AB].png"):
+        try:
+            best = max(best, int(p.name.split("_")[0]))
+        except ValueError:
+            continue
+    return best + 1
+
+
 def safe_label(label):
     """Reject anything that could escape the raw/ directory."""
     if not label or any(c in label for c in "/\\") or ".." in label:
@@ -206,8 +219,7 @@ def move_pair(root, label, index, new_label):
     if not a_path.exists() and not b_path.exists():
         raise ValueError(f"no pair #{index} in {label!r}")
     dst_d.mkdir(parents=True, exist_ok=True)
-    existing = sorted(dst_d.glob("*_[AB].png"))
-    next_i = int(existing[-1].name.split("_")[0]) + 1 if existing else 0
+    next_i = next_index(dst_d)
     for p, suffix in ((a_path, "A"), (b_path, "B")):
         if p.exists():
             p.rename(dst_d / f"{next_i:04d}_{suffix}.png")
@@ -231,8 +243,7 @@ def rename_label(root, src, dst):
     if src == dst:
         return 0
     dst_d.mkdir(parents=True, exist_ok=True)
-    existing = sorted(dst_d.glob("*_A.png"))
-    next_i = int(existing[-1].name.split("_")[0]) + 1 if existing else 0
+    next_i = next_index(dst_d)
     moved = 0
     for a_path in sorted(src_d.glob("*_A.png")):
         idx = a_path.name.split("_")[0]

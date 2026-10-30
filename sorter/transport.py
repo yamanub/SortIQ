@@ -1,12 +1,9 @@
 """Transport between the application (Pi side) and the motion controller.
 
-Two implementations of the same interface:
-  SerialTransport - the real ESP32-S3 over USB serial (use on the Pi, or on
-                    the PC once you have the board)
-  SimTransport    - in-process simulated ESP32 firmware (sorter/esp32_sim.py)
-
-The app only ever calls send() / readline(), so swapping hardware in later
-is a command-line flag, not a code change.
+The board adapter (Cs72Transport in sorter/cs72.py) implements this
+interface over USB serial; SimTransport runs the in-process simulated controller
+(sorter/esp32_sim.py) for the simulator mode. The app only ever calls
+send() / readline().
 """
 import queue
 
@@ -21,30 +18,6 @@ class Transport:
 
     def close(self):
         pass
-
-
-class SerialTransport(Transport):
-    def __init__(self, port, baud=115200):
-        import serial  # pyserial; imported lazily so sim mode needs no serial port
-        self.ser = serial.Serial(port, baud, timeout=0.1)
-
-    def send(self, line):
-        self.ser.write((line + "\n").encode())
-
-    def readline(self, timeout=None):
-        import time
-        deadline = None if timeout is None else time.monotonic() + timeout
-        buf = b""
-        while True:
-            chunk = self.ser.readline()  # returns b"" after 0.1 s of silence
-            buf += chunk
-            if buf.endswith(b"\n"):
-                return buf.decode(errors="replace").strip()
-            if deadline is not None and time.monotonic() >= deadline:
-                return None
-
-    def close(self):
-        self.ser.close()
 
 
 class SimTransport(Transport):

@@ -39,6 +39,12 @@ workflow is two tabs: the machine's app for collecting and sorting, and
    The first launch may trigger a Windows Firewall prompt — allow access
    on private networks so the trainer can reach the machine.
 
+   Windows must also count your home network as **Private**: Settings →
+   Network & internet → your connection → **Network profile type →
+   Private network**. On a Public network Windows blocks the machines from
+   reaching the trainer, and the trainer shows a warning until it's
+   changed.
+
    (To just install without starting the server — e.g. before step 5 below
    — run `uv sync` instead.)
 4. Browse to `http://localhost:5000` → **Train**.
@@ -68,8 +74,8 @@ uv venv --python 3.12 /opt/sortiq-gpu312
 uv pip install --python /opt/sortiq-gpu312 "tensorflow[and-cuda]"
 ```
 once present, the Train page probes it at startup and offers it as a
-choice. Day-to-day dataset growth needs neither — gallery rebuilds are
-minutes on CPU.
+choice. Day-to-day dataset growth needs neither — gallery rebuilds run
+on CPU.
 
 ### macOS / Linux
 
@@ -86,7 +92,10 @@ uv run webui/server.py --port 5000                # uv handles Python 3.12 + dep
    moods). "machine reachable ✓" confirms the link.
 2. Click **Pull dataset**. Phases: dataset pull (incremental — only new
    or changed images transfer after the first run), then crop rebuild.
-   Progress shows throughout.
+   Progress shows throughout. The first pull over Wi-Fi is slow; to seed
+   it, use **Copy dataset to USB stick…** on the machine's Train tab, then
+   copy the stick's `SortIQ/calibers` folder into this SortIQ folder, and
+   the pull only verifies.
 3. To retrain, pick a device under **Train a new model** — GPU (about an
    hour, if the WSL sandbox is set up) or CPU (overnight, low priority) —
    and press **Start training**. The trainer needs **100+ training crops
@@ -114,12 +123,11 @@ code on the machine; both installs expose a manifest of their deployable
 code files (per-file SHA-256 rolled up into one digest — that digest is
 the version, no git involved), and the two Train UIs compare them:
 
-- the machine's **Train models** window and the trainer's own Train page
+- the machine's **Train models…** window and the trainer's own Train page
   both warn when the trainer's code doesn't match the machine's, and
   **training is blocked until it does** — a stale trainer rebuilds crops
   with drifted imaging code and silently trains models the machine can't
-  reproduce at sort time (this is not hypothetical; it drifted twice
-  before this existed);
+  reproduce at sort time;
 - one click — **Update trainer from machine** — pulls exactly the files
   that differ, deletes what the machine no longer ships, verifies every
   byte against the manifest, and restarts the trainer into the new code.
@@ -134,8 +142,8 @@ Three things to know:
   `.venv`'s Python directly) needs one manual `uv sync` in the SortIQ
   folder to install the new packages before restarting.
 
-- The very first check after installing this feature may report that
-  *every* file differs — line endings (a Windows zip vs the machine's
+- The first check on a fresh trainer may report that *every* file
+  differs — line endings (a Windows zip vs the machine's
   files) count as differences. One click normalizes everything; after
   that, updates are only ever the files that really changed.
 - A trainer that is a **git checkout** (a dev box) refuses self-update on

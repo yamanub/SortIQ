@@ -35,6 +35,10 @@ def main():
     ap.add_argument("--epochs", type=int, default=20)
     ap.add_argument("--ft-epochs", type=int, default=15)
     ap.add_argument("--gallery", type=int, default=10)
+    ap.add_argument("--split", default="random", choices=["random", "index"],
+                    help="held-out queries: 'random' (seeded shuffle) or "
+                         "'index' (newest 20%% of each class by capture "
+                         "index — see embedding_bench2 --split)")
     ap.add_argument("--img-size", type=int, default=224)
     ap.add_argument("--embed-dim", type=int, default=128)
     ap.add_argument("--margin", type=float, default=0.3)
@@ -81,7 +85,10 @@ def main():
     files = {c: sorted((crops / c).glob("*.png")) + sorted((crops / c).glob("*.jpg"))
              for c in counts}
     for c in files:
-        rng.shuffle(files[c])
+        if args.split == "index":       # newest session first = the queries
+            files[c].sort(key=lambda p: p.name, reverse=True)
+        else:
+            rng.shuffle(files[c])
 
     train_paths, train_y = [], []
     queries, gallery = [], []
@@ -248,7 +255,8 @@ def main():
                      "pred": classes[i1[qi]],
                      "sim": round(float(per_cls[qi, i1[qi]]), 4)})
 
-    rep = {"tag": "distill_student_mnv2_224", "epochs": args.epochs,
+    rep = {"tag": "distill_student_mnv2_224", "split": args.split,
+           "epochs": args.epochs,
            "ft_epochs": args.ft_epochs, "distill_w": args.distill_w,
            "arc_w": args.arc_w, "teacher": args.teacher}
     for tier in ("closed", "fewshot"):

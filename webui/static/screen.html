@@ -1,0 +1,1738 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1024, height=600, user-scalable=no">
+<title>SortIQ Machine Screen</title>
+<!-- The machine's own 7" touchscreen (1024 x 600), shown full screen by
+     the kiosk on the Pi. Same app and API as the full web page; this one
+     is laid out for fingers: no scrolling on Sort, big buttons, no typing
+     except the Wi-Fi password keyboard. -->
+<style>
+:root{--bg:#14171c;--panel:#1d2229;--panel2:#242b34;--line:#313a46;--text:#d7dde5;
+  --dim:#8a95a3;--brass:#d4a94f;--green:#4cc46a;--red:#e2574f;--amber:#e0a63c;--blue:#5aa2e0}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+[hidden]{display:none!important}   /* beats .feedStrip's own display:flex */
+html,body{margin:0;width:1024px;height:600px;overflow:hidden;background:var(--bg);color:var(--text);
+  font:15px/1.35 system-ui,"Segoe UI",sans-serif;user-select:none;-webkit-user-select:none;touch-action:manipulation}
+button{font:inherit;color:inherit;cursor:pointer;touch-action:manipulation}
+button:disabled{opacity:.4;cursor:default}
+#app{width:1024px;height:600px;display:flex;flex-direction:column}
+header{height:44px;flex-shrink:0;display:flex;align-items:center;gap:14px;padding:0 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+.logo{font-weight:800;color:var(--brass);font-size:18px;letter-spacing:.02em}
+.dim{color:var(--dim)}
+.grow{flex-grow:1}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--dim);display:inline-block}
+.dot.ok{background:var(--green)}.dot.bad{background:var(--red)}.dot.warn{background:var(--amber)}
+.pill{font-size:13px;padding:3px 10px;border:1px solid var(--line);border-radius:999px;color:var(--dim);white-space:nowrap}
+.pill.ok{color:var(--green);border-color:#2c5a38}.pill.hold{color:var(--blue);border-color:#27445e}
+.pill.warn{color:var(--amber);border-color:#5e4a22}.pill.bad{color:var(--red);border-color:#5a2a28}
+.gear{width:44px;height:34px;border-radius:8px;border:1px solid var(--line);background:none;display:flex;align-items:center;justify-content:center;color:var(--dim)}
+.body{flex-grow:1;display:flex;min-height:0}
+nav{width:92px;flex-shrink:0;display:flex;flex-direction:column;gap:4px;padding:8px 6px;background:var(--panel);border-right:1px solid var(--line)}
+nav button{height:92px;border-radius:10px;border:none;background:none;color:var(--dim);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px}
+nav button.on{background:var(--brass);color:var(--bg);font-weight:700}
+main{flex-grow:1;min-width:0;position:relative}
+section.pg{position:absolute;inset:0;padding:14px;display:none}
+section.pg.on{display:flex}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
+.lbl{font-size:12px;font-weight:700;letter-spacing:.08em;color:var(--dim);text-transform:uppercase}
+.lbl span{font-weight:500;letter-spacing:0;text-transform:none}
+.btn{height:56px;border-radius:12px;border:1px solid var(--line);background:var(--panel2);font-weight:700;font-size:17px;padding:0 18px;white-space:nowrap}
+.btn.big{height:64px;font-size:20px;font-weight:800}
+.btn.go{background:var(--green);border-color:var(--green);color:#0f1a12}
+.btn.brass{background:var(--brass);border-color:var(--brass);color:var(--bg)}
+.btn.stop{background:none;border:2px solid var(--red);color:var(--red)}
+.btn.redfill{background:var(--red);border-color:var(--red);color:#fff}
+.btn.sel{border:2px solid var(--brass);color:var(--brass)}
+.btn.onoff{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.btn.onoff b{font-size:14px;padding:3px 10px;border-radius:999px;background:var(--line);color:var(--dim)}
+.btn.onoff.is-on{border-color:#2c5a38}
+.btn.onoff.is-on b{background:var(--green);color:#0f1a12}
+.row{display:flex;gap:10px;align-items:center}
+.col{display:flex;flex-direction:column;gap:10px}
+.scroll{overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y}
+.scroll::-webkit-scrollbar{width:6px}.scroll::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
+#toast{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);max-width:760px;padding:12px 20px;border-radius:12px;
+  background:#2a313b;border:1px solid var(--line);font-size:16px;z-index:50;display:none;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+#toast.err{border-color:var(--red);color:#ffb3ae}#toast.ok{border-color:#2c5a38}
+/* sort */
+#pg-sort{flex-direction:column;gap:12px}
+.sortTop{display:flex;align-items:center;gap:14px;height:64px;flex-shrink:0}
+.sortTop .t{font-size:24px;font-weight:800}
+.sortTop .s{font-size:13px;color:var(--dim)}
+.sortMid{flex-grow:1;min-height:0;display:flex;gap:12px}
+.lastCase{width:300px;flex-shrink:0;display:flex;flex-direction:column;gap:10px}
+.lastImg{flex-grow:1;display:flex;align-items:center;justify-content:center;min-height:0}
+.lastImg img{width:210px;height:210px;border-radius:50%;object-fit:cover;border:6px solid #6b5627}
+.lastImg .ph{width:200px;height:200px;border-radius:50%;background:var(--panel2);border:6px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:13px;text-align:center;padding:20px}
+.bins{flex-grow:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.bin{position:relative;overflow:hidden;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;text-align:left}
+.bin .n{font-size:12px;color:var(--dim)}
+.bin .c{font-size:15px;font-weight:700;line-height:1.2;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.bin .k{font-size:22px;font-weight:800;margin-top:auto}
+.bin.um{border-color:#5a2a28}.bin.um .c{color:var(--red)}
+.bin.of{border-color:#27445e}.bin.of .c{color:var(--blue)}
+.bin.off{opacity:.45}
+.bin .sw{position:absolute;left:0;top:0;bottom:0;width:5px}
+.bin .hold{position:absolute;left:0;bottom:0;height:4px;width:0;background:var(--brass)}
+.bin.pressing .hold{width:100%;transition:width .6s linear}
+.feedStrip{height:64px;flex-shrink:0;display:flex;align-items:center;gap:10px;padding:0 12px}
+.preset{height:48px;min-width:58px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);font-weight:600}
+.preset.sel{border:2px solid var(--brass);color:var(--brass);font-weight:800}
+.endCard{display:flex;align-items:center;gap:12px;padding:8px 14px;border-radius:12px;border:1px solid var(--line);background:var(--panel)}
+/* bin edit / class pickers */
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{height:44px;border-radius:999px;border:1px solid var(--line);background:var(--panel2);padding:0 16px;font-weight:700;display:flex;align-items:center;gap:10px}
+.chip .x{color:var(--dim);font-size:18px}
+.chip.fixed{color:var(--dim);font-weight:600}
+.letters{display:flex;gap:6px;flex-wrap:wrap}
+.letters button{height:40px;min-width:40px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);font-weight:700}
+.letters button.sel{border:2px solid var(--brass);color:var(--brass)}
+.clist{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;align-content:start}
+.citem{min-height:58px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);text-align:left;padding:8px 12px;display:flex;flex-direction:column;justify-content:center}
+.citem b{font-size:15px}.citem span{font-size:12px;color:var(--dim)}
+.citem.here{border-color:var(--brass)}.citem.here span{color:var(--brass)}
+.citem.thin span{color:var(--amber)}
+/* machine */
+#pg-machine,#pg-system{display:none;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;align-content:stretch}
+#pg-machine.on,#pg-system.on{display:grid}
+.full{grid-column:1 / -1}
+.doors{display:grid;grid-template-columns:repeat(8,minmax(0,1fr)) 1.4fr 1.4fr;gap:8px}
+.door{height:64px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);font-size:22px;font-weight:800}
+.door.open{background:var(--amber);border-color:var(--amber);color:var(--bg)}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:14px}
+.kv span:nth-child(odd){color:var(--dim)}
+.pibtn{text-align:left;height:44px;padding:0 14px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.pibtn small{font-weight:500;font-size:12px;color:var(--dim);text-align:right}
+#pg-system #ySleep .btn,#pg-system #yOff{height:48px}
+#pg-system #yPower{height:50px}
+.swatches{display:flex;gap:10px;align-items:center}
+.swatches button{width:44px;height:44px;border-radius:50%;border:3px solid transparent}
+.swatches button.sel{border-color:var(--text)}
+.swatches button.none{background:var(--panel2);border:2px dashed var(--line);color:var(--dim);font-size:12px}
+.tabs{display:flex;gap:8px}
+.tabs button{height:40px;font-size:14px;padding:0 14px}
+.thumbs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;flex-grow:1;min-height:0}
+.thumbs button{border-radius:10px;border:2px solid var(--line);background:#000;padding:0;overflow:hidden;position:relative}
+.thumbs button img{width:100%;height:100%;object-fit:cover}
+.thumbs button.sel{border-color:var(--brass)}
+.thumbs button.done{opacity:.35}
+.thumbs button span{position:absolute;left:0;right:0;bottom:0;font-size:11px;background:rgba(0,0,0,.65);padding:2px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left}
+.chiprow{display:flex;gap:6px;overflow-x:auto;touch-action:pan-x;scrollbar-width:none}
+.chiprow::-webkit-scrollbar{display:none}
+.chiprow button{height:36px;font-size:13px;padding:0 12px;flex-shrink:0}
+.sheet{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:45}
+.sheet .box{width:600px;max-height:540px;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:14px}
+.sheet h2{margin:0;font-size:22px}
+.runrow{min-height:56px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);display:flex;align-items:center;gap:12px;padding:0 14px;text-align:left;width:100%}
+.runrow.sel{border-color:var(--brass)}
+.seg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.seg button{height:40px;border:none;background:var(--panel2);font-weight:700;font-size:14px;padding:0 16px}
+.seg button.sel{background:var(--brass);color:var(--bg)}
+.gcard{border:1px solid var(--line);border-radius:12px;background:var(--panel2);padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.gstrip{display:flex;flex-wrap:wrap;gap:6px}
+.gstrip button{width:62px;height:62px;border-radius:8px;border:2px solid transparent;padding:0;overflow:hidden;background:#000}
+.gstrip button img{width:100%;height:100%;object-fit:cover}
+.gstrip button.out{opacity:.25;border-color:var(--red)}
+.gstrip .more{width:auto;padding:0 12px;background:var(--panel);color:var(--dim);font-weight:700}
+.gcard .btn{height:44px;font-size:14px;padding:0 14px}
+.census{display:flex;flex-wrap:wrap;gap:8px;align-content:flex-start}
+#runOv{position:absolute;inset:0;z-index:30;background:#101317;display:none;align-items:center;justify-content:center;padding:20px}
+#runOv .box{width:620px;display:flex;flex-direction:column;gap:16px;align-items:center;text-align:center}
+#runOv h1{margin:0;font-size:34px}
+#runOv p{margin:0;font-size:17px;color:var(--dim);line-height:1.5}
+#runOv .count{width:110px;height:110px;border-radius:50%;border:6px solid var(--amber);display:flex;align-items:center;justify-content:center;font-size:50px;font-weight:800;color:var(--amber)}
+#runOv .row{gap:14px}
+#runOv .btn{height:72px;min-width:230px;font-size:22px}
+/* the machine's own screen: no pointer (the touch panel also registers
+   as a mouse, and the browser would park a hand cursor on the page) */
+html.kiosk, html.kiosk *{cursor:none!important}
+/* modal, shield, keyboard */
+#modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:60}
+#modal .box{width:560px;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:22px;display:flex;flex-direction:column;gap:14px}
+#modal h2{margin:0;font-size:22px}
+#modal p{margin:0;color:var(--dim);font-size:16px}
+#usbModal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:60}
+#usbModal .box{width:520px;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:22px;display:flex;flex-direction:column;gap:14px}
+#usbModal h2{margin:0;font-size:22px}
+#usbModal p{margin:0;color:var(--dim);font-size:16px;line-height:1.4}
+#usbModal .ubar{height:18px;border-radius:9px;background:var(--line);overflow:hidden}
+#usbModal .ubar i{display:block;height:100%;width:0;background:var(--brass)}
+#shield{position:fixed;inset:0;z-index:100;display:none;background:#000}
+.overlay{position:fixed;inset:0;background:var(--bg);z-index:40;display:none;flex-direction:column;padding:14px;gap:10px}
+.kbd{display:flex;flex-direction:column;gap:6px}
+.kbd .kr{display:flex;gap:6px;justify-content:center}
+.kbd button{height:52px;min-width:62px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);font-size:20px;font-weight:600}
+.field{height:52px;border-radius:10px;border:2px solid var(--line);background:var(--panel2);padding:0 14px;display:flex;align-items:center;font-size:20px;gap:8px}
+.field.focus{border-color:var(--brass)}
+.field .caret{width:2px;height:26px;background:var(--brass);animation:blink 1s step-end infinite}
+@keyframes blink{50%{opacity:0}}
+.netrow{min-height:56px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);display:flex;align-items:center;gap:10px;padding:0 14px;text-align:left;width:100%}
+.netrow.cur{border-color:#2c5a38}
+.bars{font-family:monospace;color:var(--dim)}
+.tile{display:flex;flex-direction:column;gap:2px}
+.tile b{font-size:30px;font-weight:800}
+.thinrow{display:grid;grid-template-columns:170px 1fr 40px;gap:10px;align-items:center;font-size:15px}
+.barbg{height:12px;border-radius:6px;background:var(--panel2);overflow:hidden}
+.barbg i{display:block;height:100%;background:var(--amber)}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <span class="logo">SortIQ</span>
+    <span class="dim" id="hdrProfile">…</span>
+    <span class="grow"></span>
+    <span class="row" style="gap:6px;font-size:13px"><span class="dot" id="hdrBoardDot"></span><span id="hdrBoard">Board</span></span>
+    <span class="pill" id="hdrFeeder" hidden>Feeder</span>
+    <span class="dim" style="font-size:13px" id="hdrClock"></span>
+    <button class="gear" id="btnGear" aria-label="System"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg></button>
+  </header>
+  <div class="body">
+    <nav>
+      <button data-go="sort"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><path d="M12 3v3M21 12h-3M12 21v-3M3 12h3"/></svg>Sort</button>
+      <button data-go="capture"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="4"/></svg>Capture</button>
+      <button data-go="rejects"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 17h7M17.5 13.5v7"/></svg>Review</button>
+      <button data-go="stats"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 20v-9M12 20V4M19 20v-6"/></svg>Stats</button>
+      <span class="grow"></span>
+      <button data-go="machine"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3M4.6 4.6l2.1 2.1M17.3 17.3l2.1 2.1M4.6 19.4l2.1-2.1M17.3 6.7l2.1-2.1"/></svg>Machine</button>
+    </nav>
+    <main>
+      <!-- a paused run or the no-brass ask covers whatever page is open -->
+      <div id="runOv"><div class="box" id="runOvBox"></div></div>
+      <!-- SORT -->
+      <section class="pg" id="pg-sort">
+        <div class="sortTop">
+          <div class="col" style="gap:0;min-width:0">
+            <span class="t" id="sTitle">…</span>
+            <span class="s" id="sSub"></span>
+          </div>
+          <span class="grow"></span>
+          <div class="row" id="sButtons" data-x="btnSort"></div>
+        </div>
+        <div class="sortMid">
+          <div class="card lastCase">
+            <span class="lbl" id="lcLbl">LAST CASE</span>
+            <div class="lastImg" id="lcImg"><div class="ph">no case yet</div></div>
+            <div style="font-size:15px;min-height:20px" id="lcTxt"></div>
+          </div>
+          <div class="bins" id="bins"></div>
+        </div>
+        <div class="card feedStrip" id="feedStrip" hidden>
+          <b style="font-size:15px">Feeder</b>
+          <span class="pill" id="fsState">…</span>
+          <span class="dim" style="font-size:13px" id="fsInfo"></span>
+          <span class="grow"></span>
+          <span class="row" style="gap:8px" id="fsPresets"></span>
+          <button class="btn" style="height:48px" id="fsClear" hidden>Clear</button>
+          <button class="btn brass" style="height:48px;width:96px" id="fsGo">Go</button>
+        </div>
+      </section>
+
+      <!-- BIN EDIT -->
+      <section class="pg" id="pg-bin" style="flex-direction:column;gap:10px">
+        <div class="row">
+          <div class="col" style="gap:0"><span style="font-size:24px;font-weight:800" id="beTitle">Bin</span>
+            <span class="dim" style="font-size:13px">tap a class to take it out · tap below to add</span></div>
+          <span class="grow"></span>
+          <button class="btn" id="beCancel">Cancel</button>
+          <button class="btn brass" style="width:120px" id="beDone">Done</button>
+        </div>
+        <div class="row" style="align-items:flex-start"><div class="chips grow" id="beChips" style="min-height:44px"></div>
+          <div class="swatches" id="beColors"></div></div>
+        <div class="row" style="gap:8px">
+          <span class="lbl">ADD</span>
+          <button class="btn sel" style="height:40px;font-size:14px" id="beModeC">Classes</button>
+          <button class="btn" style="height:40px;font-size:14px" id="beModeF">Families</button>
+          <span style="width:10px"></span>
+          <div class="letters" id="beLetters"></div>
+        </div>
+        <div class="clist scroll" id="beList" style="flex-grow:1;min-height:0"></div>
+      </section>
+
+      <!-- MACHINE -->
+      <section class="pg" id="pg-machine" style="grid-template-rows:auto auto 1fr">
+        <div class="card full col">
+          <span class="lbl">WHEEL · <span id="mWheel">…</span></span>
+          <div class="row" style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+            <button class="btn big" id="mHome">Home wheel</button>
+            <button class="btn big" id="mTest">Test feed</button>
+            <button class="btn big" id="mClear">Clear fault</button>
+          </div>
+        </div>
+        <div class="card full col">
+          <span class="lbl">SORT DOORS · <span id="mDoorsTxt">tap a door to open or close it</span></span>
+          <div class="doors" id="mDoors"></div>
+        </div>
+        <div class="card col">
+          <span class="lbl">EQUIPMENT · <span>enable what this machine has</span></span>
+          <div class="row" style="display:grid;grid-template-columns:1.25fr 1fr;gap:10px">
+            <button class="btn big onoff" id="mRelay">IoT Relay <b>OFF</b></button>
+            <button class="btn big onoff" id="mPower">Power <b>OFF</b></button></div>
+          <button class="btn big onoff" id="mFeederOn">Case Feeder <b>OFF</b></button>
+        </div>
+        <div class="card col" id="mFeederCard">
+          <span class="lbl">CASE FEEDER · <span id="mFdTxt">…</span></span>
+          <div class="row" style="gap:8px" id="mFdPresets"></div>
+          <div class="row" style="display:grid;grid-template-columns:1fr 1.6fr;gap:10px">
+            <button class="btn big brass" id="mFdGo">Go</button>
+            <button class="btn big onoff" id="mFdAuto">Starts with sorting <b>ON</b></button></div>
+        </div>
+      </section>
+
+      <!-- CAPTURE -->
+      <section class="pg" id="pg-capture" style="gap:12px">
+        <div class="card col" style="width:420px;flex-shrink:0">
+          <div class="row"><div class="seg"><button id="cmSingle" class="sel">Single</button><button id="cmBatch">Batch</button></div>
+            <span class="grow"></span><span style="font-size:14px" id="cDetect">…</span></div>
+          <div style="height:236px;border-radius:10px;background:#000;overflow:hidden;display:flex;align-items:center;justify-content:center" id="cView">
+            <img id="cStream" alt="" style="max-width:100%;max-height:100%">
+            <img id="cShot" alt="" style="max-width:100%;max-height:100%;display:none">
+          </div>
+          <div class="col" id="cSingleBox">
+            <div class="row" style="display:grid;grid-template-columns:1fr 1.4fr;gap:10px">
+              <button class="btn big" id="cFeed">Feed one</button>
+              <button class="btn big" id="cSave" disabled>Save</button></div>
+          </div>
+          <div class="col" id="cBatchBox" style="display:none">
+            <div class="row"><span style="font-size:15px">Hopper</span>
+              <div class="seg"><button id="chMixed" class="sel">Mixed lot</button><button id="chOne">One class</button></div>
+              <span class="grow"></span><b style="font-size:14px" id="cBatchTxt"></b></div>
+            <button class="btn big go" id="cStart">Start batch</button>
+          </div>
+          <span class="dim" style="font-size:13px" id="cMsg"></span>
+        </div>
+        <div class="card col" style="flex-grow:1;min-width:0">
+          <div class="row" id="cListHead"><span class="lbl" style="white-space:nowrap" id="cListLbl">PICK A CLASS</span><span class="grow"></span>
+            <button class="btn sel" style="height:40px;font-size:14px;padding:0 12px" id="cThin">Thin first</button>
+            <button class="btn" style="height:40px;font-size:14px;padding:0 12px" id="cAZ">A–Z</button></div>
+          <div class="clist scroll" id="cList" style="grid-template-columns:repeat(2,minmax(0,1fr));flex-grow:1;min-height:0"></div>
+          <div class="col scroll" id="cGroups" style="flex-grow:1;min-height:0;display:none"></div>
+        </div>
+      </section>
+
+      <!-- REJECTS -->
+      <section class="pg" id="pg-rejects" style="gap:12px">
+        <div class="card col" style="width:440px;flex-shrink:0">
+          <div class="row"><span class="lbl" id="rLbl">REJECTS</span><span class="grow"></span>
+            <button class="btn" style="height:40px;font-size:14px" id="rRun">Run ▾</button></div>
+          <div class="row" id="rOne" style="flex-grow:1;justify-content:center;gap:8px">
+            <button class="btn" style="height:120px;width:56px;font-size:28px" id="rPrev">‹</button>
+            <div style="width:290px;height:290px;border-radius:12px;background:#000;overflow:hidden;display:flex;align-items:center;justify-content:center">
+              <img id="rImg" alt="" style="max-width:100%;max-height:100%"></div>
+            <button class="btn" style="height:120px;width:56px;font-size:28px" id="rNext">›</button>
+          </div>
+          <div class="thumbs" id="rGrid" style="display:none;grid-template-rows:repeat(3,1fr)"></div>
+          <div class="row" id="rPager" style="display:none"><button class="btn" style="height:40px" id="rPgPrev">‹</button>
+            <span class="grow dim" style="text-align:center;font-size:13px" id="rPgTxt"></span>
+            <button class="btn" style="height:40px" id="rPgNext">›</button></div>
+          <div style="font-size:14px;min-height:40px" id="rWhy"></div>
+        </div>
+        <div class="card col" style="flex-grow:1;min-width:0">
+          <div class="tabs"><button class="btn sel" id="rTabRej">Rejects</button><button class="btn" id="rTabSorted">Sorted cases</button></div>
+          <div class="chiprow" id="rFilter" style="display:none"></div>
+          <span class="lbl" id="rFileLbl">FILE THIS CASE AS</span>
+          <div class="col" id="rFile" style="flex-grow:1"></div>
+          <span class="dim" style="font-size:13px" id="rSession"></span>
+        </div>
+      </section>
+
+      <!-- STATS -->
+      <section class="pg" id="pg-stats" style="flex-direction:column;gap:12px">
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
+          <div class="card tile"><span class="lbl">CLASSES</span><b id="tClasses">–</b></div>
+          <div class="card tile"><span class="lbl">PHOTOS</span><b id="tPhotos">–</b></div>
+          <div class="card tile"><span class="lbl">THIN (UNDER 10)</span><b id="tThin">–</b></div>
+          <div class="card tile"><span class="lbl">MODEL</span><b id="tModel" style="font-size:22px">–</b></div>
+        </div>
+        <div class="row" style="flex-grow:1;min-height:0;align-items:stretch;gap:12px">
+          <div class="card col" style="flex-grow:1;min-width:0">
+            <span class="lbl">THINNEST CLASSES · <span>capture these next</span></span>
+            <div class="col" id="tThinList" style="gap:12px;flex-grow:1"></div>
+            <div class="row"><span class="grow"></span>
+              <button class="btn" style="height:44px;font-size:14px" id="tAll">All classes</button></div>
+          </div>
+          <div class="card col" style="width:290px;flex-shrink:0">
+            <span class="lbl">LAST RUN · <span id="lrWhen"></span></span>
+            <div class="kv" id="lrKv"></div>
+            <div class="col" id="lrTop" style="gap:4px;font-size:14px"></div>
+          </div>
+          <div class="card col" style="width:250px;flex-shrink:0">
+            <span class="lbl">DATASET</span>
+            <span style="font-size:14px" id="gInfo">…</span>
+            <span class="dim" style="font-size:13px">Rebuild after filing rejects or a capture batch so the new photos count when sorting.</span>
+            <span class="grow"></span>
+            <span style="font-size:13px" id="gMsg"></span>
+            <button class="btn" id="gRebuild">Rebuild gallery</button>
+            <button class="btn" id="gUsb">Copy to USB</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- SYSTEM -->
+      <section class="pg" id="pg-system" style="grid-template-rows:auto auto 1fr">
+        <div class="card full col">
+          <span class="lbl">BOARD POWER · <span>IoT relay</span></span>
+          <button class="btn onoff" id="yPower">24 V Power <b>OFF</b></button>
+        </div>
+        <div class="card col">
+          <span class="lbl">SCREEN · <span>sleeps when idle, a tap wakes it</span></span>
+          <div class="row" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px" id="ySleep">
+            <button class="btn" data-m="5">5 min</button><button class="btn" data-m="10">10 min</button>
+            <button class="btn" data-m="30">30 min</button><button class="btn" data-m="0">Never</button></div>
+          <button class="btn" id="yOff">Screen off now</button>
+        </div>
+        <div class="card col">
+          <span class="lbl">THIS MACHINE</span>
+          <div class="kv" id="yInfo"></div>
+        </div>
+        <div class="card col">
+          <span class="lbl">RASPBERRY PI · <span>each asks to confirm · not during a run</span></span>
+          <button class="btn pibtn" data-pi="app">Restart the app<small>~10 s, board stays on</small></button>
+          <button class="btn pibtn" data-pi="pi">Reboot the Pi<small>~1 min, screen returns</small></button>
+          <button class="btn pibtn" data-pi="off">Shut down the Pi<small>unplug when the light stops</small></button>
+        </div>
+        <div class="col">
+          <button class="btn big" style="height:100%;text-align:left;display:flex;align-items:center;gap:12px" id="yNet">
+            <span class="col" style="gap:2px"><span>Network</span><small class="dim" style="font-weight:500;font-size:13px" id="yNetSub">Wi-Fi, join, reconnect</small></span>
+            <span class="grow"></span><span style="font-size:28px">›</span></button>
+        </div>
+      </section>
+
+      <!-- NETWORK -->
+      <section class="pg" id="pg-network" style="gap:12px">
+        <div class="col" style="width:420px;flex-shrink:0">
+          <div class="card col">
+            <div class="row"><button class="btn" style="height:40px;font-size:14px" id="nBack">‹ System</button><span class="lbl">· CONNECTED NOW</span></div>
+            <b style="font-size:22px" id="nSsid">…</b>
+            <div class="kv" id="nKv"></div>
+          </div>
+          <div class="card col">
+            <span class="lbl">ACCESS POINT · <span>for a mesh with several points</span></span>
+            <div class="row" style="display:grid;grid-template-columns:1fr 1fr 1.6fr;gap:8px">
+              <button class="btn" id="nLocked">Locked</button><button class="btn" id="nAny">Any</button>
+              <button class="btn" id="nStrong">Lock to strongest</button></div>
+            <button class="btn" id="nReconnect">Reconnect Wi-Fi</button>
+            <span style="font-size:13px;min-height:18px" id="nChange"></span>
+          </div>
+        </div>
+        <div class="card col" style="flex-grow:1;min-width:0">
+          <div class="row"><span class="lbl">NEARBY NETWORKS · <span>tap to join</span></span><span class="grow"></span>
+            <button class="btn" style="height:40px;font-size:14px" id="nScan">Scan again</button></div>
+          <div class="col scroll" id="nList" style="flex-grow:1;min-height:0;gap:8px"></div>
+          <button class="btn" style="height:48px" id="nHidden">Hidden network…</button>
+        </div>
+      </section>
+
+      <!-- JOIN -->
+      <section class="pg" id="pg-join" style="flex-direction:column;gap:10px">
+        <div class="row">
+          <div class="col" style="gap:0"><span style="font-size:22px;font-weight:800" id="jTitle">Join</span>
+            <span class="dim" style="font-size:13px" id="jNote"></span></div>
+          <span class="grow"></span>
+          <button class="btn" id="jCancel">Cancel</button>
+          <button class="btn brass" style="width:120px" id="jJoin">Join</button>
+        </div>
+        <div class="row" id="jSsidRow"><span style="width:110px">Network</span><div class="field grow" id="jSsid"></div></div>
+        <div class="row"><span style="width:110px">Password</span><div class="field grow" id="jPass"></div>
+          <button class="btn" style="width:90px" id="jHide">Show</button></div>
+        <div class="kbd" id="kbd" style="margin-top:auto"></div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<!-- class picker (rejects "another class", all classes) -->
+<div class="overlay" id="picker">
+  <div class="row"><span style="font-size:22px;font-weight:800" id="pkTitle">Pick a class</span><span class="grow"></span>
+    <div class="letters" id="pkLetters"></div><button class="btn" id="pkClose">Close</button></div>
+  <div class="clist scroll" id="pkList" style="flex-grow:1;min-height:0;grid-template-columns:repeat(4,minmax(0,1fr))"></div>
+</div>
+<div class="sheet" id="sheet"><div class="box"><div class="row"><h2 class="grow" id="shTitle"></h2>
+  <button class="btn" id="shClose">Close</button></div><div class="col" id="shBody"></div></div></div>
+<div id="modal"><div class="box"><h2 id="mdTitle"></h2><p id="mdText"></p>
+  <div class="row" style="justify-content:flex-end"><button class="btn" id="mdNo">Cancel</button><button class="btn brass" id="mdYes">OK</button></div></div></div>
+<div id="usbModal"><div class="box"><h2 id="ubTitle"></h2><p id="ubText"></p>
+  <div class="ubar" id="ubBar"><i id="ubFill"></i></div>
+  <div class="row" style="justify-content:flex-end" id="ubBtns"></div></div></div>
+<div id="toast"></div>
+<div id="shield"></div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+if (new URLSearchParams(location.search).has("kiosk")) document.documentElement.classList.add("kiosk");
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  let j = {};
+  try { j = await r.json(); } catch (_) {}
+  if (!r.ok) { const e = new Error(j.error || `${r.status} ${r.statusText}`); e.data = j; throw e; }
+  return j;
+}
+const post = (path, body) => api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+let toastT = 0;
+function toast(text, ok) {
+  const t = $("toast");
+  t.textContent = text; t.className = ok === false ? "err" : ok ? "ok" : "";
+  t.style.display = "block";
+  clearTimeout(toastT); toastT = setTimeout(() => t.style.display = "none", ok === false ? 6000 : 3500);
+}
+function confirmBox(title, text, yes = "OK", danger = false, no = "Cancel") {
+  return new Promise(res => {
+    $("mdTitle").textContent = title; $("mdText").textContent = text;
+    $("mdYes").textContent = yes; $("mdYes").className = "btn " + (danger ? "redfill" : "brass");
+    $("mdNo").textContent = no || "";
+    $("mdNo").style.display = no === null ? "none" : "";   // null: a notice, one button
+    $("modal").style.display = "flex";
+    const done = v => { $("modal").style.display = "none"; res(v); };
+    $("mdYes").onclick = () => done(true); $("mdNo").onclick = () => done(false);
+  });
+}
+async function act(fn, okText) {
+  try { const r = await fn(); if (okText) toast(okText, true); return r; }
+  catch (e) { toast(e.message, false); }
+}
+
+/* ---------------- shared state ---------------- */
+let ST = null;          // /api/state
+let MS = null;          // /api/machine/settings
+let RUN = {};           // /api/run/status (brief)
+let LAST = null;        // newest case with its thumb
+let FD = null;          // /api/feeder
+let PWR = null;         // /api/power .on (null = no relay)
+let page = "sort";
+const FD_STATES = { RUNNING: ["Feeding", "ok"], HOLD: ["Case hold", "hold"], STOPPED: ["Stopped", ""],
+  JAM_REVERSE: ["Clearing a jam", "warn"], JAM_PAUSE: ["Clearing a jam", "warn"], FAULT: ["Jammed", "bad"],
+  IDLE_SHUTOFF: ["Empty — stopped", "bad"] };
+const END_WORDS = { out_of_brass: "out of brass", stopped: "stopped", complete: "complete",
+  fault: "machine fault", camera_lost: "camera lost", empty_pockets: "camera saw empty pockets" };
+const REASONS = { capture_failed: "No image captured", blurry: "Image too blurry", other_stamp: "Unknown headstamp",
+  stamp_low_conf: "Not a strong enough match", stamp_ambiguous: "Two stamps too close to call",
+  no_bin_mapping: "No bin for this headstamp", no_model: "No model installed" };
+// the feeder lives on the board: with the board off or unplugged it has
+// nothing to say, which is not a fault
+function fdLabel() {
+  if (!connected()) return [PWR === false ? "Board off" : "No board", ""];
+  return FD_STATES[FD.state] || [FD.state || "no reply", "warn"];
+}
+const servo = () => (MS?.settings?.firmware || ST?.firmware) === "pico-servo";
+// a run owns the board link while it sorts: the console reads "not
+// connected" then, but the board is right there (and takes feeder commands)
+const connected = () => !!MS?.connected || (!!RUN.running && RUN.mode === "serial");
+const running = () => !!RUN.running;
+const labels = () => (ST?.stamp_labels || []).filter(n => n !== "UNMATCHED" && n !== "OVERFLOW");
+const photos = n => (ST?.datasets?.real?.raw || {})[n] || 0;
+
+async function loadState() {
+  const first = !ST;
+  try { ST = await api("/api/state"); } catch (_) { return; }
+  render();
+  if (first && page === "rejects") renderRejects();   // its file buttons need the class list
+}
+async function loadMachine() { try { MS = await api("/api/machine/settings"); } catch (_) {} }
+
+/* ---------------- navigation ---------------- */
+function go(p) {
+  page = p;
+  // a reload (app restart, page update) comes back to the same screen
+  if (["sort", "capture", "rejects", "stats", "machine", "system", "network"].includes(p))
+    history.replaceState(null, "", "#" + p);
+  document.querySelectorAll("section.pg").forEach(s => s.classList.toggle("on", s.id === "pg-" + p));
+  const navOf = { bin: "sort", system: null, network: null, join: null };
+  const nv = p in navOf ? navOf[p] : p;
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.go === nv));
+  $("cStream").src = p === "capture" ? "/api/stream?fast=1&" + Date.now() : "";
+  if (p !== "capture" && typeof showShot === "function" && SHOT) showShot(false);
+  if (p === "rejects") loadRejects();
+  if (p === "stats") { renderStats(); loadLastRun(); }
+  if (p === "system") loadInfo();
+  if (p === "network") { loadNet(); scanNets(); }
+  if (p === "machine") loadDoors();
+  render();
+}
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => go(b.dataset.go));
+$("btnGear").onclick = () => go("system");
+
+/* ---------------- header ---------------- */
+function renderHeader() {
+  if (ST) $("hdrProfile").textContent = `${ST.cartridge || ""} · ${ST.model || ""}`;
+  const fault = MS?.fault;
+  $("hdrBoardDot").className = "dot " + (fault ? "bad" : connected() ? "ok" : PWR === false ? "" : "warn");
+  $("hdrBoard").textContent = fault ? "Fault" : connected() ? "Board" : PWR === false ? "Board off" : "No board";
+  const f = FD && FD.enabled;
+  $("hdrFeeder").hidden = !f;
+  if (f) {
+    const [w, cls] = fdLabel();
+    $("hdrFeeder").textContent = "Feeder · " + w; $("hdrFeeder").className = "pill " + cls;
+  }
+  $("hdrClock").textContent = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+/* ---------------- sort ---------------- */
+let dismissedRun = null;
+function runStart(id) {
+  const m = /run_(\d{4})(\d\d)(\d\d)_(\d\d)(\d\d)(\d\d)/.exec(id || "");
+  return m ? new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : null;
+}
+const mmss = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+function binText(entries) {
+  const names = (entries || []).map(e => e === "UNMATCHED" ? "UNMATCHED" : e === "OVERFLOW" ? "OVERFLOW"
+    : e.startsWith("family:") ? e.slice(7) + " family" : e);
+  if (!names.length) return "";
+  return names.length > 2 ? `${names.slice(0, 2).join(" · ")} +${names.length - 2}` : names.join(" · ");
+}
+function renderSort() {
+  const r = RUN, btns = $("sButtons");
+  let title, sub, html = "";
+  const s0 = runStart(r.run_id);
+  if (r.running) {
+    const el = s0 ? (Date.now() - s0) / 1000 : 0;
+    if (r.wait_note) { title = "Waiting for the feeder"; sub = r.wait_note; }
+    else if (r.stopping) { title = "Stopping"; sub = "sorting what's already in the wheel"; }
+    else {
+      title = r.capture ? "Capturing" : "Sorting";
+      sub = `${r.sorted || 0} cases · ${mmss(el)} elapsed · ${Math.round((r.rate || 0) * 60)} / min · ${r.rejected || 0} rejects` +
+            (r.jams ? ` · ${r.jams} jam${r.jams > 1 ? "s" : ""}` : "");
+    }
+    $("sTitle").style.color = r.wait_note ? "var(--blue)" : r.stopping ? "var(--amber)" : "";
+    html = `<button class="btn big" style="width:160px" id="bPause"${r.stopping || r.pausing ? " disabled" : ""}>${r.pausing ? "Pausing…" : "Pause"}</button>` +
+           `<button class="btn big stop" style="width:160px" id="bStop"${r.stopping ? " disabled" : ""}>Stop</button>`;
+  } else if (!connected()) {
+    // the board comes first: a finished run's banner must not hide Power on
+    const lastRun = r.finished && r.run_id
+      ? `Last run: ${r.sorted || 0} cases · ${END_WORDS[r.end_reason] || r.end_reason || "done"}` : "";
+    title = MS?.fault ? "Machine fault" : PWR === false ? "Board is off" : "Board not connected";
+    sub = MS?.fault ? String(MS.fault)
+        : lastRun || (PWR === false ? "switch on the 24 V power to sort" : "check the board's power and USB");
+    $("sTitle").style.color = MS?.fault ? "var(--red)" : "";
+    html = PWR === false ? `<button class="btn big go" style="width:220px" id="bPower">Power on</button>`
+                         : `<button class="btn big" style="width:220px" id="bConnect">Connect</button>`;
+  } else if (r.finished && r.run_id && dismissedRun !== r.run_id) {
+    title = `Run finished · ${END_WORDS[r.end_reason] || r.end_reason || "done"}`;
+    sub = `${r.sorted || 0} cases · ${r.rejected || 0} rejects` + (r.jams ? ` · ${r.jams} jams` : "") +
+          (r.error ? ` · ${r.error}` : r.end_note ? ` · ${r.end_note}` : "");
+    $("sTitle").style.color = r.end_reason === "fault" || r.error ? "var(--red)" : "";
+    html = `<button class="btn" id="bDismiss">OK</button>` + startButton();
+  } else {
+    const nb = (ST?.bins || []).filter(b => b.some(e => e !== "UNMATCHED" && e !== "OVERFLOW")).length;
+    title = MS?.fault ? "Machine fault" : "Ready";
+    sub = MS?.fault ? String(MS.fault) : `${ST?.model || ""} · ${labels().length} classes · ${nb} bins assigned · hold a bin to change it`;
+    $("sTitle").style.color = MS?.fault ? "var(--red)" : "";
+    html = MS?.fault ? `<button class="btn big" style="width:200px" id="bFault">Clear fault</button>` : startButton();
+  }
+  $("sTitle").textContent = title; $("sSub").textContent = sub;
+  if (btns.dataset.h !== html) {
+    btns.innerHTML = html; btns.dataset.h = html;
+    if ($("bStop")) $("bStop").onclick = () => act(() => post("/api/run/stop"), "Stopping after the cases in the wheel");
+    if ($("bPause")) $("bPause").onclick = () => act(() => post("/api/run/pause"), "Pausing at the next case");
+    if ($("bDismiss")) $("bDismiss").onclick = () => { dismissedRun = RUN.run_id; renderSort(); };
+    if ($("bStart")) $("bStart").onclick = startRun;
+    if ($("bOpts")) $("bOpts").onclick = openOpts;
+    if ($("bConnect")) $("bConnect").onclick = () => act(async () => { await post("/api/console/connect", { mode: "serial" }); await loadMachine(); render(); }, "Board connected");
+    if ($("bPower")) $("bPower").onclick = () => setPower(true);
+    if ($("bFault")) $("bFault").onclick = clearFault;
+  }
+  // last case
+  if (LAST && LAST.thumb) {
+    $("lcLbl").textContent = `LAST CASE · #${LAST.n}`;
+    const img = $("lcImg").querySelector("img");
+    if (img) { if (img.src !== LAST.thumb) img.src = LAST.thumb; }
+    else $("lcImg").innerHTML = `<img alt="" src="${LAST.thumb}">`;
+    const known = LAST.category && LAST.category !== "unmatched";
+    $("lcTxt").innerHTML = known
+      ? `<b>${esc(LAST.category)}</b> · ${(LAST.stamp_conf || 0).toFixed(2)} · bin ${LAST.bin + 1}`
+      : `<b style="color:var(--red)">unrecognized</b>${LAST.stamp ? ` · looks like ${esc(LAST.stamp)}` : ""} · bin ${LAST.bin + 1}`;
+  } else if ($("lcImg").querySelector("img")) {
+    $("lcLbl").textContent = "LAST CASE";
+    $("lcImg").innerHTML = `<div class="ph">no case yet</div>`;
+    $("lcTxt").textContent = "";
+  }
+  // bins
+  const bins = ST?.bins || [], en = new Set(ST?.slots_enabled || []);
+  const html2 = bins.map((b, i) => {
+    const um = b.includes("UNMATCHED"), of = b.includes("OVERFLOW"), pocket = servo() && i === bins.length - 1;
+    const cls = um ? "um" : of ? "of" : (!en.has(i) && !pocket ? "off" : "");
+    const k = (r.bin_counts || {})[String(i)] || 0;
+    const col = !um && !of && (ST?.bin_colors || [])[i];
+    return `<button class="bin ${cls}" data-bin="${i}">${col ? `<i class="sw" style="background:${col}"></i>` : ""}<span class="n">BIN ${i + 1}${pocket ? " · open pocket" : ""}</span>
+      <span class="c">${esc(binText(b)) || '<span class="dim" style="font-weight:500">empty</span>'}</span><span class="k">${k}</span><i class="hold"></i></button>`;
+  }).join("");
+  const g = $("bins");
+  g.style.gridTemplateRows = `repeat(${Math.ceil(bins.length / 3) || 1}, minmax(0,1fr))`;
+  if (g.dataset.h !== html2) { g.innerHTML = html2; g.dataset.h = html2; bindBinHolds(); }
+  renderFeedStrip();
+}
+function startButton() {
+  return `<button class="btn big" style="width:64px;font-size:26px" id="bOpts" aria-label="Sort options">⋯</button>` +
+         `<button class="btn big go" style="width:220px;line-height:1.1;display:flex;flex-direction:column;align-items:center;justify-content:center" id="bStart">Start sorting${
+            autoAssign() ? `<small style="font-size:12px;font-weight:700;opacity:.8">auto-assign on</small>` : ""}</button>`;
+}
+// per-machine preference, kept by the kiosk's own browser profile
+function autoAssign() { try { return localStorage.getItem("siq.autoAssign") === "1"; } catch (_) { return false; } }
+async function startRun() {
+  await act(() => post("/api/run/start", { mode: "serial", auto_assign: autoAssign() }));
+  dismissedRun = null; LAST = null; tick();
+}
+function openOpts() {
+  const on = autoAssign();
+  $("shTitle").textContent = "Sort options";
+  $("shBody").innerHTML = `
+    <button class="btn big onoff${on ? " is-on" : ""}" id="oAuto">Auto-assign new classes to empty bins <b>${on ? "ON" : "OFF"}</b></button>
+    <button class="btn big" id="oClear">Clear all bins</button>`;
+  $("oAuto").onclick = () => { try { localStorage.setItem("siq.autoAssign", on ? "0" : "1"); } catch (_) {} $("sButtons").dataset.h = ""; openOpts(); render(); };
+  $("oClear").onclick = async () => {
+    if (!await confirmBox("Clear all bins?", "Every class comes out of its bin. UNMATCHED stays where it is.", "Clear all", true)) return;
+    const r = await act(() => post("/api/run/clear_slots"), "All bins cleared");
+    if (r) { closeSheet(); loadState(); }
+  };
+  showSheet();
+}
+function showSheet() { $("sheet").style.display = "flex"; }
+function closeSheet() { $("sheet").style.display = "none"; }
+async function clearFault() { await act(() => post("/api/machine/fault_clear"), "Fault cleared"); await loadMachine(); render(); }
+async function setPower(on) {
+  await act(() => post("/api/power", { on }), on ? "24 V on" : "24 V off");
+  try { PWR = (await api("/api/power")).on; } catch (_) {}
+  // the app connects the board itself after a power-up; just watch for it
+  if (on) for (const ms of [1500, 3000, 4500, 6000, 8000])
+    setTimeout(async () => { await loadMachine(); render(); }, ms);
+  render();
+}
+
+/* long-press a bin to change it */
+function bindBinHolds() {
+  document.querySelectorAll(".bin").forEach(el => {
+    let t = 0;
+    const cancel = () => { clearTimeout(t); el.classList.remove("pressing"); };
+    el.onpointerdown = () => {
+      if (running()) return toast("Bins can't change during a run");
+      el.classList.add("pressing");
+      t = setTimeout(() => { el.classList.remove("pressing"); openBin(+el.dataset.bin); }, 600);
+    };
+    el.onpointerup = el.onpointerleave = el.onpointercancel = cancel;
+    el.onclick = () => {};
+  });
+}
+
+/* feeder strip (Sort) */
+function renderFeedStrip() {
+  const show = !!(FD && FD.enabled);
+  $("feedStrip").hidden = !show;
+  if (!show) return;
+  const [w, cls] = fdLabel();
+  $("fsState").textContent = w; $("fsState").className = "pill " + cls;
+  const live = connected();
+  $("fsGo").disabled = !live;
+  $("fsPresets").style.opacity = live ? "" : ".4";
+  const on = !!FD.run;
+  $("fsInfo").textContent = FD.state === "RUNNING" || FD.state === "HOLD"
+    ? (FD.rate ? `≈ ${Math.round(FD.rate).toLocaleString()} cases/h` : "feeding")
+    : (FD.auto_start ? "starts with sorting" : "");
+  const pk = (FD.presets || []).join(",") + "|" + FD.speed;
+  if ($("fsPresets").dataset.k !== pk) {
+    $("fsPresets").dataset.k = pk;
+    $("fsPresets").innerHTML = (FD.presets || []).map(p =>
+      `<button class="preset${p === FD.speed ? " sel" : ""}" data-p="${p}">${p}</button>`).join("");
+    $("fsPresets").querySelectorAll("button").forEach(b => b.onclick = () => feeder({ speed: +b.dataset.p }));
+  }
+  $("fsClear").hidden = !["FAULT", "IDLE_SHUTOFF", "JAM_PAUSE"].includes(FD.state);
+  $("fsGo").textContent = on ? "Stop" : "Go";
+  $("fsGo").className = "btn " + (on ? "stop" : "brass");
+}
+async function feeder(body) {
+  await act(() => post("/api/feeder", body));
+  try { FD = await api("/api/feeder"); } catch (_) {}
+  render();
+}
+$("fsGo").onclick = () => feeder({ run: !FD?.run });
+$("fsClear").onclick = () => feeder({ clear: true, run: true });
+
+/* ---------------- bin edit ---------------- */
+let BE = null;           // {i, bins (working copy), mode, letter}
+function openBin(i) {
+  if (!ST) return;
+  BE = { i, bins: ST.bins.map(b => b.slice()), mode: "c", letter: null,
+         color: (ST.bin_colors || [])[i] || null };
+  go("bin"); renderBin();
+}
+function binOf(name) { return BE.bins.findIndex(b => b.includes(name)); }
+function renderBin() {
+  if (!BE) return;
+  const b = BE.bins[BE.i];
+  $("beTitle").textContent = `Bin ${BE.i + 1}`;
+  $("beChips").innerHTML = b.length ? b.map(e => (e === "UNMATCHED" || e === "OVERFLOW")
+    ? `<span class="chip fixed">${e === "UNMATCHED" ? "UNMATCHED" : "OVERFLOW"} · stays</span>`
+    : `<button class="chip" data-e="${esc(e)}">${esc(e.startsWith("family:") ? e.slice(7) + " family" : e)} <span class="x">✕</span></button>`).join("")
+    : `<span class="dim">empty — tap a class below</span>`;
+  $("beChips").querySelectorAll("button.chip").forEach(c => c.onclick = () => {
+    BE.bins[BE.i] = BE.bins[BE.i].filter(x => x !== c.dataset.e); renderBin();
+  });
+  // colour: the same palette and setting as the web app's bin badges
+  const fixed = b.includes("UNMATCHED") || b.includes("OVERFLOW");
+  $("beColors").innerHTML = fixed ? "" : `<button class="none${!BE.color ? " sel" : ""}" data-c="">none</button>` +
+    BIN_PALETTE.map(c => `<button class="${c === BE.color ? "sel" : ""}" data-c="${c}" style="background:${c}"></button>`).join("");
+  $("beColors").querySelectorAll("button").forEach(x => x.onclick = () => { BE.color = x.dataset.c || null; renderBin(); });
+  $("beModeC").className = "btn" + (BE.mode === "c" ? " sel" : ""); $("beModeF").className = "btn" + (BE.mode === "f" ? " sel" : "");
+  [$("beModeC"), $("beModeF")].forEach(x => { x.style.height = "40px"; x.style.fontSize = "14px"; });
+  const items = BE.mode === "c" ? labels().map(n => ({ key: n, name: n }))
+    : Object.keys(ST.families || {}).sort().map(f => ({ key: "family:" + f, name: f + " family", sub: (ST.families[f] || []).length + " classes" }));
+  items.sort((a, z) => a.name.localeCompare(z.name));
+  const letters = [...new Set(items.map(x => x.name[0].toUpperCase()))];
+  $("beLetters").innerHTML = [`<button data-l=""${!BE.letter ? ' class="sel"' : ""}>All</button>`]
+    .concat(letters.map(l => `<button data-l="${esc(l)}"${BE.letter === l ? ' class="sel"' : ""}>${esc(l)}</button>`)).join("");
+  $("beLetters").querySelectorAll("button").forEach(x => x.onclick = () => { BE.letter = x.dataset.l || null; renderBin(); });
+  const shown = items.filter(x => !BE.letter || x.name[0].toUpperCase() === BE.letter);
+  $("beList").innerHTML = shown.map(x => {
+    const at = binOf(x.key);
+    const here = at === BE.i;
+    const st = here ? "in this bin" : at >= 0 ? `in bin ${at + 1} · moves here` : (x.sub || "not in a bin");
+    return `<button class="citem${here ? " here" : ""}" data-k="${esc(x.key)}"><b>${esc(x.name)}</b><span>${st}</span></button>`;
+  }).join("") || `<span class="dim">nothing here</span>`;
+  $("beList").querySelectorAll("button").forEach(x => x.onclick = () => {
+    const k = x.dataset.k, at = binOf(k);
+    if (at === BE.i) BE.bins[BE.i] = BE.bins[BE.i].filter(e => e !== k);
+    else { if (at >= 0) BE.bins[at] = BE.bins[at].filter(e => e !== k); BE.bins[BE.i].push(k); }
+    renderBin();
+  });
+}
+$("beModeC").onclick = () => { BE.mode = "c"; BE.letter = null; renderBin(); };
+$("beModeF").onclick = () => { BE.mode = "f"; BE.letter = null; renderBin(); };
+$("beCancel").onclick = () => { BE = null; go("sort"); };
+$("beDone").onclick = async () => {
+  const r = await act(() => post("/api/classes", { bins: BE.bins }));
+  if (!r) return;
+  const was = (ST.bin_colors || [])[BE.i] || null;
+  if (BE.color !== was) {
+    const colors = ST.bins.map((_, k) => k === BE.i ? BE.color : (ST.bin_colors || [])[k] || null);
+    await act(() => post("/api/machine/settings", { bin_colors: colors }));
+  }
+  toast(`Bin ${BE.i + 1} saved`, true);
+  BE = null; await loadState(); go("sort");
+};
+const BIN_PALETTE = ["#e5e7eb", "#4cc46a", "#a78bfa", "#f08c3a", "#3fc8c8", "#e879b9", "#a3e635"];
+
+/* ---------------- machine ---------------- */
+let DOORS = null;
+async function loadDoors() { try { DOORS = await api("/api/gates/state"); } catch (_) { DOORS = null; } renderMachine(); }
+function onoff(el, on, label) {
+  el.classList.toggle("is-on", !!on);
+  el.innerHTML = `${label} <b>${on ? "ON" : "OFF"}</b>`;
+}
+function renderMachine() {
+  const busy = running();
+  $("mWheel").textContent = MS?.fault ? `fault: ${MS.fault}` : !connected() ? "board not connected" : busy ? "a run is going" : "ready";
+  $("mWheel").style.color = MS?.fault ? "var(--red)" : "";
+  ["mHome", "mTest"].forEach(id => $(id).disabled = !connected() || busy);
+  $("mClear").disabled = !connected() || busy;
+  const avail = DOORS && DOORS.available;
+  $("mDoorsTxt").textContent = avail ? "tap a door to open or close it" : "no door board found";
+  const open = new Set((DOORS && DOORS.open) || []);
+  const html = avail ? Array.from({ length: 8 }, (_, i) =>
+      `<button class="door${open.has(i) ? " open" : ""}" data-g="${i}"${busy ? " disabled" : ""}>${i + 1}</button>`).join("") +
+      `<button class="btn" style="height:64px" data-g="all1"${busy ? " disabled" : ""}>Open all</button>` +
+      `<button class="btn" style="height:64px" data-g="all0"${busy ? " disabled" : ""}>Close all</button>` : "";
+  if ($("mDoors").dataset.h !== html) {
+    $("mDoors").dataset.h = html; $("mDoors").innerHTML = html;
+    $("mDoors").querySelectorAll("button").forEach(b => b.onclick = async () => {
+      const g = b.dataset.g;
+      const body = g === "all1" ? { gate: "all", open: true } : g === "all0" ? { gate: "all", open: false }
+        : { gate: +g, open: !open.has(+g) };
+      const r = await act(() => post("/api/gates/test", body));
+      if (r) { DOORS.open = r.open || []; renderMachine(); }
+    });
+  }
+  // equipment: the relay is an option this machine has or hasn't; power
+  // is the relay itself, live only while the option is on
+  const relay = !!MS?.settings?.power_relay;
+  $("mRelay").disabled = busy;
+  onoff($("mRelay"), relay, "IoT Relay");
+  $("mPower").disabled = !relay || PWR === null;
+  onoff($("mPower"), relay && PWR, "Power");
+  const fon = !!MS?.settings?.case_feeder;
+  $("mFeederOn").disabled = !servo() || busy;
+  onoff($("mFeederOn"), fon, "Case Feeder");
+  $("mFeederCard").style.visibility = fon && servo() ? "" : "hidden";
+  if (FD) {
+    const [w] = fdLabel();
+    $("mFdTxt").textContent = `${w.toLowerCase()} · ${FD.speed ?? "–"}%`;
+    const on = !!FD.run;
+    $("mFdGo").textContent = on ? "Stop" : "Go"; $("mFdGo").className = "btn big " + (on ? "stop" : "brass");
+    $("mFdGo").disabled = !connected();
+    onoff($("mFdAuto"), !!FD.auto_start, "Starts with sorting");
+    const pk = (FD.presets || []).join(",") + "|" + FD.speed;
+    if ($("mFdPresets").dataset.k !== pk) {
+      $("mFdPresets").dataset.k = pk;
+      $("mFdPresets").innerHTML = `<span class="dim" style="font-size:13px;width:52px">Speed</span>` + (FD.presets || []).map(p =>
+        `<button class="preset grow${p === FD.speed ? " sel" : ""}" data-p="${p}">${p}</button>`).join("");
+      $("mFdPresets").querySelectorAll("button").forEach(b => b.onclick = () => feeder({ speed: +b.dataset.p }));
+    }
+  }
+}
+$("mHome").onclick = () => act(() => post("/api/console/send", { line: "homefeeder" }), "Homing the wheel");
+$("mTest").onclick = async () => {
+  $("mTest").disabled = true;
+  const r = await act(() => post("/api/machine/test", { action: "feed", slot: 0 }));
+  if (r) toast(r.result === "done" ? "Test feed done" : `Test feed: ${r.result}`, r.result === "done");
+  renderMachine();
+};
+$("mClear").onclick = clearFault;
+async function togglePower() {
+  if (PWR && running()) return confirmBox("A run is in progress", "Board power stays on while a run is going. Pause and finish the run, or stop it, then switch the board off.", "OK", false, null);
+  if (PWR && !await confirmBox("Switch the board off?", "The wheel, doors and case feeder lose power. Switch it back on from here or the web app.", "Switch off", true)) return;
+  setPower(!PWR);
+}
+$("mPower").onclick = togglePower;
+$("mRelay").onclick = async () => {
+  const on = !!MS?.settings?.power_relay;
+  if (on && !await confirmBox("Turn off the IoT relay option?", "The app stops switching the 24 V. The relay stays as it is now.", "Turn off")) return;
+  await act(() => post("/api/machine/settings", { power_relay: !on }));
+  await loadMachine(); try { PWR = (await api("/api/power")).on; } catch (_) {} render();
+};
+$("mFeederOn").onclick = async () => {
+  await act(() => post("/api/machine/settings", { case_feeder: !MS?.settings?.case_feeder }));
+  await loadMachine(); try { FD = await api("/api/feeder"); } catch (_) {} render();
+};
+$("mFdGo").onclick = () => feeder({ run: !FD?.run });
+$("mFdAuto").onclick = async () => {
+  await act(() => post("/api/machine/settings", { feeder_auto_start: !FD?.auto_start }));
+  try { FD = await api("/api/feeder"); } catch (_) {} render();
+};
+
+/* ---------------- capture ----------------
+   Single: feed one case, look, save it under the picked class.
+   Batch: the capture run (every case photographed into the open
+   pocket) until the hopper is empty. A mixed lot is grouped by look
+   afterwards and filed group by group here; a one-class hopper is
+   checked against its class when the run ends: the machine files what
+   looks like it and holds the rest here. */
+let CAP = { mode: "single", hop: "mixed", sel: null, order: "thin",
+            run: null, runCls: null, oc: null,
+            grun: null, groups: null, gloading: false, out: new Set(), open: new Set(), unfiled: null };
+function capRunning() { return running() && RUN.capture; }
+function renderCapture() {
+  const single = CAP.mode === "single", batch = !single;
+  $("cmSingle").className = single ? "sel" : ""; $("cmBatch").className = batch ? "sel" : "";
+  $("cSingleBox").style.display = single ? "" : "none";
+  $("cBatchBox").style.display = batch ? "" : "none";
+  $("chMixed").className = CAP.hop === "mixed" ? "sel" : ""; $("chOne").className = CAP.hop === "one" ? "sel" : "";
+  const checking = !!(CAP.oc && CAP.oc.state === "checking");
+  const busy = capRunning() || checking;
+  $("chMixed").disabled = $("chOne").disabled = $("cmSingle").disabled = busy;
+  // right side: the class list, the live census, or the groups to file
+  // (a one-class batch's check counts as its groups)
+  const showGroups = batch && !capRunning() && (CAP.hop === "mixed" || !!CAP.oc);
+  const showCensus = batch && capRunning();
+  const showList = !showGroups && !showCensus;
+  $("cList").style.display = showList ? "" : "none";
+  $("cThin").style.display = $("cAZ").style.display = showList ? "" : "none";
+  $("cGroups").style.display = showList ? "none" : "";
+  $("cListLbl").textContent = showCensus ? "PHOTOGRAPHING · LOOKS LIKE" : CAP.oc && showGroups ? `BATCH · ${CAP.oc.stamp || ""}`
+    : showGroups ? "FILE THE BATCH" : "PICK A CLASS";
+  if (showList) renderClassList();
+  else if (showCensus) renderCensus();
+  else renderGroups();
+  // batch button + counter
+  const st = $("cStart");
+  $("cBatchTxt").textContent = capRunning() ? `${RUN.sorted || 0} cases photographed`
+    : CAP.hop === "one" ? (CAP.sel ? `all ${CAP.sel}` : "pick the class →") : "";
+  if (capRunning()) { st.textContent = RUN.stopping ? "Finishing…" : "Stop batch"; st.className = "btn big stop"; st.disabled = !!RUN.stopping; }
+  else if (checking) { st.textContent = "Checking the batch…"; st.className = "btn big"; st.disabled = true; }
+  else { st.textContent = CAP.hop === "one" && CAP.sel ? `Start batch · all ${CAP.sel}` : "Start batch";
+         st.className = "btn big go"; st.disabled = !connected() || running() || (CAP.hop === "one" && !CAP.sel); }
+  renderShot();
+}
+function renderClassList() {
+  const names = labels().slice();
+  if (CAP.order === "thin") names.sort((a, z) => photos(a) - photos(z) || a.localeCompare(z));
+  else names.sort((a, z) => a.localeCompare(z));
+  $("cThin").className = "btn" + (CAP.order === "thin" ? " sel" : ""); $("cAZ").className = "btn" + (CAP.order === "az" ? " sel" : "");
+  [$("cThin"), $("cAZ")].forEach(x => { x.style.height = "40px"; x.style.fontSize = "14px"; x.style.padding = "0 12px"; });
+  const key = CAP.order + "|" + CAP.sel + "|" + names.map(n => n + photos(n)).join(",");
+  if ($("cList").dataset.k === key) return;
+  $("cList").dataset.k = key;
+  $("cList").innerHTML = names.map(n => {
+    const p = photos(n), thin = p < 10;
+    return `<button class="citem${n === CAP.sel ? " here" : ""}${thin ? " thin" : ""}" data-n="${esc(n)}"><b>${esc(n)}</b><span>${p} photo${p === 1 ? "" : "s"}${thin ? " · thin" : ""}</span></button>`;
+  }).join("");
+  $("cList").querySelectorAll("button").forEach(b => b.onclick = () => { if (!capRunning()) { CAP.sel = b.dataset.n; renderCapture(); } });
+}
+function renderCensus() {
+  const c = Object.entries(RUN.counts || {}).sort((a, z) => z[1] - a[1]);
+  const html = c.length ? `<div class="census">${c.map(([k, v]) =>
+      `<span class="pill" style="font-size:15px;padding:6px 14px">${esc(k === "unmatched" ? "unrecognized" : k)} <b>${v}</b></span>`).join("")}</div>
+      <span class="dim" style="font-size:13px">rough guesses while it runs — the groups to file come when the batch ends</span>`
+    : `<span class="dim">waiting for the first case…</span>`;
+  if ($("cGroups").dataset.h !== html) { $("cGroups").dataset.h = html; $("cGroups").innerHTML = html; }
+}
+function renderGroups() {
+  const g = $("cGroups");
+  let html;
+  if (CAP.oc) {
+    html = ocHtml();
+    if (g.dataset.h === html) return;
+    g.dataset.h = html; g.innerHTML = html; bindOc();
+    return;
+  }
+  if (CAP.gloading) html = `<span class="dim">grouping the batch… (a big pile of unknowns takes a few seconds)</span>`;
+  else if (CAP.groups) html = groupsHtml();
+  else if (CAP.unfiled) html = `<span class="dim" style="font-size:14px">The batch from ${esc(runLabel(CAP.unfiled.run))} still has ${CAP.unfiled.cases_left} photos to file.</span>
+      <button class="btn big brass" id="gLoad">File the batch from ${esc(runLabel(CAP.unfiled.run))}</button>`;
+  else html = `<span class="dim" style="font-size:14px">Load the hopper and press Start batch. It runs until the hopper is empty; then the photos are grouped by look here, ready to file.</span>`;
+  if (g.dataset.h === html) return;
+  g.dataset.h = html; g.innerHTML = html;
+  if ($("gLoad")) $("gLoad").onclick = () => loadGroups(CAP.unfiled.run);
+  g.querySelectorAll(".gcard").forEach(card => bindGroup(card));
+}
+function groupTitle(gr, k) {
+  return gr.kind === "class" ? [gr.label, "confident"] : gr.kind === "suggest" ? [`looks like ${gr.label}`, "below the bar"]
+    : gr.kind === "left" ? ["Left out", "file these on their own"] : [`Unknown group ${k}`, "look-alikes"];
+}
+function groupsHtml() {
+  if (!CAP.groups.length) return `<b style="font-size:18px;color:var(--green)">Batch filed.</b>
+    <span class="dim">Rebuild the gallery from Stats so the new photos count when sorting.</span>`;
+  let k = 0;
+  return CAP.groups.map((gr, gi) => {
+    if (gr.kind === "cluster") k++;
+    const [t, sub] = groupTitle(gr, k);
+    const all = CAP.open.has(gi), cases = all ? gr.cases : gr.cases.slice(0, 9);
+    const outN = gr.cases.filter(c => CAP.out.has(c.n)).length;
+    const fileable = gr.kind === "class" || gr.kind === "suggest";
+    return `<div class="gcard" data-g="${gi}">
+      <div class="row"><b style="font-size:16px">${esc(t)}</b><span class="dim" style="font-size:13px">${gr.cases.length} case${gr.cases.length === 1 ? "" : "s"} · ${sub}${gr.well_fed ? " · well stocked, only new looks are kept" : ""}${outN ? ` · ${outN} left out` : ""}</span></div>
+      <div class="gstrip">${cases.map(c => `<button class="${CAP.out.has(c.n) ? "out" : ""}" data-n="${c.n}"><img alt="" src="${c.thumb}"></button>`).join("")}${
+        gr.cases.length > 9 ? `<button class="more" data-more="1">${all ? "less" : `+${gr.cases.length - 9}`}</button>` : ""}</div>
+      <div class="row">${fileable ? `<button class="btn brass" data-act="file">File as ${esc(gr.label)}</button>` : ""}
+        <button class="btn" data-act="other">${fileable ? "Another class…" : "File as…"}</button>
+        <button class="btn" data-act="aside">Set aside</button><span class="grow"></span>
+        <button class="btn stop" data-act="discard">Discard</button></div></div>`;
+  }).join("") + `<span class="dim" style="font-size:12px">tap a photo that doesn't belong to leave it out of its group</span>`;
+}
+function bindGroup(card) {
+  const gi = +card.dataset.g, gr = CAP.groups[gi];
+  card.querySelectorAll(".gstrip button[data-n]").forEach(b => b.onclick = () => {
+    const n = +b.dataset.n; CAP.out.has(n) ? CAP.out.delete(n) : CAP.out.add(n); renderGroups();
+  });
+  const more = card.querySelector("[data-more]");
+  if (more) more.onclick = () => { CAP.open.has(gi) ? CAP.open.delete(gi) : CAP.open.add(gi); renderGroups(); };
+  card.querySelectorAll("[data-act]").forEach(b => b.onclick = async () => {
+    const a = b.dataset.act;
+    if (a === "file") return fileGroup(gi, gr.label);
+    if (a === "other") return pickClass("File this group as", n => fileGroup(gi, n));
+    if (a === "aside") return fileGroup(gi, "UNKNOWN");
+    if (a === "discard") {
+      if (!await confirmBox("Discard this group?", "Its photos are deleted, not filed anywhere.", "Discard", true)) return;
+      fileGroup(gi, null);
+    }
+  });
+}
+async function fileGroup(gi, stamp) {
+  const gr = CAP.groups[gi];
+  const keep = gr.cases.filter(c => !CAP.out.has(c.n)), left = gr.cases.filter(c => CAP.out.has(c.n));
+  if (!keep.length) return toast("Every photo in this group is left out", false);
+  const body = stamp ? { ns: keep.map(c => c.n), stamp, file_all: gr.kind !== "class" } : { ns: keep.map(c => c.n), action: "discard" };
+  const j = await act(() => post(`/api/runs/${CAP.grun}/cases/bulk_resolve`, body));
+  if (!j) return;
+  const skip = (j.skipped_duplicates || 0) + (j.skipped_routine || 0);
+  toast(!stamp ? `Discarded ${j.discarded} photos` : stamp === "UNKNOWN" ? `${j.kept} set aside`
+    : `${j.kept} filed as ${stamp}${skip ? ` · ${skip} skipped as repeats` : ""}`, true);
+  left.forEach(c => CAP.out.delete(c.n));
+  CAP.groups.splice(gi, 1);
+  CAP.open.clear();
+  if (left.length) {
+    const lo = CAP.groups.find(x => x.kind === "left");
+    if (lo) lo.cases.push(...left); else CAP.groups.push({ kind: "left", label: null, cases: left });
+  }
+  if (!CAP.groups.length) { CAP.unfiled = null; loadState(); }
+  renderGroups();
+}
+async function loadGroups(run) {
+  CAP.grun = run; CAP.groups = null; CAP.gloading = true; CAP.out.clear(); CAP.open.clear(); renderCapture();
+  try { CAP.groups = (await api(`/api/runs/${run}/groups`)).groups || []; }
+  catch (e) { toast(e.message, false); }
+  CAP.gloading = false; renderCapture();
+}
+async function findUnfiled() {
+  try {
+    const runs = (await api("/api/runs")).runs || [];
+    const r = runs.find(r => r.capture && r.cases_left > 0) || null;
+    // a one-class batch with cases left reopens as its check (held cases)
+    if (r && r.batch_class) { CAP.unfiled = null; CAP.hop = "one"; return ocFetch(r.run); }
+    CAP.unfiled = r;
+  } catch (_) {}
+  renderCapture();
+}
+$("cmSingle").onclick = () => { CAP.mode = "single"; renderCapture(); };
+$("cmBatch").onclick = () => { CAP.mode = "batch"; if (SHOT) showShot(false); if (!CAP.groups) findUnfiled(); renderCapture(); };
+$("chMixed").onclick = () => { CAP.hop = "mixed"; renderCapture(); };
+$("chOne").onclick = () => { CAP.hop = "one"; renderCapture(); };
+$("cThin").onclick = () => { CAP.order = "thin"; renderCapture(); };
+$("cAZ").onclick = () => { CAP.order = "az"; renderCapture(); };
+$("cStart").onclick = async () => {
+  if (capRunning()) return act(() => post("/api/run/stop"), "Finishing the cases in the wheel");
+  const one = CAP.hop === "one";
+  const [t, x] = one
+    ? [`Batch of ${CAP.sel}?`, `Load only ${CAP.sel} in the hopper. Every case is photographed until the hopper is empty. The ones that look like ${CAP.sel} are filed; any that don't are held here for you.`]
+    : ["Batch a mixed lot?", "Every case is photographed into the open pocket until the hopper is empty. Then the photos are grouped by look here for you to file."];
+  if (!await confirmBox(t, x, "Start")) return;
+  const r = await act(() => post("/api/run/start", one ? { mode: "serial", capture: true, batch_class: CAP.sel }
+                                                        : { mode: "serial", capture: true }));
+  if (r) { Object.assign(CAP, { run: null, runCls: one ? CAP.sel : null, groups: null, unfiled: null, oc: null }); $("cMsg").textContent = ""; tick(); }
+};
+// every tick: follow the batch run; when it ends, show the one-class
+// check (the machine files it) or group it for filing (mixed lot)
+async function captureWatch() {
+  if (capRunning()) { CAP.run = RUN.run_id; return; }
+  if (!CAP.run || running()) return;
+  const run = CAP.run, cls = CAP.runCls, n = RUN.sorted || 0;
+  CAP.run = null; CAP.runCls = null;
+  if (!cls) { $("cMsg").textContent = `Batch done: ${n} cases photographed.`; return loadGroups(run); }
+  CAP.oc = { run, state: "checking", stamp: cls }; renderCapture();
+  ocFetch(run);
+}
+/* one-class batch: the machine reads every case against the class when
+   the batch ends, files the ones that look like it and holds the rest */
+async function ocFetch(run) {
+  let j;
+  try { j = await api(`/api/runs/${run}/one_class`); }
+  catch (e) { CAP.oc = { run, state: "error", error: e.message }; renderCapture(); return; }
+  if (j.state === "pending") { try { await post(`/api/runs/${run}/one_class`, {}); } catch (_) {} j = { state: "checking", stamp: j.stamp }; }
+  CAP.oc = Object.assign({ run }, j);
+  renderCapture();
+  if (j.state === "checking") return setTimeout(() => { if (CAP.oc && CAP.oc.run === run) ocFetch(run); }, 1500);
+  if (j.state === "done") loadState();
+}
+function ocHtml() {
+  const oc = CAP.oc;
+  if (oc.state === "checking") return `<span class="dim" style="font-size:15px">Checking the batch against ${esc(oc.stamp || "the class")}…</span>`;
+  if (oc.state === "error") return `<span style="color:var(--red);font-size:15px">${esc(oc.error || "the check failed")}</span>
+    <button class="btn" id="ocDone">Close</button>`;
+  const skip = oc.skipped ? ` · ${oc.skipped} skipped as repeats` : "";
+  const head = `<div class="row"><b style="font-size:17px;color:var(--green)">${oc.filed} filed as ${esc(oc.stamp)}</b>
+    <span class="dim" style="font-size:13px">${oc.checked} checked${skip}</span><span class="grow"></span>
+    ${oc.held.length ? "" : `<button class="btn" id="ocDone">Done</button>`}</div>`;
+  if (!oc.held.length) return head + `<span class="dim" style="font-size:14px">Nothing held. Rebuild the gallery from Stats so the new photos count when sorting.</span>`;
+  return head + `<span class="lbl" style="color:var(--amber)">${oc.held.length} HELD · <span>these don't look like ${esc(oc.stamp)}</span></span>` +
+    oc.held.map(c => `<div class="row ocrow" style="gap:12px;padding:8px;border-radius:10px;background:var(--panel2)">
+      <img alt="" src="${c.thumb}" style="width:96px;height:96px;border-radius:8px;flex-shrink:0">
+      <div class="col" style="flex-grow:1;min-width:0;gap:8px">
+        <span style="font-size:15px"><b>#${c.n}</b> · <span style="color:${c.kind === "other" ? "var(--text)" : "var(--amber)"}">${esc(c.why)}</span></span>
+        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px">
+          <button class="btn" style="height:48px;font-size:15px" data-n="${c.n}" data-act="cls">${esc(oc.stamp)}</button>
+          <button class="btn" style="height:48px;font-size:14px;overflow:hidden;text-overflow:ellipsis" data-n="${c.n}" data-act="${c.kind === "other" ? "read" : "pick"}" data-read="${esc(c.read || "")}">${c.kind === "other" ? esc(c.read) : "Other…"}</button>
+          <button class="btn stop" style="height:48px;font-size:15px" data-n="${c.n}" data-act="discard">Discard</button>
+        </div></div></div>`).join("");
+}
+function bindOc() {
+  const oc = CAP.oc, g = $("cGroups");
+  if ($("ocDone")) $("ocDone").onclick = () => { CAP.oc = null; renderCapture(); };
+  g.querySelectorAll(".ocrow button[data-act]").forEach(b => b.onclick = async () => {
+    const n = +b.dataset.n, a = b.dataset.act, url = `/api/runs/${oc.run}/cases/bulk_resolve`;
+    const file = async stamp => { if (await act(() => post(url, { ns: [n], stamp, file_all: true }), `#${n} filed as ${stamp}`)) ocFetch(oc.run); };
+    if (a === "cls") return file(oc.stamp);
+    if (a === "read") return file(b.dataset.read);
+    if (a === "pick") return pickClass("File this case as", name => file(name));
+    if (await act(() => post(url, { ns: [n], action: "discard" }), `#${n} discarded`)) ocFetch(oc.run);
+  });
+}
+
+/* Single: feed one case and look at it; save it under the class */
+let SHOT = null, outgoing = null, shotBusy = false;
+function showShot(on) {
+  $("cShot").style.display = on ? "" : "none";
+  $("cStream").style.display = on ? "none" : "";
+  if (!on) { SHOT = null; renderShot(); }
+}
+function renderShot() {
+  const can = !!SHOT && SHOT.case_present !== false && !!CAP.sel && !shotBusy;
+  $("cSave").disabled = !can;
+  $("cSave").textContent = CAP.sel ? `Save as ${CAP.sel}` : "Save";
+  $("cSave").className = "btn big" + (can ? " brass" : "");
+  $("cFeed").disabled = shotBusy || running() || !connected();
+}
+$("cView").onclick = () => { if (SHOT) showShot(false); };
+$("cFeed").onclick = async () => {
+  shotBusy = true; renderShot(); $("cMsg").textContent = "feeding…";
+  try {
+    const j = await post("/api/collect/advance", { feed: true, sort: true, stamp: outgoing, predict: true });
+    outgoing = null; SHOT = j;
+    $("cShot").src = j.crop || j.image; showShot(true); SHOT = j;
+    const pr = j.prediction;
+    $("cMsg").textContent = j.case_present === false ? "the pocket looks empty — feed again"
+      : `sharpness ${j.sharpness}${j.blurry ? " · blurry" : ""}${pr ? ` · looks like ${pr.stamp} ${pr.conf.toFixed(2)}` : ""} · tap the photo for live view`;
+  } catch (e) { $("cMsg").textContent = e.data && e.data.jam ? `Feeder jam: ${e.message}` : e.message; }
+  shotBusy = false; renderShot();
+};
+$("cSave").onclick = async () => {
+  if (!SHOT || !CAP.sel) return;
+  shotBusy = true; renderShot();
+  const fd = new FormData();
+  fd.append("stamp", CAP.sel); fd.append("frameA_b64", SHOT.image);
+  if (SHOT.center) { fd.append("cx", SHOT.center[0]); fd.append("cy", SHOT.center[1]); fd.append("cr", SHOT.center[2]); }
+  try {
+    const j = await api("/api/save_pair", { method: "POST", body: fd });
+    outgoing = j.saved; toast(`Saved ${j.saved} #${j.index}`, true); showShot(false); loadState();
+    $("cMsg").textContent = "saved — Feed one for the next case";
+  } catch (e) {
+    $("cMsg").textContent = e.data && e.data.blurry ? "too blurry to save — feed the next one"
+      : e.data && e.data.duplicate ? "already in the dataset — feed the next one" : e.message;
+  }
+  shotBusy = false; renderShot();
+};
+
+async function pollDetect() {
+  if (page !== "capture") return;
+  try {
+    const d = await api("/api/camera/case_detect");
+    $("cDetect").textContent = d.present == null ? "camera idle" : d.present ? "Case in pocket" : "Pocket empty";
+  } catch (_) { $("cDetect").textContent = "no camera"; }
+}
+
+/* ---------------- rejects ----------------
+   Two views of one run: its rejects one at a time, or its sorted cases
+   as a grid (filter by class) to refile one the model got wrong. */
+let RJ = { run: null, runs: [], list: [], i: 0, filed: 0, tab: "rej", cases: [], filter: null, page: 0, sel: null };
+async function loadRejects(run) {
+  try {
+    RJ.runs = ((await api("/api/runs")).runs || []).filter(x => !x.capture && x.mode !== "sim");
+    // the newest sort run, every time a new one has finished; a run picked
+    // from the list stays picked only until the next run ends
+    const newest = RJ.runs[0] ? RJ.runs[0].run : null;
+    if (run) RJ.run = run;
+    else if (newest !== RJ.newest || !RJ.run || !RJ.runs.some(x => x.run === RJ.run)) {
+      RJ.run = newest; RJ.i = 0; RJ.tab = "rej";
+    }
+    RJ.newest = newest;
+    RJ.list = []; RJ.cases = [];
+    if (RJ.run) {
+      RJ.list = (await api(`/api/runs/${RJ.run}/rejects`)).rejects || [];
+      if (RJ.tab === "sorted") await loadSorted();
+    }
+    RJ.i = Math.min(RJ.i, Math.max(0, RJ.list.length - 1));
+  } catch (e) { toast(e.message, false); }
+  renderRejects();
+}
+async function loadSorted() {
+  const rep = await api(`/api/runs/${RJ.run}/report`);
+  RJ.cases = (rep.cases || []).filter(c => !c.filed);
+  RJ.binMap = rep.bin_map || null;      // the bins as they were for THIS run
+  RJ.filter = null;
+  RJ.page = 0; RJ.sel = null;
+}
+function runLabel(id) {
+  const t = runStart(id);
+  return t ? t.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : id;
+}
+function renderRejects() {
+  const sorted = RJ.tab === "sorted";
+  $("rTabRej").className = "btn" + (!sorted ? " sel" : ""); $("rTabSorted").className = "btn" + (sorted ? " sel" : "");
+  [$("rTabRej"), $("rTabSorted")].forEach(x => { x.style.height = "40px"; x.style.fontSize = "14px"; });
+  $("rTabRej").textContent = `Rejects${RJ.run ? ` · ${RJ.list.length}` : ""}`;
+  $("rRun").textContent = RJ.run ? `${runLabel(RJ.run)} ▾` : "Run ▾";
+  $("rOne").style.display = sorted ? "none" : "";
+  $("rGrid").style.display = sorted ? "" : "none";
+  $("rPager").style.display = sorted ? "" : "none";
+  $("rFilter").style.display = sorted ? "" : "none";
+  $("rWhy").style.display = sorted ? "none" : "";
+  $("rSession").textContent = RJ.filed ? `${RJ.filed} filed this session · rebuild the gallery from Stats when you're done` : "";
+  return sorted ? renderSorted() : renderOneReject();
+}
+function renderOneReject() {
+  const r = RJ.list[RJ.i];
+  $("rLbl").textContent = r ? `REJECT ${RJ.i + 1} OF ${RJ.list.length}` : "REJECTS";
+  $("rFileLbl").textContent = "FILE THIS CASE AS";
+  $("rPrev").disabled = !r || RJ.i === 0; $("rNext").disabled = !r || RJ.i >= RJ.list.length - 1;
+  if (!r) {
+    $("rImg").removeAttribute("src");
+    $("rWhy").textContent = RJ.run === null ? "No runs yet." : "No rejects left to file in this run.";
+    $("rFile").innerHTML = ""; return;
+  }
+  const src = `/api/runs/${RJ.run}/frame/${r.n}`;
+  if ($("rImg").getAttribute("src") !== src) $("rImg").src = src;
+  const e = r.embed || {}, pct = v => (v || 0).toFixed(2);
+  $("rWhy").innerHTML = r.stamp
+    ? `Best guess <b>${esc(r.stamp)}</b> ${pct(r.conf)}${e.bar ? ` · bar ${pct(e.bar)}` : ""}${e.runner ? ` · runner-up ${esc(e.runner)} ${pct(e.runner_sim)}` : ""}<br><span class="dim">${esc(REASONS[r.reason] || r.reason || "")}</span>`
+    : esc(REASONS[r.reason] || r.reason || "");
+  const picks = [...new Set([r.stamp, e.runner].filter(n => n && labels().includes(n)))];
+  $("rFile").innerHTML = picks.map(n => `<button class="btn big" data-f="${esc(n)}">${esc(n)}</button>`).join("") +
+    `<button class="btn big" id="rOther">Another class…</button>
+     <div class="row" style="margin-top:auto"><button class="btn grow" id="rSkip">Skip</button>
+     <button class="btn grow" id="rUnknown">Not a known class</button>
+     <button class="btn grow stop" id="rDiscard">Discard</button></div>`;
+  $("rFile").querySelectorAll("[data-f]").forEach(b => b.onclick = () => fileReject(b.dataset.f));
+  $("rOther").onclick = () => pickClass("File this case as", n => fileReject(n));
+  $("rSkip").onclick = () => { if (RJ.i < RJ.list.length - 1) RJ.i++; renderRejects(); };
+  $("rUnknown").onclick = () => fileReject("UNKNOWN");
+  $("rDiscard").onclick = async () => {
+    if (!await confirmBox("Discard this photo?", "It's deleted, not filed anywhere.", "Discard", true)) return;
+    fileReject(null);
+  };
+}
+async function fileReject(stamp) {
+  const r = RJ.list[RJ.i];
+  const body = stamp ? { action: "save", stamp } : { action: "discard" };
+  const ok = await act(() => post(`/api/runs/${RJ.run}/rejects/${r.n}/resolve`, body),
+    !stamp ? "Discarded" : stamp === "UNKNOWN" ? "Set aside" : `Filed as ${stamp}`);
+  if (!ok) return;
+  if (stamp) RJ.filed++;
+  RJ.list.splice(RJ.i, 1);
+  if (RJ.i >= RJ.list.length) RJ.i = Math.max(0, RJ.list.length - 1);
+  renderRejects();
+}
+const PAGE = 9;
+function renderSorted() {
+  // filter key: "" all, "c:NAME" a class, "b:3" a bin (0-based)
+  const counts = {}, bcounts = {};
+  RJ.cases.forEach(c => { counts[c.stamp] = (counts[c.stamp] || 0) + 1; bcounts[c.bin] = (bcounts[c.bin] || 0) + 1; });
+  const binName = i => {
+    const t = binText((RJ.binMap || [])[i] || (ST?.bins || [])[i] || []);
+    return `Bin ${+i + 1}${t ? " · " + t : ""}`;
+  };
+  const f = RJ.filter || "";
+  const fk = JSON.stringify([counts, bcounts]) + "|" + f;
+  if ($("rFilter").dataset.k !== fk) {
+    $("rFilter").dataset.k = fk;
+    // one button, a list to pick from (like the run picker) — no sideways swipe
+    const label = f.startsWith("b:") ? `${binName(f.slice(2))} · ${bcounts[f.slice(2)] || 0}`
+      : f.startsWith("c:") ? `${f.slice(2)} · ${counts[f.slice(2)] || 0}` : `All · ${RJ.cases.length}`;
+    $("rFilter").innerHTML = `<button class="btn" style="height:44px;font-size:15px;width:100%;text-align:left;overflow:hidden;text-overflow:ellipsis">Show: ${esc(label)} ▾</button>`;
+    $("rFilter").querySelector("button").onclick = () => {
+      const row = (k, n, c) => `<button class="runrow${f === k ? " sel" : ""}" data-s="${esc(k)}"><b class="grow">${esc(n)}</b>
+          <span class="dim" style="font-size:14px">${c} case${c === 1 ? "" : "s"}</span></button>`;
+      const head = t => `<span class="lbl" style="margin-top:6px">${t}</span>`;
+      $("shTitle").textContent = "Show sorted cases";
+      $("shBody").innerHTML = `<div class="col scroll" style="gap:8px;max-height:420px">` +
+        row("", "All", RJ.cases.length) +
+        head("BY BIN") + Object.keys(bcounts).sort((a, z) => a - z).map(b => row("b:" + b, binName(b), bcounts[b])).join("") +
+        head("BY CLASS") + Object.entries(counts).sort((a, z) => z[1] - a[1]).map(([n, c]) => row("c:" + n, n, c)).join("") +
+        `</div>`;
+      $("shBody").querySelectorAll("button[data-s]").forEach(x => x.onclick = () => {
+        closeSheet(); RJ.filter = x.dataset.s || null; RJ.page = 0; RJ.sel = null; renderRejects();
+      });
+      showSheet();
+    };
+  }
+  const shown = RJ.cases.filter(c => !f || (f.startsWith("b:") ? String(c.bin) === f.slice(2) : c.stamp === f.slice(2)));
+  const pages = Math.max(1, Math.ceil(shown.length / PAGE));
+  RJ.page = Math.min(RJ.page, pages - 1);
+  const slice = shown.slice(RJ.page * PAGE, RJ.page * PAGE + PAGE);
+  $("rLbl").textContent = "SORTED CASES";
+  $("rGrid").innerHTML = slice.map(c =>
+    `<button class="${RJ.sel === c.n ? "sel" : ""}" data-n="${c.n}">${c.thumb ? `<img alt="" src="${c.thumb}">` : ""}<span>${esc(c.stamp)}</span></button>`).join("")
+    || `<span class="dim">nothing sorted in this run</span>`;
+  $("rGrid").querySelectorAll("button").forEach(b => b.onclick = () => { RJ.sel = +b.dataset.n; renderRejects(); });
+  $("rPgTxt").textContent = `page ${RJ.page + 1} of ${pages}`;
+  $("rPgPrev").disabled = RJ.page === 0; $("rPgNext").disabled = RJ.page >= pages - 1;
+  const c = RJ.cases.find(x => x.n === RJ.sel);
+  $("rFileLbl").textContent = c ? "REFILE THIS CASE AS" : "TAP A CASE TO REFILE IT";
+  $("rFile").innerHTML = c ? `<div style="font-size:15px">#${c.n} sorted as <b>${esc(c.stamp)}</b> ${(c.conf || 0).toFixed(2)} · bin ${c.bin + 1}</div>
+     <button class="btn big" id="rcOther">Another class…</button>
+     <button class="btn big" id="rcUnknown">Not a known class</button>` : "";
+  if (c) {
+    $("rcOther").onclick = () => pickClass(`Refile #${c.n} as`, n => refileCase(c, n));
+    $("rcUnknown").onclick = () => refileCase(c, "UNKNOWN");
+  }
+}
+async function refileCase(c, stamp) {
+  const ok = await act(() => post(`/api/runs/${RJ.run}/cases/${c.n}/resolve`, { action: "save", stamp }),
+    stamp === "UNKNOWN" ? "Set aside" : `Refiled as ${stamp}`);
+  if (!ok) return;
+  RJ.filed++; RJ.cases = RJ.cases.filter(x => x.n !== c.n); RJ.sel = null; renderRejects();
+}
+$("rPrev").onclick = () => { RJ.i = Math.max(0, RJ.i - 1); renderRejects(); };
+$("rNext").onclick = () => { RJ.i = Math.min(RJ.list.length - 1, RJ.i + 1); renderRejects(); };
+$("rPgPrev").onclick = () => { RJ.page--; renderRejects(); };
+$("rPgNext").onclick = () => { RJ.page++; renderRejects(); };
+$("rTabRej").onclick = () => { RJ.tab = "rej"; renderRejects(); };
+$("rTabSorted").onclick = async () => { RJ.tab = "sorted"; try { await loadSorted(); } catch (e) { toast(e.message, false); } renderRejects(); };
+$("rRun").onclick = () => {
+  $("shTitle").textContent = "Pick a run";
+  $("shBody").innerHTML = `<div class="col scroll" style="gap:8px;max-height:400px">` + RJ.runs.map(r =>
+    `<button class="runrow${r.run === RJ.run ? " sel" : ""}" data-r="${esc(r.run)}"><b class="grow">${esc(runLabel(r.run))}</b>
+      <span class="dim" style="font-size:13px">${r.total} cases · ${r.rejects} rejects to file</span></button>`).join("") + `</div>`;
+  $("shBody").querySelectorAll("button").forEach(b => b.onclick = () => { closeSheet(); RJ.i = 0; loadRejects(b.dataset.r); });
+  showSheet();
+};
+
+/* class picker overlay */
+let PK = { cb: null, letter: null };
+function pickClass(title, cb) { PK = { cb, letter: null }; $("pkTitle").textContent = title; $("picker").style.display = "flex"; renderPicker(); }
+function renderPicker() {
+  const names = labels().slice().sort((a, z) => a.localeCompare(z));
+  const letters = [...new Set(names.map(n => n[0].toUpperCase()))];
+  $("pkLetters").innerHTML = [`<button data-l=""${!PK.letter ? ' class="sel"' : ""}>All</button>`]
+    .concat(letters.map(l => `<button data-l="${esc(l)}"${PK.letter === l ? ' class="sel"' : ""}>${esc(l)}</button>`)).join("");
+  $("pkLetters").querySelectorAll("button").forEach(b => b.onclick = () => { PK.letter = b.dataset.l || null; renderPicker(); });
+  $("pkList").innerHTML = names.filter(n => !PK.letter || n[0].toUpperCase() === PK.letter).map(n =>
+    `<button class="citem${photos(n) < 10 ? " thin" : ""}" data-n="${esc(n)}"><b>${esc(n)}</b><span>${photos(n)} photo${photos(n) === 1 ? "" : "s"}</span></button>`).join("");
+  $("pkList").querySelectorAll("button").forEach(b => b.onclick = () => {
+    if (!PK.cb) return;
+    $("picker").style.display = "none"; const cb = PK.cb; PK.cb = null; cb(b.dataset.n);
+  });
+}
+$("shClose").onclick = closeSheet;
+$("pkClose").onclick = () => { $("picker").style.display = "none"; PK.cb = null; };
+
+/* ---------------- stats ---------------- */
+let GAL = { running: false, msg: "" };
+let USB = { running: false }, usbTimer = null;   // the Copy to USB panel
+function renderStats() {
+  if (!ST) return;
+  const names = labels(), counts = names.map(n => [n, photos(n)]);
+  $("tClasses").textContent = names.length;
+  $("tPhotos").textContent = counts.reduce((s, c) => s + c[1], 0).toLocaleString();
+  $("tThin").textContent = counts.filter(c => c[1] < 10).length;
+  $("tModel").textContent = ST.model || "–";
+  const thin = counts.slice().sort((a, z) => a[1] - z[1]).slice(0, 6);
+  $("tThinList").innerHTML = thin.map(([n, p]) =>
+    `<div class="thinrow"><b>${esc(n)}</b><div class="barbg"><i style="width:${Math.min(100, p * 10)}%;${p >= 10 ? "background:var(--green)" : ""}"></i></div><span>${p}</span></div>`).join("");
+  $("tAll").textContent = `All ${names.length} classes`;
+  const e = ST.models?.embed || {};
+  $("gInfo").textContent = e.exists ? `${e.gallery_classes ?? "–"} classes · ${e.gallery_vectors ?? "–"} exemplars${e.trained ? ` · model trained ${e.trained}` : ""}` : "no gallery yet";
+  $("gMsg").textContent = GAL.msg;
+  $("gRebuild").disabled = GAL.running || running() || USB.running;
+  $("gRebuild").textContent = GAL.running ? "Rebuilding…" : "Rebuild gallery";
+  $("gUsb").disabled = running() || GAL.running;
+  $("gUsb").textContent = USB.running ? "Copying to USB…" : "Copy to USB";
+}
+
+/* Copy to USB: the same export as the web app (every profile's photos and
+   model.json, only new or changed files). A run can't start while it
+   copies; Eject unmounts so the stick is safe to pull. */
+function usbShow(title, text, pct, btns) {
+  $("ubTitle").textContent = title; $("ubText").textContent = text;
+  $("ubBar").style.display = pct === null ? "none" : ""; $("ubFill").style.width = `${pct || 0}%`;
+  $("ubBtns").innerHTML = btns.map(([id, label, cls]) => `<button class="btn big ${cls || ""}" id="${id}">${label}</button>`).join("");
+  $("usbModal").style.display = "flex";
+}
+function usbClose() { clearTimeout(usbTimer); $("usbModal").style.display = "none"; }
+async function usbPoll() {
+  let st = null;
+  try { st = await api("/api/usb/status"); } catch (_) {}
+  USB.running = !!(st && st.running); renderStats();
+  if (st && st.running) {
+    usbShow("Copying to USB", st.phase === "copy" ? `${(st.copied || 0).toLocaleString()} of ${(st.total || 0).toLocaleString()} files. Leave the stick in until this says done.`
+      : "Checking what's already on the stick. Only new or changed photos copy.", st.total ? 100 * st.copied / st.total : 0, []);
+    usbTimer = setTimeout(usbPoll, 1000);
+    return;
+  }
+  if (st && st.error) {
+    usbShow("Copy didn't finish", st.error, null, [["ubClose", "Close"], ["ubRetry", "Retry", "brass"]]);
+  } else {
+    const r = (st && st.result) || {};
+    usbShow("Copy complete", `${r.files ? Number(r.files).toLocaleString() + " files are" : "Everything is"} on the stick under SortIQ/calibers. Eject before you pull it out.`,
+      null, [["ubEject", "Eject", "go"]]);
+  }
+  usbBind();
+}
+async function usbStart() {
+  usbShow("Copy to USB", "Looking for a USB stick…", null, []);
+  try { await post("/api/usb/export", {}); usbPoll(); }
+  catch (e) {
+    const none = /no usb/i.test(e.message);
+    usbShow(none ? "No USB stick found" : "Can't copy to USB",
+      none ? "Plug a stick into the Pi (FAT32, exFAT or NTFS) and tap Retry." : e.message, null,
+      [["ubClose", "Close"], ["ubRetry", "Retry", "brass"]]);
+    usbBind();
+  }
+}
+async function usbEject() {
+  usbShow("Ejecting…", "", null, []);
+  try {
+    await post("/api/usb/eject", {});
+    usbShow("Safe to remove the stick", "Next time only new or changed photos copy, so it's much quicker.", null, [["ubClose", "Done"]]);
+  } catch (e) { usbShow("Eject failed", e.message, null, [["ubClose", "Close"], ["ubEjectAgain", "Retry eject", "brass"]]); }
+  usbBind();
+}
+function usbBind() {
+  if ($("ubClose")) $("ubClose").onclick = usbClose;
+  if ($("ubRetry")) $("ubRetry").onclick = usbStart;
+  if ($("ubEject")) $("ubEject").onclick = usbEject;
+  if ($("ubEjectAgain")) $("ubEjectAgain").onclick = usbEject;
+}
+$("gUsb").onclick = async () => {
+  let st = null;
+  try { st = await api("/api/usb/status"); } catch (_) {}
+  if (st && (st.running || st.mounted)) return usbPoll();       // re-attach
+  if (!await confirmBox("Copy the dataset to USB?", "Copies the photos and model to a USB stick in the Pi. Only new or changed files copy. Sorting can't start until it finishes.", "Copy")) return;
+  usbStart();
+};
+$("tAll").onclick = () => pickClass("All classes", null);
+async function loadLastRun() {
+  try {
+    const runs = (await api("/api/runs")).runs || [];
+    const r = runs.find(x => !x.capture && x.mode === "serial");
+    if (!r) { $("lrWhen").textContent = "none yet"; $("lrKv").innerHTML = ""; $("lrTop").innerHTML = ""; return; }
+    const t0 = runStart(r.run);
+    $("lrWhen").textContent = t0 ? t0.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : r.run;
+    const pct = r.total ? (100 * (r.rejected || 0) / r.total).toFixed(1) : "0";
+    const rows = [["Cases", r.total], ["Time", r.dur_s ? mmss(r.dur_s) : "–"],
+      ["Rate", r.dur_s ? `${Math.round(r.total / r.dur_s * 60)} / min` : "–"],
+      ["Rejects", `${r.rejected || 0} (${pct}%)`], ["Ended", END_WORDS[r.end_reason] || r.end_reason || "–"]];
+    $("lrKv").innerHTML = rows.map(([k, v]) => `<span>${k}</span><span>${esc(v)}</span>`).join("");
+    $("lrTop").innerHTML = (r.top || []).slice(0, 4).map(([n, c]) =>
+      `<div class="row" style="gap:6px"><span class="grow">${esc(n)}</span><b>${c}</b></div>`).join("");
+  } catch (_) {}
+}
+$("gRebuild").onclick = async () => {
+  if (!await confirmBox("Rebuild the gallery?", "Takes a few minutes. Sorting can't start until it finishes.", "Rebuild")) return;
+  const r = await act(() => post("/api/gallery/rebuild"));
+  if (!r) return;
+  GAL = { running: true, msg: "rebuilding…" }; renderStats();
+  const poll = async () => {
+    let s;
+    try { s = await api("/api/gallery/rebuild"); } catch (_) { return setTimeout(poll, 3000); }
+    if (s.running) { const l = (s.log || []); GAL.msg = String(l[l.length - 1] || "rebuilding…").slice(0, 90); renderStats(); return setTimeout(poll, 3000); }
+    GAL = { running: false, msg: s.error ? `Failed: ${s.error}` : "Gallery rebuilt" };
+    toast(GAL.msg, !s.error); loadState();
+  };
+  setTimeout(poll, 2000);
+};
+
+/* ---------------- system ---------------- */
+let SCR = { sleep_min: 10, available: false };
+async function loadInfo() {
+  try {
+    const i = await api("/api/system/info");
+    const gb = b => (b / 1e9).toFixed(0);
+    const net = NET?.now ? `${NET.now.ssid} · ${NET.ip || "–"}` : (NET?.ip || "–");
+    const rows = [["App", `SortIQ ${i.version || ""}`], ["Board", i.board_version || [i.board, i.firmware].filter(Boolean).join(" · ") || "–"],
+      ["Model", `${i.cartridge || ""} / ${i.model || ""}`], ["Network", net],
+      ["Storage", i.disk_total ? `${gb(i.disk_used)} GB of ${gb(i.disk_total)} GB used` : "–"],
+      ["Pi", `${i.cpu_c != null ? i.cpu_c + " °C" : ""}${i.uptime_s != null ? ` · up ${Math.floor(i.uptime_s / 3600)} h ${Math.floor(i.uptime_s % 3600 / 60)} min` : ""}`]];
+    $("yInfo").innerHTML = rows.map(([k, v]) => `<span>${k}</span><span>${esc(v)}</span>`).join("");
+  } catch (_) {}
+  if (!NET) loadNet();
+}
+function renderSystem() {
+  $("yPower").disabled = PWR === null || !MS?.settings?.power_relay;
+  onoff($("yPower"), PWR, "24 V Power");
+  document.querySelectorAll("#ySleep button").forEach(b => b.className = "btn" + (+b.dataset.m === SCR.sleep_min ? " sel" : ""));
+  $("yOff").disabled = !SCR.available || running();
+  document.querySelectorAll("[data-pi]").forEach(b => b.disabled = running());
+  if (NET) $("yNetSub").textContent = `${NET.now?.ssid || (NET.connection ? "Wi-Fi" : "not connected")} · Wi-Fi, join, reconnect`;
+}
+$("yPower").onclick = togglePower;
+document.querySelectorAll("#ySleep button").forEach(b => b.onclick = async () => {
+  await act(() => post("/api/screen", { sleep_min: +b.dataset.m }));
+  SCR.sleep_min = +b.dataset.m; renderSystem();
+});
+$("yOff").onclick = () => act(() => post("/api/screen", { off: true }));
+document.querySelectorAll("[data-pi]").forEach(b => b.onclick = async () => {
+  const w = b.dataset.pi;
+  const [t, x, y] = w === "app" ? ["Restart the app?", "The screen reloads in about 10 seconds.", "Restart"]
+    : w === "pi" ? ["Reboot the Pi?", "About a minute. The screen comes back by itself.", "Reboot"]
+    : ["Shut down the Pi?", "Wait for the green light to stop before unplugging. Starting it again needs the power cycled.", "Shut down"];
+  if (!await confirmBox(t, x, y, w !== "app")) return;
+  const r = await act(() => post("/api/system/restart", { what: w }));
+  if (r) toast(w === "off" ? "Shutting down…" : "Restarting…", true);
+});
+$("yNet").onclick = () => go("network");
+
+/* ---------------- network ---------------- */
+let NET = null;
+async function loadNet() {
+  try { NET = await api("/api/network/detail"); } catch (_) {}
+  renderNet();
+}
+function renderNet() {
+  if (!NET || page !== "network") return;
+  const n = NET.now;
+  $("nSsid").textContent = NET.connection ? (n?.ssid || NET.connection) : NET.hotspot ? `Hotspot ${NET.hotspot}` : "Not connected";
+  const rows = [];
+  if (n) rows.push(["Wi-Fi", `${n.band} · channel ${n.chan} · signal ${n.signal}`]);
+  rows.push(["Address", NET.ip || "–"]);
+  rows.push(["Access point", NET.lock ? `locked to ${NET.lock}` : "any (the mesh picks)"]);
+  rows.push(["Hotspot", NET.hotspot ? `on · ${NET.hotspot}` : "off · starts by itself if the network drops"]);
+  if (NET.ethernet) rows.push(["Ethernet", NET.ethernet === true ? "connected" : NET.ethernet]);
+  $("nKv").innerHTML = rows.map(([k, v]) => `<span>${k}</span><span>${esc(v)}</span>`).join("");
+  const busy = NET.change?.busy, local = NET.local;
+  $("nLocked").className = "btn" + (NET.lock ? " sel" : ""); $("nAny").className = "btn" + (NET.connection && !NET.lock ? " sel" : "");
+  ["nLocked", "nAny", "nStrong", "nReconnect", "nHidden"].forEach(id => $(id).disabled = busy || !local);
+  const c = NET.change || {};
+  $("nChange").textContent = !local ? "Network changes only from the machine's own screen." : c.busy ? c.msg : c.msg && Date.now() / 1000 - c.t < 600 ? c.msg : "";
+  $("nChange").style.color = c.ok === false ? "var(--red)" : c.ok ? "var(--green)" : "var(--dim)";
+}
+async function netAct(path, body, text) {
+  const r = await act(() => post(path, body), text);
+  if (r) setTimeout(loadNet, 500);
+}
+$("nBack").onclick = () => go("system");
+$("nLocked").onclick = () => netAct("/api/network/lock", { mode: "locked" }, "Locked to this access point");
+$("nAny").onclick = () => netAct("/api/network/lock", { mode: "any" }, "Any access point — reconnecting");
+$("nStrong").onclick = () => netAct("/api/network/lock", { mode: "strongest" }, "Locking to the strongest — reconnecting");
+$("nReconnect").onclick = () => netAct("/api/network/reconnect", {}, "Reconnecting Wi-Fi");
+async function scanNets() {
+  $("nList").innerHTML = `<span class="dim">scanning…</span>`;
+  try {
+    const j = await api("/api/network/scan");
+    const bars = s => s >= 70 ? "▂▄▆█" : s >= 50 ? "▂▄▆" : s >= 30 ? "▂▄" : "▂";
+    $("nList").innerHTML = (j.networks || []).map(n =>
+      `<button class="netrow${n.in_use ? " cur" : ""}" data-s="${esc(n.ssid)}" data-open="${n.security === "open" ? 1 : ""}">
+        <b class="grow">${esc(n.ssid)}</b><span class="dim" style="font-size:13px">${n.in_use ? "connected · " : ""}${n.security === "open" ? "open" : "secured"}</span>
+        <span class="bars">${bars(n.signal)}</span></button>`).join("") || `<span class="dim">no networks found</span>`;
+    $("nList").querySelectorAll("button").forEach(b => b.onclick = () => {
+      if (b.classList.contains("cur")) return;
+      openJoin(b.dataset.s, !!b.dataset.open);
+    });
+  } catch (e) { $("nList").innerHTML = `<span class="dim">${esc(e.message)}</span>`; }
+}
+$("nScan").onclick = scanNets;
+$("nHidden").onclick = () => openJoin(null, false);
+
+/* join + on-screen keyboard */
+let JN = { ssid: "", pass: "", field: "pass", hidden: false, show: false, shift: false, sym: false, open: false };
+function openJoin(ssid, open) {
+  JN = { ssid: ssid || "", pass: "", field: ssid ? "pass" : "ssid", hidden: !ssid, show: false, shift: false, sym: false, open };
+  go("join"); renderJoin();
+}
+const KB = { a: ["1234567890", "qwertyuiop", "asdfghjkl", "zxcvbnm"], s: ["1234567890", "!@#$%^&*()", "-_=+[]{};:", "'\",.?/\\|~`"] };
+function renderJoin() {
+  $("jTitle").textContent = JN.hidden ? "Join a hidden network" : `Join ${JN.ssid}`;
+  $("jNote").textContent = `If the Pi can't join within a minute, it goes back to ${NET?.connection || "the previous network"}.`;
+  $("jSsidRow").style.display = JN.hidden ? "" : "none";
+  const fld = (el, val, focus, mask) => {
+    el.className = "field grow" + (focus ? " focus" : "");
+    el.innerHTML = `<span>${esc(mask ? "•".repeat(val.length) : val)}</span>${focus ? '<i class="caret"></i>' : ""}`;
+  };
+  fld($("jSsid"), JN.ssid, JN.field === "ssid", false);
+  fld($("jPass"), JN.pass, JN.field === "pass", !JN.show);
+  $("jHide").textContent = JN.show ? "Hide" : "Show";
+  const rows = JN.sym ? KB.s : KB.a;
+  const key = (k, w, lab) => `<button data-k="${esc(k)}" style="${w ? `min-width:${w}px` : ""}">${lab || esc(JN.shift && !JN.sym ? k.toUpperCase() : k)}</button>`;
+  $("kbd").innerHTML = rows.map((r, i) => `<div class="kr">${i === 3 ? key("⇧", 90, JN.sym ? "" : (JN.shift ? "⇪" : "⇧")) : ""}${[...r].map(c => key(c)).join("")}${i === 3 ? key("⌫", 90, "⌫") : ""}</div>`).join("") +
+    `<div class="kr">${key("?123", 110, JN.sym ? "abc" : "?123")}${key("-")}${key(" ", 420, "space")}${key("_")}${key("⏎", 140, "Join")}</div>`;
+  $("kbd").querySelectorAll("button").forEach(b => b.onclick = () => typeKey(b.dataset.k));
+}
+function typeKey(k) {
+  const f = JN.field;
+  if (k === "⌫") JN[f] = JN[f].slice(0, -1);
+  else if (k === "⇧") { if (!JN.sym) JN.shift = !JN.shift; }
+  else if (k === "?123") { JN.sym = !JN.sym; JN.shift = false; }
+  else if (k === "⏎") return doJoin();
+  else { JN[f] += JN.shift && !JN.sym ? k.toUpperCase() : k; JN.shift = false; }
+  renderJoin();
+}
+$("jSsid").onclick = () => { JN.field = "ssid"; renderJoin(); };
+$("jPass").onclick = () => { JN.field = "pass"; renderJoin(); };
+$("jHide").onclick = () => { JN.show = !JN.show; renderJoin(); };
+$("jCancel").onclick = () => go("network");
+$("jJoin").onclick = doJoin;
+async function doJoin() {
+  if (!JN.ssid) return toast("Type the network's name first", false);
+  if (!JN.open && JN.pass.length < 8 && !JN.hidden) return toast("Wi-Fi passwords are at least 8 characters", false);
+  const r = await act(() => post("/api/network/join", { ssid: JN.ssid, password: JN.pass }),
+    `Joining ${JN.ssid} — back to the previous network if it doesn't work`);
+  if (r) { JN.pass = ""; go("network"); }
+}
+
+/* ---------------- sleep shield ---------------- */
+// While the screen sleeps, a black shield covers the page: the tap that
+// wakes it lands here and presses nothing.
+let shieldUp = false;
+function setShield(on) { shieldUp = on; $("shield").style.display = on ? "block" : "none"; }
+$("shield").onpointerdown = e => { e.preventDefault(); e.stopPropagation(); setTimeout(() => setShield(false), 50); };
+$("shield").onclick = e => { e.preventDefault(); e.stopPropagation(); };
+
+/* ---------------- polling ---------------- */
+let tickN = 0, lastSorted = -1, lastFull = 0;
+async function tick() {
+  tickN++;
+  try {
+    RUN = await api("/api/run/status?brief=1");
+    const now = Date.now();
+    // running: follow each new case; after a reload: fetch the last one once
+    if ((RUN.running && RUN.sorted !== lastSorted && now - lastFull > 1500)
+        || (!RUN.running && !LAST && RUN.sorted && lastSorted !== RUN.sorted)) {
+      lastFull = now;
+      const full = await api("/api/run/status");
+      const rec = full.recent || [];
+      if (rec.length) LAST = rec[rec.length - 1];
+      lastSorted = RUN.sorted;
+    }
+    // the app restarted (no run behind it): don't keep showing a case
+    // from a run it no longer has
+    if (!RUN.run_id && !RUN.running && LAST) { LAST = null; lastSorted = null; }
+  } catch (_) {}
+  try {
+    const s = await api("/api/screen");
+    SCR = s;
+    if (s.asleep && !shieldUp) setShield(true);
+    // awake for a while (woken from the app, or a kiosk restart): the
+    // waking tap has long landed, nothing left for the shield to catch
+    if (!s.asleep && shieldUp && (s.woke_s == null || s.woke_s > 2)) setShield(false);
+  } catch (_) {}
+  if (tickN % 2 === 0 || !FD) { try { FD = await api("/api/feeder"); } catch (_) { FD = null; } }
+  if (tickN % 4 === 0 || !MS) { await loadMachine(); try { PWR = (await api("/api/power")).on; } catch (_) {} }
+  if (tickN % 30 === 0 || !ST) loadState();
+  if (page === "machine" && tickN % 3 === 0) loadDoors();
+  if (page === "network" && tickN % 3 === 0) loadNet();
+  if (page === "system" && tickN % 10 === 0) loadInfo();
+  if (page === "capture" && tickN % 2 === 0) pollDetect();
+  captureWatch();
+  render();
+}
+/* ---------------- run pause / no-brass ask / feeder jam ---------------- */
+const PAUSE_TEXT = {
+  manual: ["Paused", "The feeder is stopped, the wheel is parked and the doors are closed."],
+  tube_jam: ["Tube jam", "Cases stopped reaching the wheel, but the feeder's beam shows the tube is full. A case is probably stuck in the drop tube. Clear it, then Resume."],
+  feeder_jam: ["Feeder jammed", "The feeder plate stalled and couldn't clear itself. Clear the bowl, then Resume — the feeder restarts with the run."] };
+function renderRunOverlay() {
+  const r = RUN, ov = $("runOv");
+  let html = "";
+  if (r.running && r.prompt && r.prompt.kind === "no_brass") {
+    html = `<div class="count">${Math.ceil(r.prompt.left_s || 0)}</div>
+      <h1>No brass arriving</h1>
+      <p>Finishing the run in ${Math.ceil(r.prompt.left_s || 0)} seconds. Out of brass, or is a case stuck in the feed tube?<br>
+      If a case is stuck, clear it and press Resume. A case arriving closes this by itself and sorting carries on.</p>
+      <div class="row"><button class="btn go" id="ovResume">Resume</button><button class="btn" id="ovFinish">Finish run now</button></div>`;
+  } else if (r.running && r.paused) {
+    const [t, x] = PAUSE_TEXT[r.paused.reason] || ["Paused", ""];
+    html = `<h1 style="color:${r.paused.reason === "manual" ? "var(--text)" : "var(--amber)"}">${t}</h1><p>${x}</p>
+      <p>The run stays open: ${r.sorted || 0} cases sorted so far.</p>
+      <div class="row"><button class="btn go" id="ovResume">Resume</button><button class="btn stop" id="ovStop">Finish run</button></div>`;
+  }
+  ov.style.display = html ? "flex" : "none";
+  // the countdown changes every tick: only rebind when the shape changes
+  const shape = html.replace(/\d+/g, "#");
+  if (ov.dataset.s !== shape) {
+    ov.dataset.s = shape; $("runOvBox").innerHTML = html;
+    if ($("ovResume")) $("ovResume").onclick = () => act(() => r.prompt ? post("/api/run/prompt", { action: "resume" }) : post("/api/run/resume"));
+    if ($("ovFinish")) $("ovFinish").onclick = () => act(() => post("/api/run/prompt", { action: "finish" }));
+    if ($("ovStop")) $("ovStop").onclick = () => act(() => post("/api/run/finish"), "Finishing — sorting what's left and clearing the wheel");
+  } else if (html) {
+    const c = $("runOvBox").querySelector(".count"); if (c) c.textContent = Math.ceil(r.prompt.left_s || 0);
+    const p = $("runOvBox").querySelector("p"); if (p && r.prompt) p.innerHTML = p.innerHTML.replace(/run in \d+ seconds/, `run in ${Math.ceil(r.prompt.left_s || 0)} seconds`);
+  }
+}
+// a stalled feeder outside a run pause: say so wherever the screen is
+let fdJamSeen = 0;
+async function checkFeederJam() {
+  if (!FD || FD.state !== "FAULT" || RUN.running || fdJamSeen > Date.now()) return;
+  fdJamSeen = Date.now() + 3600e3;      // one popup per jam
+  const ok = await confirmBox("Feeder jammed", "The feeder plate stalled and couldn't clear itself. Clear the bowl, then restart it.", "Clear and restart feeder", false, "Stop feeder");
+  await feeder(ok ? { clear: true, run: true } : { clear: true, run: false });
+  fdJamSeen = 0;
+}
+
+function render() {
+  renderRunOverlay();
+  checkFeederJam();
+  renderHeader();
+  if (page === "sort") renderSort();
+  if (page === "bin") {/* rendered on change */}
+  if (page === "machine") renderMachine();
+  if (page === "capture") renderCapture();
+  if (page === "stats") renderStats();
+  if (page === "system") renderSystem();
+  if (page === "network") renderNet();
+}
+document.addEventListener("contextmenu", e => e.preventDefault());
+go(["capture", "rejects", "stats", "machine", "system", "network"].includes(location.hash.slice(1))
+   ? location.hash.slice(1) : "sort");
+loadState(); tick();
+setInterval(tick, 1000);
+</script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 [project]
 name = "sortiq"
-version = "1.3.1"
+version = "1.6.0"
 requires-python = "==3.12.*"   # TensorFlow wheels lag new Pythons; keep pinned
 dependencies = [
     "tensorflow>=2.16",

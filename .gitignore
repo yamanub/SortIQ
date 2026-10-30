@@ -3,16 +3,17 @@ __pycache__/
 *.pyc
 .venv/
 
-# Regenerable / local artifacts — not source.
-# data/: synth is regenerable; real photos are the user's to back up
+# Local data, not source.
+# data/: the photos are the user's own, backed up with the app's export
 # models/: retrain via the Train flow or use the app's export bundle
 # runs/: per-run decision logs and reject images
+# gpu_jobs/: the trainer's GPU job folders
 data/
 models/
 runs/
+gpu_jobs/
 
-# Scratch
-_t.png
+# Build output and scratch
 *.zip
-_*.png
 *.log
+firmware/**/.pio/

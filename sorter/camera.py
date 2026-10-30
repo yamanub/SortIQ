@@ -40,7 +40,15 @@ def auto_exposure_value(on):
 def apply_camera_controls(cap, controls):
     """Apply saved {name: value} controls; returns {name: actual_value_now}."""
     applied = {}
-    for name, value in (controls or {}).items():
+    # order matters on a UVC module: a manual value written while its auto
+    # is on is dropped by the driver, and a module fresh from a power cycle
+    # boots in auto. So: autos being switched OFF first, then the manual
+    # values, then autos being switched ON — never dict insertion order.
+    autos = ("auto_exposure", "white_balance_auto")
+    def rank(kv):
+        name, value = kv
+        return 0 if name in autos and not value else 2 if name in autos else 1
+    for name, value in sorted((controls or {}).items(), key=rank):
         prop = CAMERA_PROPS.get(name)
         if prop is None:
             continue

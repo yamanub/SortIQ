@@ -54,6 +54,13 @@ def main():
                     help="eval-pass batch; drop to 8-16 on an 8GB GPU")
     ap.add_argument("--eval-only", default=None, metavar="CKPT",
                     help="skip training, evaluate a saved embedder .keras")
+    ap.add_argument("--split", default="random", choices=["random", "index"],
+                    help="which images become held-out queries: 'random' "
+                         "(seeded shuffle, the historical bench) or 'index' "
+                         "(the NEWEST 20%% of each class by capture index — "
+                         "a session the model never saw; same-case re-photos "
+                         "and same-session lighting cannot leak into the "
+                         "score, so this is the honest cross-session number)")
     ap.add_argument("--outlier-exposure", action="store_true",
                     help="the stranger lesson: half of each sub-floor "
                          "class (3-9 images) trains with a repulsion "
@@ -97,7 +104,14 @@ def main():
     files = {c: sorted((crops / c).glob("*.png")) + sorted((crops / c).glob("*.jpg"))
              for c in counts}
     for c in files:
-        rng.shuffle(files[c])
+        if args.split == "index":
+            # crops are numbered in capture order (indices are stable —
+            # moves and deletes never renumber), so the highest indices
+            # are the latest session. Put them FIRST: the query slice
+            # below takes the head of the list.
+            files[c].sort(key=lambda p: p.name, reverse=True)
+        else:
+            rng.shuffle(files[c])
 
     train_paths, train_y = [], []
     queries = []                       # (path, true_class, tier)
@@ -315,7 +329,7 @@ def main():
                      "runner": classes[top2_i[qi]], "runner_sim": round(s2, 4),
                      "margin": round(s1 - s2, 4)})
 
-    rep = {"tag": args.tag, "backbone": args.backbone,
+    rep = {"tag": args.tag, "backbone": args.backbone, "split": args.split,
            "trained_classes": n_cls, "holdout": holdout,
            "gallery_per_class": args.gallery, "epochs": args.epochs,
            "ft_epochs": args.ft_epochs, "img_size": size,

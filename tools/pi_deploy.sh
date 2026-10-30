@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Deploy SortIQ to a Raspberry Pi from your workstation, over SSH.
-# The repo is private, so nothing is cloned on the Pi — the code is rsynced
+# Nothing is cloned on the Pi — the code is rsynced
 # from this machine and the Pi never holds any credentials.
 #
 #   Usage:   tools/pi_deploy.sh [user@host]      (default: pisortiq@pisortiq.local)
@@ -18,9 +18,9 @@ TARGET="${1:-pisortiq@pisortiq.local}"
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 
 # ---- pre-flight: the script needs passwordless SSH and passwordless sudo ----
-# (field-reported #4/#5: a Pi user created with a password, or by adduser,
-# has neither — and the failures mid-script are cryptic. Check both up
-# front and say exactly what to do.)
+# (a Pi user created with a password, or by adduser, has neither, and the
+# failures mid-script are cryptic. Check both up front and say exactly
+# what to do.)
 echo ">> checking SSH access to $TARGET"
 if ! ssh -o BatchMode=yes -o ConnectTimeout=8 "$TARGET" true 2>/dev/null; then
   HOST="${TARGET#*@}"
@@ -105,7 +105,7 @@ if ! .venv/bin/pip install -q ai-edge-litert 2>/dev/null; then
   .venv/bin/pip install -q "numpy<2" tflite-runtime
 fi
 
-# the dev-box config ships with a Windows COM port; point it at the Uno
+# a config copied from a PC carries a Windows COM port; point it at the Uno
 .venv/bin/python - <<'PY'
 import json, pathlib
 p = pathlib.Path("config.json")
@@ -136,8 +136,19 @@ sudo systemctl enable --now sortiq >/dev/null 2>&1
 sudo systemctl restart sortiq
 sleep 3
 systemctl is-active sortiq | sed 's/^/   service: /'
-echo "   board:  $(ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null | tr '\n' ' ' || true)$( [ -e /dev/ttyUSB0 ] || [ -e /dev/ttyACM0 ] || echo 'not detected (plug in the CS7.2 USB)')"
 echo "   camera: $( [ -e /dev/video0 ] && echo /dev/video0 || echo 'not detected (plug in the camera USB)')"
 REMOTE
 
+# the Pi's own setup for the board link, LED ring, I2C and logs: idempotent,
+# and harmless on a CS7.2 (which uses none of those pins)
+echo ">> Pi host setup"
+SETUP_OUT="$(ssh "$TARGET" 'bash ~/SortIQ/tools/pi_host_setup.sh')"
+echo "$SETUP_OUT" | grep -v '^REBOOT_NEEDED$' || true
+if echo "$SETUP_OUT" | grep -qx REBOOT_NEEDED; then
+  echo ">> rebooting the Pi to apply (back in about a minute)"
+  ssh "$TARGET" 'sudo systemctl reboot' >/dev/null 2>&1 || true
+fi
+
 echo ">> done — open http://${TARGET#*@}:5000"
+echo "   Power the machine on: the app finds its board by itself (the Pi's"
+echo "   header UART for an SKR Pico build, USB for a CS7.2) and sets it up."

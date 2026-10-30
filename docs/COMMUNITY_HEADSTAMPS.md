@@ -1,6 +1,6 @@
 # Community headstamp names (9mm)
 
-The 199 class names from the community 9mm model (July 2026). Use
+The 199 class names from the community 9mm model snapshot. Use
 this as the naming reference when a stamp lands in the set-aside
 tray: if you can read it, its community name is probably below —
 matching it keeps this dataset compatible with community models.

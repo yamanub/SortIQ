@@ -7,6 +7,8 @@
   <a href="#d-floors">Acceptance &amp; floors</a>
   <a href="#d-testing">Testing &amp; validation</a>
   <a href="#d-pi">Moving to the Pi</a>
+  <a href="#d-screen">The touchscreen</a>
+  <a href="#d-pico">Pico machines</a>
   <a href="#d-faq">Troubleshooting</a>
 </aside>
 <article class="docsBody">
@@ -22,14 +24,12 @@ the machine would rather make you re-run a case than put it in the wrong bin.
 <table class="docsTable">
 <tr><th>Part</th><th>Job</th><th>Where it runs</th></tr>
 <tr><td><b>This software</b> (Python)</td><td>Camera, AI models, decisions, this web page</td><td>The machine's Raspberry Pi (and any PC, for training or development)</td></tr>
-<tr><td><b>CS7.2 board</b> (Arduino Uno, TMC2209 drivers)</td><td>Motors, sensors, light ring, timing</td><td>On the machine, over USB serial — stock firmware or the SortIQ fork; a faithful simulator stands in when no board is connected</td></tr>
-<tr><td><b>Mechanics</b></td><td>Hopper, feed wheel, imaging nest, sorter arm, bins</td><td>Seth Hahner's CS7.2 design</td></tr>
+<tr><td><b>Sorter board</b></td><td>Motors, sensors, timing</td><td>On the machine: a <b>CS7.2</b> (Arduino Uno, TMC2209 drivers) over USB serial running stock firmware or the SortIQ fork, or an <b>SKR Pico</b> over the Pi's UART running SortIQ-Pico (sort arm) or PicoServo (carousel) — see <a href="#d-pico">Pico machines</a>. A virtual machine stands in when no board is connected</td></tr>
+<tr><td><b>Mechanics</b></td><td>Hopper, feed wheel, imaging nest, then a sorter arm and bins — or a 12-station carousel with gate doors</td><td>Seth Hahner's CS7.2 design, and the SortIQ carousel</td></tr>
 </table>
 <p class="docsNote">
-Crimp detection (sorting crimped vs non-crimped primer pockets) was part of
-an earlier design and has been <b>retired for now</b> — flat lighting and
-webcam resolution couldn't resolve it reliably. Sorting is by headstamp only:
-one bin per headstamp, plus unmatched.
+Sorting is by headstamp only: one bin per headstamp, plus unmatched.
+SortIQ does not detect crimped primer pockets.
 </p>
 
 <h1 id="d-howitworks">How a case gets sorted</h1>
@@ -63,9 +63,9 @@ one bin per headstamp, plus unmatched.
 
 <h2>Why matching beats guessing</h2>
 <p>
-Older designs used a classifier that <i>had</i> to pick one of the classes
-it was trained on — a stamp it had never seen would still come out as
-somebody's name, often confidently. The embedding+gallery design is
+A plain classifier <i>has</i> to pick one of the classes it was trained
+on — a stamp it has never seen still comes out as somebody's name, often
+confidently. The embedding+gallery design is
 <b>open-set</b>: a stranger doesn't resemble anyone's exemplars strongly
 enough to clear the gates, so it lands in UNMATCHED instead of a bin. And
 adding a new headstamp needs <b>no retraining</b> — file 3+ photos and the
@@ -89,18 +89,20 @@ rate that costs.
 <tr><td><code>webui/server.py</code></td><td>The application: this web page, the machine loop (case seated → photo → classify → sort command → repeat), and every API both boxes talk over</td></tr>
 <tr><td><code>sorter/embed_classifier.py</code></td><td>The decider — embedding match against the gallery, plus every gate (class bar, runner-up margin, rotation probe)</td></tr>
 <tr><td><code>sorter/imaging.py</code></td><td>Finds the case rim (circle fit on the strongest edge), builds the headstamp crop, measures sharpness</td></tr>
-<tr><td><code>sorter/cs72.py</code> + <code>sorter/cs72_sim.py</code></td><td>The CS7.2 board's serial protocol adapter, and an event-level simulator ported from the firmware — the Machine tab connects to either</td></tr>
+<tr><td><code>sorter/cs72.py</code> + <code>sorter/esp32_sim.py</code></td><td>The board's serial protocol adapter (CS7.2 stock and fork, SortIQ-Pico, PicoServo), and the virtual machine the Machine tab's simulator connects to</td></tr>
 <tr><td><code>sorter/synth.py</code></td><td>Draws artificial case heads so the whole pipeline can be exercised with zero hardware</td></tr>
 <tr><td><code>tools/</code></td><td>The training pipeline (teacher training, student distillation at 480 px, gallery build) — driven from the Train page, runs on the trainer PC, never the Pi</td></tr>
 <tr><td><code>config.json</code> + the profile's <code>model.json</code></td><td>Headstamps, bin map, floors, gallery pins — edited from the UI</td></tr>
 </table>
 
-<h2>The serial protocol (Pi ↔ CS7.2 board)</h2>
+<h2>The machine protocol (app ↔ board adapter)</h2>
 <table class="docsTable">
 <tr><th>Direction</th><th>Message</th><th>Meaning</th></tr>
 <tr><td>controller → app</td><td><code>SEATED</code></td><td>a case is in the imaging nest, ready to photograph</td></tr>
-<tr><td>app → controller</td><td><code>LIGHT:A</code> / <code>LIGHT:OFF</code></td><td>switch the ring light</td></tr>
 <tr><td>app → controller</td><td><code>SORT:&lt;n&gt;</code></td><td>rotate the sort disc to bin <i>n</i> and drop the case</td></tr>
+<tr><td>app → controller</td><td><code>PFEED</code></td><td>start the next feed right after the photo, while the app classifies</td></tr>
+<tr><td>app → controller</td><td><code>PSLOT:&lt;n&gt;</code></td><td>the bin for the case in flight, sent as soon as the model decides</td></tr>
+<tr><td>app → controller</td><td><code>FSORT:&lt;n&gt;</code></td><td>sort the case in the nest to bin <i>n</i> and force-feed the next one (end of the hopper)</td></tr>
 <tr><td>controller → app</td><td><code>DONE</code></td><td>drop finished, feeding the next case</td></tr>
 <tr><td>controller → app</td><td><code>JAM</code></td><td>feeder fault — app responds with <code>HOME</code></td></tr>
 <tr><td>app → controller</td><td><code>HOME</code></td><td>re-home the feeder and sort disc</td></tr>
@@ -110,9 +112,12 @@ The <b>Machine</b> tab's Console drawer is a live console for this
 protocol: connect to the real board (or the simulator), press the
 bring-up buttons or type raw lines, and watch both directions of
 traffic. These are the app-side message
-names; the CS7.2 adapter translates them to the board's own commands
-(<code>&lt;n&gt;</code>, <code>xf:</code>, <code>homesorter</code>, …) on the
-wire.
+names; the adapter translates them to the board's own commands
+(<code>&lt;n&gt;</code>, <code>pf</code>, <code>ps:</code>, <code>xf:</code>,
+<code>homesorter</code>, …) on the wire, for every board. A carousel with
+a case feeder also carries <code>feeder:</code> lines on the same link; the
+adapter routes them to the feeder, never to the run
+(<code>firmware/SortIQ_PicoServo/README.md</code> lists them).
 </p>
 
 <h1 id="d-training">Growing the dataset — doing it right</h1>
@@ -121,7 +126,9 @@ wire.
 the Sort page's bin cards assign each physical bin its headstamps.
 Exactly one bin is <b>UNMATCHED</b> — the catch-all for rejects; stamps
 without a bin of their own ride it too, unless you assign an optional
-<b>OVERFLOW</b> bin to catch them instead. A class is live in
+<b>OVERFLOW</b> bin to catch them instead. (On the servo carousel both
+tokens sit on the open <b>Bin 9</b> pocket by default and can be moved
+onto a gated bin; the × on the moved pill sends one back.) A class is live in
 the <b>gallery</b> — and therefore sortable — from <b>3 photos</b>; it joins
 the periodic <b>training pass</b> (which sharpens the whole network) at 10+.
 </p>
@@ -129,7 +136,7 @@ the periodic <b>training pass</b> (which sharpens the whole network) at 10+.
 <h2>Rule 1 — photograph like the machine will see</h2>
 <ul>
 <li>Fix the camera, the case position, and the lighting, and never touch them again mid-dataset.</li>
-<li><b>Zoom and pan onto the headstamp first:</b> push the Collect tab's digital <b>Zoom</b> slider up until the headstamp covers the majority of the frame — a small stamp lost in a wide shot starves the model of pixels — then use <b>Pan left/right</b> and <b>Pan up/down</b> to re-center the primer (pan needs Zoom above 1× to have anything to work with).</li>
+<li><b>Zoom and pan onto the headstamp first:</b> push the <b>Zoom</b> slider in Collect › Camera setup up until the headstamp covers the majority of the frame — a small stamp lost in a wide shot starves the model of pixels — then use <b>Pan left/right</b> and <b>Pan up/down</b> to re-center the primer (pan needs Zoom above 1× to have anything to work with).</li>
 <li>Judge quality in the live crop preview: if you can read the stamp easily, the model can learn it. Dark, etched-looking letters on bright metal beat washed-out glare every time.</li>
 <li>Set the <b>light ring brightness</b> so the stamped letters read as crisp dark marks — not blown out by glare, not lost in shadow. Diffuse the light for reflective nickel cases — point light creates glare that burns out exactly the letters you need.</li>
 </ul>
@@ -154,7 +161,9 @@ Two ways to collect: the <b>chained capture loop</b> (Collect tab — feed,
 photograph, one keypress per case, with the model pre-selecting labels) and
 <b>batch capture</b> (run the whole hopper at machine speed, then confirm
 grouped cards — whole groups file with one click, and any case can be
-removed from its group first). Variety beats volume — many different
+removed from its group first). For a hopper that is all one headstamp,
+set the hopper to <b>One class</b>: the machine files the cases that look
+like that class and holds the rest for you to check. Variety beats volume — many different
 physical cases (worn, tarnished, shiny) beat many shots of one case.
 </p>
 
@@ -264,10 +273,10 @@ DHCP alongside (or instead of) Wi-Fi.</li>
 scans for nearby networks, and joins or forgets them (it drives
 NetworkManager, standard on Raspberry Pi OS). Joining a new network drops
 the old one, so do it while connected over ethernet when you can.</li>
-<li><i>Optional, for a machine that travels:</i> an access-point fallback
-(the Pi opens its own <code>SortIQ-Setup</code> hotspot when it can't
-find a known network) can be added with the Debian
-<code>comitup</code> package — an OS-level install, independent of this app.</li>
+<li><b>No known network in range:</b> the Pi raises its own hotspot,
+<b>SortIQ-&lt;hostname&gt;</b> (password <code>sortbrass</code>). Join it,
+open <code>http://10.42.0.1:5000</code>, and use the network dialog to put
+the machine on your Wi-Fi; the hotspot stands down once it joins.</li>
 </ol>
 
 <h2>More than one machine</h2>
@@ -275,7 +284,7 @@ find a known network) can be added with the Debian
 Every machine answers at <code>&lt;its-hostname&gt;.local:5000</code> —
 hostnames are set at flash time and must be <b>unique</b> (two Pis
 sharing one makes the name flip between them). Click the name in the
-page header to label each machine ("9mm Master"); the label shows in
+page header to label each machine ("Line 1"); the label shows in
 the header, tab title, and the trainer's <b>Find machine…</b> list.
 The load-bearing rule: give each machine's <b>model a unique name</b>
 (<code>9mm/Master</code>, <code>9mm/Secondary</code>) — the trainer
@@ -295,23 +304,212 @@ without touching the Pi's settings or collected images:
 The full walkthrough — flashing, deploying, and the first-connect
 bring-up checklist — is in <code>docs/PI_SETUP.md</code>. Models and
 config come along unchanged (nothing is retrained), and training stays
-on the PC: collect on the Pi, export the dataset backup, train, redeploy.
+on the PC: <b>Train models…</b> on the machine's Train tab syncs the
+dataset to the trainer, trains there, and installs the result back.
+</p>
+
+<h2 id="d-screen">The touchscreen</h2>
+<p>
+An optional 7" HDMI touchscreen (1024 × 600) on the machine's post runs
+the everyday work from the machine itself. Its parts, printed mount and
+wiring are in <code>hardware/touchscreen</code> in the GitHub repo:
+HDMI to the Pi's <b>HDMI 0</b> port (next to the USB-C power socket),
+and one micro-USB lead to a Pi USB port for touch and power. Plug it in
+<b>before</b> running <code>tools/pi_deploy.sh</code> and the installer
+sets it up: a kiosk that opens the touchscreen page at every boot, the
+screen's mode, and a hidden mouse pointer. Adding one to a machine that
+is already set up: plug it in and run the installer again. No driver or
+<code>config.txt</code> changes are needed.
+</p>
+<ul>
+<li><b>Sort</b>: the bins with live counts, the last case, Start sorting,
+Pause and Stop. Press and hold a bin to change its classes. The case
+feeder's strip runs the feeder (pick a speed, Go / Stop).</li>
+<li><b>Capture</b>: Single (feed one, pick the class, save) or Batch,
+a whole hopper as a mixed lot or one class.</li>
+<li><b>Review</b>: the newest run's rejects and sorted cases, filed into
+the dataset with a tap.</li>
+<li><b>Stats</b>: the thinnest classes, the last run, Rebuild gallery and
+Copy to USB.</li>
+<li><b>Machine</b>: home, test feed, the sort doors, relay, board power
+and the case feeder.</li>
+<li><b>System</b> (the gear): board power, screen sleep, machine info,
+restart or shut down the Pi, and the Wi-Fi network.</li>
+</ul>
+<p>
+The screen sleeps after the idle time set on the System page, never
+during a run, and the tap that wakes it presses nothing. Pause, a tube
+jam or a feeder jam stops the run in place and says on the screen what to
+clear. When brass stops arriving, a countdown asks whether a case is
+stuck before the run finishes.
+</p>
+
+<h1 id="d-pico">The Pico machines — sort arm and carousel</h1>
+<p>
+The SKR Pico board runs two SortIQ machine designs under the same serial
+protocol the app has always spoken, so one app drives all four hardware
+configurations. The Machine tab's <b>Hardware</b> card detects which one is
+connected from the board's version reply — on every connect and again after
+any reboot — and shows only that hardware's settings.
+</p>
+<p>
+<b>Building one:</b> the carousel's renders, parts list and screw counts are
+in <code>hardware/carousel</code> in the GitHub repo, and the controller case
+that holds the Pi and the SKR Pico is in <code>hardware/pico-controller</code>.
+The optional touchscreen is in <code>hardware/touchscreen</code>
+(<a href="#d-screen">The touchscreen</a>).
+</p>
+<table class="docsTable">
+<tr><th></th><th>Sort arm (<code>SortIQ-Pico</code>)</th><th>Carousel (<code>SortIQ-PicoServo</code>)</th></tr>
+<tr><td>Routing</td><td>a stepper <b>sort arm</b> swings a chute over the bins</td><td>eight <b>servo gate doors</b> along a 12-station wheel; no sort arm</td></tr>
+<tr><td>Feed wheel</td><td>stepper on the X driver, tab opto on X-STOP</td><td>same stepper, geared to the wheel (25T pinion on a 72T ring gear, 9216 microsteps per turn); the wheel is grid-indexed from the tab opto</td></tr>
+<tr><td>Brass sensor</td><td colspan="2">WD-DET (GPIO 22), pull-up — HIGH = a case is staged</td></tr>
+<tr><td>Board link</td><td colspan="2">the Pi's header UART (<code>/dev/serial0</code>, 9600) on the board's TFT header — <b>not</b> USB; USB is only for flashing</td></tr>
+<tr><td>LED ring</td><td colspan="2">driven by the <b>Pi's GPIO 18</b> hardware PWM; the ring's MOSFET is powered from the board, so the ring is dark while the board is off</td></tr>
+<tr><td>Gate doors</td><td>—</td><td>PCA9685 on the <b>Pi's I²C bus</b> (SDA pin 3, SCL pin 5), servo rail from its own 5 V supply, common ground; the app drives the doors, the firmware never touches them</td></tr>
+<tr><td>Relay power</td><td colspan="2">optional IoT relay on the Pi's GPIO 25 switches the 24 V supply (Machine tab → Hardware: tick <b>Relay power</b>, then <b>Board power</b>)</td></tr>
+<tr><td>Case feeder</td><td>—</td><td>optional: the feeder motor on the <b>E</b> driver, its break-beam on <b>Z-STOP</b>, E0-DIAG jumper fitted, Z-DIAG removed; switched on from Machine → Hardware → <b>Case feeder</b></td></tr>
+<tr><td>Fans</td><td colspan="2">FAN1 and FAN2 cool the controller case, FAN3 is the camera fan; plain two-wire fans, full speed from boot, not controlled by the app</td></tr>
+</table>
+<p class="docsNote">
+<b>Sort arm wiring:</b> feed motor on <b>X</b> (step 11 / dir 10 / en 12),
+sort arm on <b>Y</b> (step 6 / dir 5 / en 7), feed homing opto on
+<b>X-STOP</b> (GPIO 4), sort homing opto on <b>Y-STOP</b> (GPIO 3), brass
+sensor on <b>WD-DET</b> (GPIO 22). Pull <b>both</b> the X and Y DIAG jumpers
+— the homing optos share the endstop inputs. The carousel uses the same
+harness with the Y motor and Y-STOP simply left empty (and, with a case
+feeder, its motor on E and beam on Z-STOP), so one loom fits
+either machine. The full pin tables are in the firmware READMEs
+(<code>firmware/SortIQ_Pico</code>, <code>firmware/SortIQ_PicoServo</code>).
+</p>
+<p>
+<b>Building one takes five steps</b>, and nothing needs setting up by hand
+afterwards (the full guide is <code>docs/PICO_MACHINE_SETUP.md</code>):
+</p>
+<ol>
+<li><b>Print the parts</b> from <code>hardware/carousel</code> and
+<code>hardware/pico-controller</code>.</li>
+<li><b>Build and wire it</b> from the wiring drawings and the Pi header table
+below.</li>
+<li><b>Set up the Pi:</b> Raspberry Pi OS Lite with the Imager, then
+<code>tools/pi_deploy.sh</code> from your computer. The installer also sets
+the Pi up for the SKR Pico (header UART, LED ring PWM, I²C, logs), and
+the touchscreen if one is plugged in, and reboots it.</li>
+<li><b>Flash the SKR Pico</b> with the image that ships in the repo: BOOT
+jumper on, board powered, <code>~/SortIQ/tools/flash_pico.sh carousel</code>
+(or <code>arm</code>) on the Pi, then take the jumper off.</li>
+<li><b>Power it up.</b> The app finds the board on the header UART,
+recognises which machine it is, and applies that build's reference
+settings, including the carousel's 9-slot layout with the open pocket.</li>
+</ol>
+<p>
+<b>Updating the board's firmware</b> needs no jumper:
+<code>~/SortIQ/tools/flash_pico.sh</code> asks the board to enter its
+bootloader over the link, flashes the image for the build this machine
+runs, and the app reconnects and sends every saved setting again. The
+board's logic runs off 24 V, not USB, so it must be powered to flash.
+</p>
+<p>
+<b>Moving a machine to another Pi:</b> run the installer against the new Pi,
+then copy <code>config.json</code> (machine and camera tuning, door pulses,
+relay flag, case feeder settings, screen sleep) and the profile's <code>model.json</code> (bins, families,
+imaging, floors) across and restart the app. Wheel steps and the feed homing
+offset also live on the board itself (EEPROM).
+</p>
+<h2 id="d-pico-wiring">SKR Pico wiring</h2>
+<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:14px; margin:10px 0 14px">
+<figure style="margin:0">
+<a href="/static/img/pico-wiring.png" target="_blank" rel="noopener"><img
+  src="/static/img/pico-wiring.png" alt="Carousel SKR Pico wiring: Pi link in
+  purple, feed motor and its homing opto in green, three fans in orange,
+  ring MOSFET power in yellow, case sensor on WD-DET in blue, its
+  proximity-switch jumper in lime, the optional case feeder in pink" style="display:block; width:100%; height:auto; background:#fff; border-radius:10px; padding:8px; box-sizing:border-box"></a>
+<figcaption style="font-size:12.5px; color:var(--dim); margin-top:6px">
+<b>Carousel</b> (SortIQ-PicoServo), with the optional case feeder in pink. Click to open full size.</figcaption>
+</figure>
+<figure style="margin:0">
+<a href="/static/img/pico-wiring-arm.png" target="_blank" rel="noopener"><img
+  src="/static/img/pico-wiring-arm.png" alt="Sort arm SKR Pico wiring: the
+  carousel's connections plus the arm motor on Y and its homing opto on
+  Y-STOP, in cyan" style="display:block; width:100%; height:auto; background:#fff; border-radius:10px; padding:8px; box-sizing:border-box"></a>
+<figcaption style="font-size:12.5px; color:var(--dim); margin-top:6px">
+<b>Sort arm</b> (SortIQ-Pico): the same loom plus the cyan Y motor and
+Y-STOP. Click to open full size.</figcaption>
+</figure>
+</div>
+<table class="docsTable">
+<tr><th>Colour</th><th>Header</th><th>Connects to</th></tr>
+<tr><td><b style="color:#b53fb5">Purple</b></td><td>TFT header (IO0 / IO1 / GND)</td><td>the Pi's UART: board TX to Pi RX (pin 10), board RX to Pi TX (pin 8), ground to ground. This is the board link (<code>/dev/serial0</code>). <b>Only those three wires:</b> the Pi runs from its own power supply, so the header's 5 V power wires must be removed or left unconnected</td></tr>
+<tr><td><b style="color:#12c244">Green</b></td><td><b>X</b> motor and <b>X-STOP</b> (GPIO 4)</td><td>the feed wheel stepper and its slotted homing opto; pull the X DIAG jumper</td></tr>
+<tr><td><b style="color:#2fc9c3">Cyan</b></td><td><b>Y</b> motor and <b>Y-STOP</b> (GPIO 3)</td><td><b>sort arm only:</b> the arm stepper and its slotted homing opto; pull the Y DIAG jumper</td></tr>
+<tr><td><b style="color:#f5812a">Orange</b></td><td>FAN1 (IO17), FAN2 (IO18), FAN3 (IO20)</td><td>FAN1 and FAN2 are the controller case fans, FAN3 is the camera fan. All three are plain two-wire fans at full speed from boot; the app does not control them</td></tr>
+<tr><td><b style="color:#d9c300">Yellow</b></td><td>E0-STOP, 5 V and GND only</td><td>power for the LED ring's MOSFET module; the ring's PWM comes from the Pi's GPIO 18, which is why the ring is dark whenever the board is off</td></tr>
+<tr><td><b style="color:#3f48cc">Blue</b></td><td>WD-DET (12/24V · GND · P_S)</td><td>the M8 inductive case sensor: brown to 12/24V, blue to GND, black to P_S; HIGH on GPIO 22 = a case is staged</td></tr>
+<tr><td><b style="color:#9fc800">Lime</b></td><td>“Proximity Switch” jumper (P_S · IO22)</td><td><b>fitted</b> — it carries WD-DET's conditioned output to GPIO 22. Without it the sensor's LED lights but the firmware never sees a case</td></tr>
+<tr><td><b style="color:#ff5ccd">Pink</b></td><td><b>E</b> motor, <b>Z-STOP</b> (GPIO 25), <b>E0-DIAG</b> jumper</td><td><b>carousel with a case feeder only:</b> the feeder motor on E; its break-beam receiver on Z-STOP (signal to IO25, plus 5 V and GND, with the emitter sharing 5 V and GND); the E0-DIAG jumper <b>fitted</b> for jam detection and the Z-DIAG jumper <b>removed</b>. The ring MOSFET keeps using only E0-STOP's 5 V and GND</td></tr>
+</table>
+<p class="docsNote">
+<b>Case sensor gotchas.</b> Remove the board's <b>NPN</b> jumper for a PNP
+sensor such as the LJ8A3 <code>-Z/BY</code>; fit it only for an NPN
+<code>-Z/BX</code>. And the sensor plugs into <b>WD-DET</b>, not the
+identical-looking <b>Laser</b> header next to it: the Laser header's signal
+pin is FAN3's output (IO20), so a sensor there lights up but never reaches
+GPIO 22.
+</p>
+<h2 id="d-pico-pi-pins">Pi header connections</h2>
+<p>
+Physical pin numbers on the Pi's 40-pin header, the same on a Pi 4 and a
+Pi 5. The Pi takes its power from its own supply only: nothing here feeds
+5 V into the Pi.
+</p>
+<table class="docsTable">
+<tr><th>Pi pin</th><th>Signal</th><th>Connects to</th></tr>
+<tr><td>8</td><td>GPIO 14 (TXD)</td><td>SKR Pico TFT header RX (IO1)</td></tr>
+<tr><td>10</td><td>GPIO 15 (RXD)</td><td>SKR Pico TFT header TX (IO0)</td></tr>
+<tr><td>6</td><td>GND</td><td>SKR Pico TFT header GND</td></tr>
+<tr><td>12</td><td>GPIO 18 (PWM)</td><td>LED ring MOSFET module, TRIG</td></tr>
+<tr><td>14</td><td>GND</td><td>LED ring MOSFET module, the ground beside TRIG</td></tr>
+<tr><td>3</td><td>GPIO 2 (SDA)</td><td>PCA9685 SDA (carousel only)</td></tr>
+<tr><td>5</td><td>GPIO 3 (SCL)</td><td>PCA9685 SCL (carousel only)</td></tr>
+<tr><td>1 or 17</td><td>3.3 V</td><td>PCA9685 VCC, logic power only (carousel only)</td></tr>
+<tr><td>9</td><td>GND</td><td>PCA9685 GND (carousel only)</td></tr>
+<tr><td>22</td><td>GPIO 25</td><td>IoT Relay <code>+</code> (optional)</td></tr>
+<tr><td>20</td><td>GND</td><td>IoT Relay <code>−</code> (optional)</td></tr>
+</table>
+<p class="docsNote">
+<b>Two supplies never touch the Pi's header.</b> The MOSFET module's
+<b>power</b> comes from the SKR Pico's E0-STOP header (5 V and GND); only its
+trigger pair goes to the Pi. The <b>servos' power</b> comes from the separate
+5 V supply into the PCA9685's <code>V+</code> terminals; tie that supply's
+negative to the PCA9685's ground so the servos share the Pi's reference —
+without the common ground they twitch or ignore commands.
 </p>
 
 <h1 id="d-faq">Troubleshooting</h1>
 <table class="docsTable">
 <tr><th>Symptom</th><th>Likely cause → fix</th></tr>
-<tr><td>“no embedding model installed” when starting a run or testing</td><td>The machine needs a model + gallery pair from the trainer → install one from the trainer's Train page</td></tr>
+<tr><td>“no embedding model installed” when starting a run or testing</td><td>The machine needs a model + gallery pair from the trainer → Train tab → <b>Train models…</b> (or install the community starter when offered)</td></tr>
 <tr><td>Everything goes to UNMATCHED (below its class bar)</td><td>Photos don't match dataset conditions (camera moved, lighting changed) or the classes involved are thin → more photos on the same rig, then Rebuild gallery; check the crop under “what the model saw”</td></tr>
 <tr><td>Everything rejected as blurry</td><td>Sharpness floor set above what the camera delivers → check the live sharpness readout, lower the floor. The light ring is powered by the sorter board — board off = dark, low readings.</td></tr>
+<tr><td>A run stops with “camera saw empty pockets”, or full pockets read as empty</td><td>The camera can't see the case heads clearly enough → clean the lens (debris collects on it), check the light ring; then <b>Collect › Camera setup › Case detection</b>: measure a dull case and an empty pocket and save the suggested cutoff. Cases the camera missed are in bin 9.</td></tr>
 <tr><td>The green circle misses the case</td><td>Busy background confusing rim detection → plain dark background, case filling more of the frame</td></tr>
 <tr><td>Wrong stamp in a bin</td><td>The one unacceptable fault, and almost always a data problem → refile the case from the run report, then run <b>Scan for mislabels</b> on both classes involved (a mislabeled image that became an exemplar attracts its real class), fix, Rebuild gallery</td></tr>
 <tr><td>Two stamps keep rejecting as “too close to call”</td><td>Honest behavior for look-alikes → more photos of both (especially the looks it rejects on), Rebuild gallery; a full retrain sharpens the pair further</td></tr>
-<tr><td>Mislabeled or bad training image</td><td>Dataset tab → View → click the thumbnail: review full-size, <b>Move</b> to the right class, or <b>Delete</b>. Moves are instant — the crop travels with the photo.</td></tr>
+<tr><td>Mislabeled or bad training image</td><td>Dataset tab → click the class card → click the photo: review full-size, <b>Move</b> to the right class, or <b>Delete</b>. Moves are instant — the crop travels with the photo.</td></tr>
 <tr><td>Suspect there are mislabels you haven't spotted</td><td>Dataset tab → <b>Scan for mislabels</b>: the decider re-reads every stored image and flags the ones it would <i>accept</i> as a different class. Those flags are nearly always real — <b>View</b>, then Move, then Rebuild gallery. Scan after big collection sessions.</td></tr>
 <tr><td>Class counts look inflated (same case photographed many times)</td><td>Dataset tab → <b>Scan for duplicates</b>: pixel-verifies repeats of the same physical case (matching scratch pattern at any rotation), sharpest marked keep. You confirm every group; nothing deletes automatically. Rebuild gallery afterwards.</td></tr>
 <tr><td>“Set aside” photos piling up</td><td>That's the tray on the Dataset page doing its job → name the clusters (see the community list) or discard them. The tray exists to be emptied.</td></tr>
-<tr><td>Camera not detected</td><td>Another app holds it → close it, restart the server; or change the camera index in Camera settings</td></tr>
+<tr><td>Camera not detected</td><td>Another app holds it → close it, restart the server; or change <b>Collect › Camera setup › Camera index</b></td></tr>
+<tr><td>Pico board reads OFFLINE though it is powered</td><td>The Pi's UART is not free or not enabled → check <code>enable_uart=1</code>, the serial console removed from <code>cmdline.txt</code>, port set to <code>/dev/serial0</code>, and <code>sudo lsof /dev/serial0</code> printing nothing. With the relay off the board never answers at all — turn it on first.</td></tr>
+<tr><td>Carousel sorts everything to the catch-all after a reboot</td><td>I²C was enabled only at runtime and did not survive the reboot → re-run <code>tools/pi_deploy.sh</code> (or <code>~/SortIQ/tools/pi_host_setup.sh</code> on the Pi); <code>/api/gates/state</code> must report <code>"available": true</code>. A sort run does not start until the doors answer.</td></tr>
+<tr><td>Feed does nothing after a board reflash, or the settings look like defaults</td><td>Normal for a moment: the app re-pushes every saved setting when it sees the board reboot (the console log says so). If the Hardware card shows the wrong firmware afterwards, press Connect once.</td></tr>
+<tr><td>Board power button greyed, “RELAY OFF”</td><td>Relay power is not ticked → Machine tab → Hardware → tick <b>Relay power</b> (an IoT relay on GPIO 25 must be fitted)</td></tr>
+<tr><td>Run paused — TUBE JAM</td><td>The feeder's beam shows the tube full but no case reaches the wheel: a case is stuck in the drop tube → clear it, then <b>Resume</b></td></tr>
+<tr><td>Run paused — FEEDER JAMMED</td><td>The feeder plate stalled and could not clear itself → clear the bowl, then <b>Resume</b> (the feeder restarts with the run)</td></tr>
+<tr><td>Feeder holds with nothing at the beam, or never holds</td><td>The beam reads the other way round → toggle <b>Beam reads HIGH with a case in it</b> on the Case feeder card; check the Z-DIAG jumper is removed</td></tr>
+<tr><td>Feeder jam detection unreliable</td><td>The E0-DIAG jumper is missing (the feeder status shows <code>"diag":0</code>) → fit it</td></tr>
+<tr><td>Case feeder card shows “not reporting”</td><td>The board runs firmware without the feeder, or the 24 V is off → flash <code>SortIQ-PicoServo-0.9.2</code> or later, power the board</td></tr>
+<tr><td>A run won't start: the dataset is copying to a USB stick</td><td>Sorting waits for the copy → let it finish, then eject the stick</td></tr>
 </table>
 
 </article>

@@ -7,7 +7,6 @@ numpy
 pyserial
 flask
 
-# Pi (inference only) — instead of tensorflow:
-# tflite-runtime
+# Pi (inference only) — tools/pi_deploy.sh installs these instead of tensorflow:
+# ai-edge-litert   (tflite-runtime with numpy<2 on Python 3.11 and older)
 # opencv-python-headless
-# picamera2  (via apt: python3-picamera2)

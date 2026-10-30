@@ -14,6 +14,7 @@ decider). See tools/build_gallery.py for the gallery format.
 import hashlib
 import json
 import os
+from collections import Counter
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -37,6 +38,54 @@ class Decision:
     @property
     def category(self):
         return "unmatched" if self.reason != "ok" else self.stamp
+
+
+# thin-class premium on the acceptance bar (see EmbedClassifier.__init__):
+# the full premium up to THIN_FLAT photos, tapering to zero at THIN_DONE
+THIN_PREMIUM = 0.05
+THIN_FLAT = 5
+THIN_DONE = 10
+# a reject within this of its bar counts as a near miss: it gets the
+# four-view probe logged, like an accepted case
+NEAR_MISS = 0.08
+
+
+def _thin_bonus(photos):
+    if photos >= THIN_DONE:
+        return 0.0
+    if photos <= THIN_FLAT:
+        return THIN_PREMIUM
+    return round(THIN_PREMIUM * (THIN_DONE - photos) / (THIN_DONE - THIN_FLAT), 4)
+
+
+class Embedder:
+    """The recognizer alone, without a gallery: turns a head crop into its
+    fingerprint and nothing more. Enough to group a fresh profile's first
+    mixed batch by look before it has a single labelled photo (the full
+    EmbedClassifier needs a gallery to load)."""
+
+    def __init__(self, model_path):
+        import threading
+        self.interp = _load_interpreter(model_path)
+        self.inp = self.interp.get_input_details()[0]
+        self.out = self.interp.get_output_details()[0]
+        self._invoke_lock = threading.Lock()
+        try:
+            with open(model_path, "rb") as f:
+                self.model_md5 = hashlib.md5(f.read()).hexdigest()
+        except OSError:
+            self.model_md5 = None
+
+    def embed(self, img_bgr):
+        import cv2
+        h, w = self.inp["shape"][1], self.inp["shape"][2]
+        x = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+        x = cv2.resize(x, (w, h)).astype(np.float32) / 255.0
+        with self._invoke_lock:
+            self.interp.set_tensor(self.inp["index"], x[None, ...])
+            self.interp.invoke()
+            v = self.interp.get_tensor(self.out["index"])[0].astype(np.float32)
+        return v / (np.linalg.norm(v) or 1.0)
 
 
 class EmbedClassifier:
@@ -97,6 +146,16 @@ class EmbedClassifier:
         self.bank_reusable = (self.model_md5 is not None
                               and self.model_md5
                               == self.meta.get("model_digest"))
+        # a gallery that records which network built it must be that
+        # network's: matching against another model's vectors is not a
+        # weaker answer, it is a wrong one. The loader treats a raised
+        # error as "no model" (cases reject) until the pair is consistent.
+        if (self.meta.get("model_digest") and self.model_md5
+                and self.model_md5 != self.meta["model_digest"]):
+            raise ValueError("gallery was built by a different model than "
+                             "shadow_embed.tflite — model/gallery pair is "
+                             "mismatched; reinstall the pair or rebuild the "
+                             "gallery")
         self.tau = float(self.meta.get("tau", 0.85))
         # near-tie guard: BLAZER/SPEER share a font and differ only in
         # four letters — an untrained-on look-alike can edge the true
@@ -131,6 +190,25 @@ class EmbedClassifier:
                 self.class_tau[k] = min(max(self.tau, bar), self.tau + 0.05)
             else:
                 self.class_tau[k] = self.tau
+        # THIN-CLASS PREMIUM: a class with few photos has not seen the
+        # variety its real cases carry, so strangers that merely resemble
+        # it clear its bar. Measured on the carousel's Suyin gallery
+        # (leave-one-out real cases vs every photo scored against every
+        # other class): at the plain bar, classes with 3-5 photos let in
+        # 33% of strangers and 6-9 photos 13.5%, against 0-0.5% from 10
+        # photos up. +0.05 at 3-5 photos cuts that to 2.7% for 8 points
+        # of real cases, which reject to review and grow the class.
+        # Tapers linearly to nothing at 10 photos. Counts come from the
+        # full photo bank (a class of near-duplicate photos can have a
+        # single exemplar); older galleries fall back to exemplars.
+        self.photo_count = Counter(self.all_cls if self.all_cls
+                                   else self.g_cls)
+        self.thin_bonus = {}
+        for k in self.classes:
+            b = _thin_bonus(self.photo_count.get(k, 0))
+            if b:
+                self.thin_bonus[k] = b
+                self.class_tau[k] = round(self.class_tau[k] + b, 4)
 
     def embed(self, img_bgr):
         import cv2
@@ -179,6 +257,11 @@ class EmbedClassifier:
                 # (an imaging reshape between build and install would
                 # otherwise validate vectors of the old-look crops)
                 if st.st_mtime > self.gallery_mtime:
+                    return None
+                # size must still match: a move re-uses a freed index and
+                # carries the crop with its old mtime, so mtime alone
+                # would hand back the deleted image's vector for it
+                if self.all_sig[i].split(":")[0] != str(st.st_size):
                     return None
                 want = self.meta.get("crops_sig")
                 if not want:
@@ -246,12 +329,21 @@ class EmbedDecider:
         def done(d):
             if explain:
                 d.extras.update(ex)
+            elif "sharpness" in ex:
+                # the run log's image-quality trail: always carried, even
+                # when the rest of the explain detail is not
+                d.extras["sharpness"] = ex["sharpness"]
             return d
 
         if frame is None:
             return done(Decision(rej, reason="capture_failed"))
-        ex["sharpness"] = round(imaging.sharpness(frame), 1)
-        if ex["sharpness"] < f["sharpness"]:
+        # blur is judged on the donut the model reads, not the whole frame
+        # (the nest texture around the case drifts while the camera settles
+        # and rejected sharp heads). The model itself fails SAFE on blur —
+        # 336 degraded reads, 0 misreads — so this only catches hopeless
+        # frames early and names them "blurry" in the report.
+        ex["sharpness"] = round(imaging.donut_sharpness(frame, center=center), 1)
+        if ex["sharpness"] < f["donut_sharpness"]:
             return done(Decision(rej, reason="blurry"))
 
         if self.ec is None:          # no model installed: capture runs
@@ -272,11 +364,45 @@ class EmbedDecider:
         # so reject review can explain itself ("GFL 89% vs PPU 87%") and
         # ambiguous rejects map which class pairs need photos next
         det = {"runner": r["runner"], "runner_sim": r["runner_sim"],
-               "bar": r["class_tau"]}
+               "bar": r["class_tau"],
+               # how well known the matched class is (and the thin-class
+               # premium in its bar): the evidence for tuning bars by size
+               "photos": self.ec.photo_count.get(stamp, 0)}
+        if self.ec.thin_bonus.get(stamp):
+            det["thin"] = self.ec.thin_bonus[stamp]
+
+        # rotation flicker probe (LOGGED, never gates): a real member of
+        # a class reads the same from every angle; strangers riding an
+        # accidental resemblance often flip class between views.
+        # Measured: strangers flicker 2.5x more, but few-shot
+        # classes also flicker while RIGHT (21/61) — so this collects
+        # live evidence and does not decide. Run on accepted cases and,
+        # since 2026-09, on near-miss rejects too: whether real
+        # near-misses on well-known classes read the same from all four
+        # angles is what a future near-miss rescue would hinge on.
+        def probe_views():
+            if not probe:
+                return None
+            try:
+                names = [stamp]
+                for k in (1, 2, 3):
+                    v = np.ascontiguousarray(np.rot90(head, k))
+                    names.append(self.ec.predict(v)["stamp"])
+                return {"agree": names.count(stamp),
+                        "alts": sorted(set(names) - {stamp})}
+            except Exception:
+                return None
 
         def dd(*a, **kw):
             d = Decision(*a, **kw)
             d.extras["embed"] = det
+            if kw.get("reason") == "stamp_ambiguous" or (
+                    kw.get("reason") == "stamp_low_conf"
+                    and sim >= r["class_tau"] - NEAR_MISS):
+                det["near_miss"] = True
+                views = probe_views()
+                if views:
+                    d.extras["views"] = views
             return done(d)
         if sim < r["class_tau"]:
             return dd(rej, stamp=stamp, stamp_conf=sim,
@@ -302,23 +428,7 @@ class EmbedDecider:
                           reason="stamp_ambiguous")
             det["family_tie"] = True     # audit trail: accepted because
                                          # the tie is intra-family
-        # rotation flicker probe (LOGGED, never gates): a real member of
-        # a class reads the same from every angle; strangers riding an
-        # accidental resemblance often flip class between views.
-        # Measured: strangers flicker 2.5x more, but few-shot
-        # classes also flicker while RIGHT (21/61) — so this collects
-        # live evidence for a future review-flag, and does not decide.
-        views = None
-        if probe:
-            try:
-                names = [stamp]
-                for k in (1, 2, 3):
-                    v = np.ascontiguousarray(np.rot90(head, k))
-                    names.append(self.ec.predict(v)["stamp"])
-                views = {"agree": names.count(stamp),
-                         "alts": sorted(set(names) - {stamp})}
-            except Exception:
-                pass
+        views = probe_views()
         d_extras = {"embed": det}
         if views:
             d_extras["views"] = views

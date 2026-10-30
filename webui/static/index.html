@@ -158,7 +158,9 @@
   .ctl label b { color: var(--brass); font-weight: 600; }
   .ctl input[type=range] { width: 100%; accent-color: var(--brass); }
   .ctl.unsupported { opacity: .35; pointer-events: none; }
-  .ctlRow { display: flex; gap: 8px; align-items: center; }
+  .ctlRow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .ctlRow button { white-space: nowrap; }
+  .ctl label.check { justify-content: flex-start; align-items: center; gap: 8px; }
   .ctl input[type=checkbox] { accent-color: var(--brass); width: 16px; height: 16px; }
   .ctl .boolRow { display: flex; justify-content: space-between; align-items: center; }
   /* ------- dataset manager ------- */
@@ -228,6 +230,60 @@
     display: inline-block; }
   .machBar .mst { display: flex; gap: 9px; align-items: center;
     font-weight: 700; }
+  /* batch capture: Mixed lot | One class */
+  .hopSeg { display: inline-flex; padding: 3px; gap: 2px; border-radius: 9px;
+    background: var(--bg); border: 1px solid var(--line); }
+  .hopSeg button { height: 34px; padding: 0 14px; border: 0; border-radius: 7px;
+    background: transparent; color: var(--dim); font: inherit; font-weight: 600; cursor: pointer; }
+  .hopSeg button.on { background: var(--brass); color: var(--bg); }
+  .hopSeg button:disabled { cursor: not-allowed; }
+  .ocGrid { display: grid; gap: 12px; margin-top: 14px;
+    grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
+  .ocCard { border: 1px solid #6b5426; border-radius: 10px; padding: 12px;
+    display: flex; gap: 12px; }
+  .ocCard img { width: 112px; height: 112px; border-radius: 8px; flex: none; }
+  .ocCard .ocBtns { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+  .ocCard .ocBtns button { padding: 6px 10px; font-size: 13px; }
+  /* Hardware card: one Board power button, option switches, board tools */
+  .pwrBtn { display: inline-flex; align-items: center; gap: 10px; height: 44px;
+    padding: 0 8px 0 14px; border-radius: 22px; background: var(--panel2);
+    border: 1px solid var(--line); color: var(--text); font: inherit;
+    font-weight: 600; cursor: pointer; }
+  .pwrBtn svg { color: var(--dim); }
+  .pwrBtn .pwrChip { font-size: 12px; font-weight: 800; letter-spacing: .06em;
+    padding: 4px 10px; border-radius: 12px; background: var(--line); color: #aab4c0; }
+  .pwrBtn.on { background: rgba(76,196,106,.14); border-color: var(--green); }
+  .pwrBtn.on svg { color: var(--green); }
+  .pwrBtn.on .pwrChip { background: var(--green); color: #0e1a12; }
+  .pwrBtn:disabled { opacity: .5; cursor: not-allowed; }
+  .hwTiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px; margin-top: 14px; }
+  .hwTile { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px;
+    display: flex; align-items: center; gap: 12px; cursor: pointer;
+    margin: 0; font-size: 14px; color: var(--text); }
+  .hwTile > label { margin: 0; font-size: 14px; color: var(--text); }
+  .hwTile .hwT { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+  .hwTile .hwT b { font-weight: 600; }
+  .hwTile .hwT span { font-size: 12px; color: var(--dim); }
+  .sw { appearance: none; -webkit-appearance: none; position: relative; flex: none;
+    width: 44px; height: 26px; margin: 0; border-radius: 13px; background: #3a4452;
+    cursor: pointer; transition: background .15s; }
+  .sw::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px;
+    height: 20px; border-radius: 50%; background: #f2f5f8; transition: left .15s; }
+  .sw:checked { background: var(--green); }
+  .sw:checked::after { left: 21px; }
+  .sw:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  .hwTools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+  .hwTools button:disabled { opacity: .45; cursor: not-allowed; }
+  /* header board power icon: green on, amber waiting for the board, grey off */
+  .hdrPwr { display: inline-flex; align-items: center; justify-content: center;
+    width: 36px; height: 36px; padding: 0; border-radius: 8px; background: transparent;
+    border: 1px solid #3a4452; color: var(--dim); cursor: pointer; }
+  .hdrPwr.on { color: var(--green); background: rgba(76,196,106,.12);
+    border-color: rgba(76,196,106,.45); }
+  .hdrPwr.wait { color: var(--amber); background: rgba(224,166,60,.12);
+    border-color: rgba(224,166,60,.45); }
   .numRow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .msTile { border: 1px solid var(--line); border-radius: 10px;
     padding: 10px 14px; background: var(--card, transparent); }
@@ -268,6 +324,43 @@
   #topBar { position: sticky; top: 0; z-index: 600;
     transition: transform .18s ease; }
   #topBar.hid { transform: translateY(-100%); }
+  header .grow { flex: 1; }
+  /* PHONES: the bar is one long desktop row — at 375 px it laid out 643 px
+     wide and the page scrolled sideways (field-reported). Wrap it, drop the
+     tagline and the two spacers that hold the row apart, and let both tab
+     groups sit on their own line. --topbar-h is measured from the real
+     height, so the fault banner still clears a taller wrapped bar. */
+  .camLiveCol { min-width: 340px; }
+  @media (max-width: 700px) {
+    /* nothing may be wider than the card at phone width */
+    .trRow { grid-template-columns: minmax(90px, 1fr) 44px 1fr minmax(120px, auto); gap: 8px; }
+    .camLiveCol { min-width: 0; }
+    header { flex-wrap: wrap; align-items: center; gap: 6px 10px;
+             padding: 10px 14px; }
+    header h1 { font-size: 17px; }
+    header .tagline, header .grow { display: none; }
+    header #whoAmI { margin-right: 0; }
+    header #modelBar { flex-wrap: wrap; }
+    nav { flex-wrap: wrap; gap: 8px; padding: 8px 14px; }
+    nav .gap { display: none; }
+    nav .seg { flex: 1 1 auto; justify-content: center; }
+    nav button { padding: 7px 11px; }
+    nav .seg.sys button { font-size: 13px; }
+    main { padding: 16px 14px; }
+    .card { padding: 14px 14px; }
+  }
+  /* MACHINE FAULT alert: fixed, and it must clear #topBar. It used to sit
+     at top:14px with z-index 60 - i.e. UNDER the sticky bar (z 600) and
+     inside its band - so a jam banner painted behind the header and was
+     invisible (field-reported). --topbar-h is published by the script from
+     the bar's real height, so a wrapped nav on a narrow window still
+     clears it. The bar hides on scroll-down; this alert never does. */
+  #faultBanner { position: fixed; left: 50%; transform: translateX(-50%);
+    top: calc(var(--topbar-h, 96px) + 10px); z-index: 700;
+    background: #5c1a1a; border: 1px solid #a33; color: #fff;
+    border-radius: 10px; padding: 10px 16px; width: max-content;
+    max-width: min(640px, calc(100vw - 32px));
+    box-shadow: 0 6px 28px rgba(0,0,0,.55); font-size: 13.5px; }
   /* ------- the report modal: summary + per-bin views ------- */
   #repModal { display: none; position: fixed; inset: 0; z-index: 990;
     background: rgba(10,12,16,.72); overflow-y: auto; }
@@ -283,6 +376,20 @@
     text-transform: uppercase; letter-spacing: .05em; }
   .repBins { display: grid; gap: 10px; margin-top: 14px;
     grid-template-columns: repeat(auto-fill, minmax(235px, 1fr)); }
+  /* the Sort page's report list: five runs share the row evenly */
+  #runReports { grid-template-columns: repeat(5, minmax(0, 1fr));
+    margin-top: 10px; }
+  @media (max-width: 1100px) {
+    #runReports { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+  }
+  #runReports .rbt { flex-direction: column; align-items: stretch; gap: 6px; }
+  .rrHead { display: flex; align-items: baseline; gap: 8px;
+    font-size: 13px; font-weight: 700; }
+  .rrHead .cnt { margin-left: auto; }
+  .rrLine { font-size: 12px; color: var(--dim); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+  .rrLine b { color: var(--text); font-weight: 600; }
+  #runReports + .msg:empty { display: none; }
   .rbt { background: var(--panel2); border: 1px solid var(--line);
     border-radius: 10px; padding: 10px 13px; cursor: pointer; display: flex;
     gap: 11px; align-items: center; }
@@ -399,17 +506,95 @@
   #btnConConnect.faded, #btnConDisc.faded { opacity: .35; filter: saturate(.5); }
   #btnConConnect, #btnConDisc { transition: opacity .25s, filter .25s; }
   .liveWrap .ctlCol { flex: 0 1 300px; min-width: 260px; }
-  #binList { display: grid; gap: 12px;
-    grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  @media (max-width: 1100px) {
-    #binList { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  /* SORT PAGE COCKPIT: everything a running machine needs on one 1080p
+     screen — the pinned bar, camera + verdict, all bins, recent cases.
+     Setup (options) opens on demand; reports sit below the fold. */
+  #binList { display: grid; gap: 10px;
+    grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr));
+    grid-auto-rows: minmax(128px, 1fr); flex: 1 1 auto; }
+  .binsCard { display: flex; flex-direction: column; }
+  .binsCard .msg:empty { display: none; }
+  @media (max-width: 760px) {
+    #binList { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
-  .binSlot { display: flex; flex-direction: column; gap: 8px; min-height: 148px;
-    border: 1px solid var(--line); border-radius: 11px; padding: 12px 14px;
+  .binSlot { display: flex; flex-direction: column; gap: 5px; min-height: 0;
+    border: 1px solid var(--line); border-radius: 11px; padding: 9px 12px;
     background: var(--panel2); transition: box-shadow .25s, border-color .25s;
-    position: relative; }
+    position: relative; isolation: isolate; overflow: hidden; }
+  /* the tray level: the tile fills from the bottom like the tray does
+     (green, amber from 80%, red when full) — readable across the room */
+  .binSlot .binLevel { position: absolute; left: 0; right: 0; bottom: 0;
+    height: 0; z-index: -1; pointer-events: none; --lv: var(--green);
+    background: color-mix(in srgb, var(--lv) 24%, transparent); }
+  .binSlot .binLevel.warn { --lv: var(--amber);
+    background: color-mix(in srgb, var(--lv) 30%, transparent); }
+  .binSlot .binLevel.full { --lv: var(--red);
+    background: color-mix(in srgb, var(--lv) 36%, transparent); }
+  .binSlot .levelTxt { font-size: 11.5px; color: var(--dim);
+    margin-top: auto; }
+  /* the bar, camera and bins are ONE unit that scrolls together: the
+     bar sits snug on the cockpit instead of floating over it */
+  .sortTop { padding-block: 10px; margin-bottom: 12px; }
+  .sortTop .msg:empty { display: none; }
+  @media (max-width: 640px) {
+    #sortBar .sgRight { margin-left: 0; width: 100%; flex-wrap: wrap; }
+    #sortBar .sgRight .sgLive { width: 100%; }
+  }
+  .cockpit { display: grid; gap: 16px; margin-bottom: 16px;
+    grid-template-columns: minmax(300px, .85fr) minmax(0, 1.6fr); }
+  .cockpit > .card { margin-bottom: 0; min-width: 0; }
+  @media (max-width: 1000px) { .cockpit { grid-template-columns: 1fr; } }
+  .camCard { display: flex; flex-direction: column; gap: 10px; }
+  .cardHead { display: flex; align-items: center; gap: 10px; }
+  .cardHead h2 { margin: 0; }
+  .segSw { display: inline-flex; border: 1px solid var(--line);
+    border-radius: 8px; overflow: hidden; margin-left: auto; }
+  .segSw button { background: none; border: 0; border-radius: 0;
+    color: var(--dim); font: inherit; font-size: 12.5px; font-weight: 600;
+    padding: 4px 12px; cursor: pointer; }
+  .segSw button.on { background: var(--panel2); color: var(--brass); }
+  /* one fixed shape for both views (the camera's own 16:10), so
+     switching Live <-> Last case never moves the page */
+  .camView { position: relative; flex: none; width: 100%;
+    aspect-ratio: 16 / 10; max-width: 100%;
+    background: #000; border: 1px solid var(--line); border-radius: 10px;
+    overflow: hidden; display: flex; align-items: center;
+    justify-content: center; }
+  .camView img { width: 100%; height: 100%; object-fit: contain;
+    position: absolute; inset: 0; }
+  /* the last case is a 200 px head crop: shown at its own size (never
+     blown up), about the size the case appears in the live view, and
+     ROUND — the crop's square background fades out just past the rim
+     (display only; the model's input is masked separately) */
+  .camView #runLastImg { width: auto; height: auto; max-width: 100%;
+    max-height: 100%; margin: auto; object-fit: contain; }
+  #runLastImg, .rcTile img {
+    -webkit-mask-image: radial-gradient(circle closest-side, #000 93%, transparent 100%);
+    mask-image: radial-gradient(circle closest-side, #000 93%, transparent 100%); }
+  .camView .camMsg { color: var(--dim); font-size: 13px; padding: 12px;
+    text-align: center; }
+  .caseLine { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    min-height: 32px; }
+  .caseLine .caseName { font-size: 21px; font-weight: 800;
+    letter-spacing: .4px; line-height: 1.1; }
+  .caseLine.rej .caseName { color: var(--amber); }
+  .recentStrip { display: grid; column-gap: 8px; row-gap: 0;
+    overflow: hidden;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-rows: auto; grid-auto-rows: 0; }
+  .recentHead { font-size: 12px; font-weight: 700; color: var(--dim);
+    text-transform: uppercase; letter-spacing: .6px; margin-top: 4px; }
   .binSlot.um { border-color: var(--um); }
   .binSlot.of { border-color: var(--blue); }
+  /* servo carousel: bin 9 is the open pocket (no door) — a tile in the
+     grid like the rest, dashed to say "no door" */
+  .binSlot.open { border-style: dashed; }
+  .binSlot.open .binHead .num, .binSlot.open.um .binHead .num {
+    background: var(--panel); color: var(--dim);
+    border: 1px solid var(--line); }
+  .binSlot.open .binHead .lbl { display: inline; color: var(--dim);
+    font-weight: 400; font-size: 12px; }
+  #binList.locked .binSlot.open .binChips { display: flex; }
   .binSlot.drop { border-color: var(--brass);
     box-shadow: 0 0 0 1px var(--brass), 0 0 22px rgba(212,169,79,.28); }
   .binSlot .sgStats { font-size: 12px; color: var(--dim); min-height: 18px;
@@ -429,7 +614,7 @@
   .binSlot .sgView { font-size: 12.5px; color: var(--brass); font-weight: 600;
     cursor: pointer; }
   .binSlot .sgView:hover { text-decoration: underline; }
-  #binList.locked .binAdd, #binList.locked .binRm { display: none; }
+  #binList.locked .addGhost, #binList.locked .binRm { display: none; }
   #sortBar { display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
     min-height: 44px; }
   #sortBar .sgStat, #batchRunBar .sgStat { display: flex;
@@ -457,7 +642,7 @@
   #binList.locked .binHead .lbl, .binSlot.emptybin .binHead .lbl {
     display: inline; }
   .binHead .lbl.dim { color: var(--dim); font-weight: 400; }
-  .binSlot .sgCount { font-size: 38px; font-weight: 800; line-height: 1.1; }
+  .binSlot .sgCount { font-size: 30px; font-weight: 800; line-height: 1.05; }
   .binSlot.emptybin .sgCount { color: var(--panel); }
   .binSlot .binChips { display: flex; flex-wrap: wrap; gap: 6px;
     align-content: flex-start; }
@@ -468,31 +653,27 @@
     border: 1px dashed var(--line); border-radius: 999px; padding: 2px 11px;
     cursor: pointer; flex: none; }
   .binSlot .addGhost:hover { color: var(--text); border-color: var(--dim); }
-  .binSlot .binAdd { display: none; margin-top: 2px; }
-  .binSlot .binAdd.open { display: block; }
   #binList.locked .binChips, #binList.locked .addGhost { display: none; }
-  .binSlot .binAdd { width: 100%; max-width: none; }
   .liveWrap { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
-  .liveWrap .caseCol { flex: 0 1 380px; min-width: 280px; }
-  .liveWrap .recentCol { flex: 1 1 260px; min-width: 260px; }
-  .runCase { display: flex; flex-direction: column; gap: 12px; }
-  .runCase img { width: 100%; max-width: 400px; border-radius: 12px;
-    border: 1px solid var(--line); box-shadow: 0 4px 16px rgba(0,0,0,.35); }
-  .runCase .caseName { font-size: 26px; font-weight: 800; letter-spacing: .5px;
-    line-height: 1.1; }
-  .runCase.rej .caseName { color: var(--amber); }
-  .runCase .caseBadges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
   .pill.dim { background: var(--panel2); color: var(--text);
     border: 1px solid var(--line); }
-  .recentRow { display: flex; align-items: center; gap: 10px; padding: 4px 8px;
-    border-radius: 6px; background: var(--panel2); margin-bottom: 4px; font-size: 13px; }
-  .recentRow img { width: 34px; height: 34px; object-fit: cover; border-radius: 4px; }
-  .recentRow .cat { flex: 1; font-weight: 600; }
-  .recentRow.rej { background: #2a1e20; }
-  .recentRow.rej .cat { color: var(--um); }
-  .recentRow .rcConf { font-size: 12px; color: var(--amber);
-    min-width: 34px; text-align: right; }
-  .recentRow .rcConf.hi { color: var(--green); }
+  .rcTile { display: flex; flex-direction: column; gap: 4px; min-width: 0;
+    padding: 6px; border-radius: 8px; background: var(--panel2); }
+  .rcTile img, .rcTile .rcImg { width: 100%; aspect-ratio: 1;
+    object-fit: cover; border-radius: 6px; }
+  .rcTile .rcImg { background: #000; }
+  .rcTile .rcName { font-size: 12px; font-weight: 700; line-height: 1.25;
+    min-height: 2.5em; overflow: hidden; display: -webkit-box;
+    -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    overflow-wrap: anywhere; }
+  .rcTile.rej { background: #2a1e20; }
+  .rcTile.rej .rcName { color: var(--um); }
+  .rcTile .rcMeta { display: flex; align-items: center; gap: 5px;
+    font-size: 11.5px; color: var(--dim); }
+  .rcTile .rcMeta .numB2 { margin-left: auto; font-size: 11px;
+    padding: 0 7px; }
+  .rcTile .rcConf { color: var(--amber); }
+  .rcTile .rcConf.hi { color: var(--green); }
   /* bin color swatches — pops off a slot card's number badge */
   .colorPop { position: absolute; top: 36px; left: 10px; background: var(--panel);
     border: 1px solid var(--brass); border-radius: 10px; padding: 10px 12px;
@@ -575,6 +756,17 @@
   .farrow { text-align: center; color: var(--dim); padding: 2px 0; }
   @media (max-width: 760px) { .docsWrap { flex-direction: column; }
     .docsNav { position: static; flex-direction: row; flex-wrap: wrap; } }
+/* case feeder: Machine card + the Sort page strip */
+.fdPill { font-weight: 700; }
+.fdPill.ok { color: var(--green); border-color: var(--green); }
+.fdPill.hold { color: var(--brass); border-color: var(--brass); }
+.fdPill.warn { color: var(--amber); border-color: var(--amber); }
+.fdPill.bad { color: var(--red); border-color: var(--red); }
+.fdPresets { display: flex; gap: 6px; flex-wrap: wrap; }
+.fdPresets button { min-width: 52px; padding: 4px 10px; }
+.fdPresets button.on { outline: 2px solid var(--brass); font-weight: 700; }
+#sortFeeder { display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 13px; }
 </style>
 </head>
 <body>
@@ -585,18 +777,22 @@
   <h1 style="white-space:nowrap">Sort IQ <span style="font-size:10.5px; color:var(--dim);
     font-weight:600; letter-spacing:.08em; text-transform:uppercase;
     vertical-align:2px">Pi Edition</span></h1>
-  <span class="sub">Vision-powered brass sorting</span>
-  <span style="flex:1"></span>
+  <span class="sub tagline">Vision-powered brass sorting</span>
+  <span class="grow"></span>
   <span class="sub" id="whoAmI" title="this machine's name — click to rename
 (with several machines, every page says whose page it is)"
         style="cursor:pointer; font-weight:700; color:var(--brass); margin-right:10px"></span>
   <span class="sub" id="modelBar" style="display:flex; gap:6px; align-items:center"></span>
-  <span style="flex:1"></span>
+  <span class="grow"></span>
   <span class="sub" id="camState" style="display:inline-flex; align-items:center">
     <svg width="27" height="27" viewBox="0 0 24 24" fill="currentColor"><path
       d="M9 4 7.2 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0
          0 0-2-2h-3.2L15 4H9zm3 5a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9zm0 2a2.5
          2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/></svg></span>
+  <button class="hdrPwr" id="pwrHeader" style="display:none" aria-label="Board power">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 3v8"/><path
+         d="M6.3 6.8a8 8 0 1 0 11.4 0"/></svg></button>
   <span class="sub" id="netHeader" title="Pi network — click to manage Wi-Fi"
         style="cursor:pointer; display:inline-flex; align-items:center">
     <svg width="27" height="27" viewBox="0 0 24 24" fill="currentColor"><path
@@ -671,10 +867,7 @@
 </div>
 
 <!-- mid-travel checkpoint setup dialog -->
-<div id="faultBanner" style="display:none; position:fixed; left:50%; top:14px;
-     transform:translateX(-50%); z-index:60; background:#5c1a1a; border:1px solid #a33;
-     color:#fff; border-radius:10px; padding:10px 16px; max-width:640px;
-     box-shadow:0 4px 24px rgba(0,0,0,.5); font-size:13.5px">
+<div id="faultBanner" style="display:none">
   <b>MACHINE FAULT</b> — <span id="faultText"></span>
   <div class="muted" style="color:#e9b8b8; font-size:11.5px; margin-top:4px">
     The machine stopped itself after repeated failed self-recovery. Clear the
@@ -683,6 +876,20 @@
   <div style="margin-top:8px">
     <button class="ghost" style="border-color:#a33; color:#fff"
             onclick="faultClear()">Clear fault &amp; re-home</button>
+  </div>
+</div>
+
+<!-- board power off: asks first; during a run it only explains -->
+<div id="pwrModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.55);
+     z-index:1000; align-items:center; justify-content:center">
+  <div class="card" style="width:min(400px, 92vw)">
+    <h2 style="margin-top:0" id="pwrMTitle">Switch the board off?</h2>
+    <div class="muted" id="pwrMText" style="line-height:1.45"></div>
+    <div class="ctlRow" style="margin-top:16px; justify-content:flex-end">
+      <button class="ghost" id="pwrMNo">Cancel</button>
+      <button class="primary" id="pwrMYes"
+              style="background:var(--red); border-color:var(--red); color:#fff">Switch off</button>
+    </div>
   </div>
 </div>
 
@@ -873,7 +1080,6 @@
 
 <!-- ============================== COLLECT ============================== -->
 <datalist id="classList"></datalist>
-<datalist id="binTargets"></datalist>
 <section id="collect" class="active">
   <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:14px">
     <div class="viewToggle">
@@ -952,6 +1158,14 @@
     <div class="card">
       <div id="batchIdle" style="display:flex; gap:14px; align-items:center; flex-wrap:wrap; min-height:44px">
         <span style="font-weight:700; font-size:17px">Batch capture</span>
+        <span class="muted">Hopper</span>
+        <span class="hopSeg" id="bcHop"><button data-h="mixed" class="on">Mixed lot</button><button
+          data-h="one">One class</button></span>
+        <span id="bcOneWrap" style="display:none; align-items:center; gap:8px">
+          <label for="bcClass" class="muted" style="margin:0; font-size:14px">Class</label>
+          <input list="classList" id="bcClass" autocomplete="off" spellcheck="false"
+                 placeholder="type a class&hellip;" style="width:190px; font-weight:600">
+          <span class="muted" id="bcClassN" style="font-size:13px"></span></span>
         <span style="flex:1"></span>
         <select id="batchRunSel" style="display:none; max-width:250px"></select>
         <button class="ghost" id="btnBatchReview" style="display:none">Review</button>
@@ -1012,8 +1226,9 @@
       <div id="camPanels">
         <div class="camPanel">
           <h3>Camera</h3>
-          <div class="ctlRow">
-            <span id="camDetected" style="font-size:13px"></span>
+          <div class="ctlRow" style="gap:8px; flex-wrap:wrap">
+            <select id="camModelSel" style="max-width:220px"></select>
+            <span id="camDetected" class="muted" style="font-size:12px"></span>
           </div>
           <div class="ctl" style="margin-top:10px">
             <label>Camera index <span class="muted">(0 = built-in; try 1, 2… for USB cams)</span></label>
@@ -1034,10 +1249,12 @@
           <div class="ctl">
             <div class="ctlRow">
               <select id="camPresetSel" style="max-width:160px"></select>
+              <span style="display:inline-flex; gap:8px">
               <button class="ghost" id="btnPresetApply" style="padding:4px 12px">Apply</button>
               <button class="ghost" id="btnPresetSave" style="padding:4px 12px"
                       title="snapshot the SAVED settings (resolution, zoom, controls, light ring) under a name">Save as…</button>
               <button class="ghost danger" id="btnPresetDel" style="padding:4px 10px">Delete</button>
+              </span>
             </div>
             <div class="muted" id="presetMsg" style="font-size:11.5px"></div>
           </div>
@@ -1055,6 +1272,32 @@
               <span id="ledSwatches"></span>
             </div>
             <div class="muted" style="font-size:11.5px">tint the ring — some headstamps read better under a warm or red cast</div>
+          </div>
+          <h3>Case detection <span class="muted">(does the pocket hold a case?)</span></h3>
+          <div class="ctl">
+            <div id="cdLive" style="font-size:13px; min-height:20px">reading the camera…</div>
+            <div class="ctlRow" style="gap:8px; flex-wrap:wrap; margin-top:6px">
+              <button class="ghost" id="btnCdCase" style="padding:4px 12px"
+                title="with a case in the pocket — a dull or dirty one gives the safest cutoff">Measure case</button>
+              <button class="ghost" id="btnCdEmpty" style="padding:4px 12px"
+                title="with the camera pocket empty">Measure empty pocket</button>
+            </div>
+            <div id="cdSuggest" class="muted" style="font-size:12px; margin-top:6px"></div>
+            <label style="margin-top:8px">Cutoff <span class="muted">(0–255)</span></label>
+            <div class="ctlRow" style="gap:8px; flex-wrap:wrap">
+              <input type="number" id="cdCutoff" min="1" max="254" style="width:80px">
+              <button class="ghost" id="btnCdSave" style="padding:4px 12px">Save</button>
+              <button class="ghost" id="btnCdReset" style="padding:4px 12px">Default</button>
+              <span class="muted" id="cdMsg" style="font-size:11.5px"></span>
+            </div>
+            <div class="muted" style="font-size:11.5px; margin-top:4px">
+              a pocket counts as holding a case when the case head reads at
+              least this bright. Too high and real cases are skipped (they go
+              to bin 9, and a run can stop); too low and empty pockets are
+              photographed (harmless, but wasted cycles). Measure a dull case
+              and an empty pocket, then use the suggested midpoint. Saved for
+              this camera.
+            </div>
           </div>
           <h3>Digital zoom <span class="muted">(applies to saved training images too)</span></h3>
           <div class="ctl"><label>Zoom <b id="vZoomF"></b></label>
@@ -1085,6 +1328,30 @@
             crops are full color, unenhanced — the model trains on what the
             camera sees, and capture, training, and sorting stay identical
           </div>
+          <div id="camCtlCard" style="display:none">
+          <h3>Camera controls</h3>
+          <div class="ctl">
+            <div class="ctlRow" style="gap:10px; flex-wrap:wrap">
+              <button class="primary" id="btnCamCal" style="padding:4px 12px"
+                      title="lock white balance to the colour the camera picks by itself on THIS machine — exposure stays automatic">Calibrate white balance</button>
+              <label class="inline check" style="margin:0; display:inline-flex; gap:6px; align-items:center"
+                     title="show the individual controls for fine tuning"><input
+                     type="checkbox" id="camAllCtl"> Unlock controls</label>
+              <span class="muted" id="camCtlMsg" style="font-size:11.5px"></span>
+            </div>
+            <div class="muted" id="camCtlHint" style="font-size:11.5px; margin-top:4px">
+              Locks white balance to the colour the camera picks by itself,
+              so every case is rendered in the same colour. Exposure stays
+              automatic. Do it with a case at the camera, once the light ring
+              is in its final position.
+            </div>
+            <div id="camCtlRows" style="margin-top:8px; display:none"></div>
+            <div class="ctlRow" id="camCtlResetRow" style="margin-top:8px; display:none">
+              <button class="ghost" id="btnCamCtlReset" style="padding:4px 12px"
+                      title="back to the camera's own defaults (auto exposure and auto white balance)">Reset to defaults</button>
+            </div>
+          </div>
+          </div>
           <div class="ctlRow" style="margin-top:12px; gap:8px; align-items:center">
             <button class="primary" id="btnCamSave" disabled>Save camera settings</button>
             <button class="ghost" id="btnCamRevert" disabled>Revert</button>
@@ -1093,7 +1360,7 @@
         </div>
       </div>
     </div>
-    <div style="flex:1 1 400px; min-width:340px; align-self:stretch">
+    <div class="camLiveCol" style="flex:1 1 400px; align-self:stretch">
     <div class="card stickyCard">
       <h2>Live view
         <label class="inline" style="font-size:12px; color:var(--dim); font-weight:400; margin-left:10px">
@@ -1422,19 +1689,6 @@
     </div>
     </div>
   </div>
-  <div id="dsImgModal" style="display:none; position:fixed; inset:0; z-index:1000;
-       background:rgba(10,12,16,.72); align-items:center; justify-content:center"
-       onclick="if(event.target===this) dsCloseDetail()">
-    <div style="background:var(--panel); border:1px solid var(--line);
-         border-radius:10px; width:min(660px, 92vw); max-height:92vh;
-         overflow-y:auto; padding:18px 22px; box-shadow:0 12px 40px rgba(0,0,0,.5)">
-      <div style="display:flex; justify-content:space-between; align-items:baseline">
-        <h2 style="margin:0 0 10px">Selected image</h2>
-        <button class="ghost" style="padding:2px 10px" onclick="dsCloseDetail()">Close</button>
-      </div>
-      <div id="dsDetail"></div>
-    </div>
-  </div>
 </section>
 
 <!-- ================================ TEST ================================ -->
@@ -1492,29 +1746,61 @@
 <!-- =============================== SORTING ============================== -->
 <!-- ================================ RUN ================================= -->
 <section id="run">
-  <div class="card">
+  <!-- pinned: state, stats and the Start/Stop button never scroll away -->
+  <div class="card sortTop">
     <div id="sortBar"></div>
+    <div id="sortFeeder" hidden>
+      <b>Feeder</b>
+      <span class="pill fdPill" id="sfState">—</span>
+      <span class="muted" id="sfInfo"></span>
+      <span style="flex:1"></span>
+      <span class="fdPresets" id="sfPresets"></span>
+      <button class="primary" id="btnSfGo">Go</button>
+      <button class="ghost" id="btnSfStop">Stop</button>
+      <button class="primary" id="btnSfClear" style="display:none">Resume</button>
+    </div>
     <div class="msg" id="runMsg"></div>
     <div id="runEndBanner" style="display:none; margin-top:8px; padding:10px 14px;
          border:1px solid var(--brass); border-radius:8px; font-weight:600"></div>
     <div id="runScore"></div>
-    <div id="runOptionsHome" style="max-width:520px; margin-top:6px"></div>
   </div>
-  <!-- the slot cards: assignment editor when idle, live dashboard while
-       sorting, report table-of-contents when finished -->
-  <div class="card">
-      <h2>Bins</h2>
-      <label class="inline" style="display:flex; gap:6px; align-items:flex-start; font-size:12.5px; color:var(--dim); margin-bottom:8px">
-        <input type="checkbox" id="runAuto" style="accent-color:var(--brass); margin-top:2px">
-        <span>Auto-assign trays — fill the empty bins below as new headstamps
-          appear (saved automatically); unknown / low-confidence go to the
-          UNMATCHED bin</span></label>
+  <!-- run options open on demand from the bar's Options button -->
+  <div class="card" id="runOptCard" hidden>
+    <div id="runOptionsHome" style="max-width:560px"></div>
+  </div>
+  <div class="cockpit">
+    <div class="card camCard">
+      <div class="cardHead"><h2>Camera</h2>
+        <div class="segSw" id="camSw">
+          <button data-v="live">Live</button>
+          <button data-v="last" class="on">Last case</button></div></div>
+      <div class="camView">
+        <img id="runLiveImg" alt="live camera view" hidden>
+        <img id="runLastImg" alt="last case" hidden>
+        <div class="camMsg" id="runCamMsg">the camera is not open</div>
+      </div>
+      <div id="runLast" class="caseLine muted">Start a run to watch cases being sorted.</div>
+      <div class="recentHead">Recent cases</div>
+      <div id="runRecent" class="recentStrip muted">—</div>
+    </div>
+    <!-- the slot cards: assignment editor when idle, live dashboard while
+         sorting, report table-of-contents when finished -->
+    <div class="card binsCard">
+      <div class="cardHead" style="margin-bottom:10px"><h2>Bins</h2>
+        <label class="inline" style="display:flex; gap:6px; align-items:center;
+               font-size:12.5px; color:var(--dim); margin:0 0 0 auto"
+               title="fill the empty bins as new headstamps appear (saved
+automatically); unknown or low-confidence cases go to the UNMATCHED bin">
+          <input type="checkbox" id="runAuto" style="accent-color:var(--brass); margin:0">
+          Auto-assign empty bins</label></div>
       <div id="binList"></div>
       <div class="msg" id="clMsg"></div>
+    </div>
   </div>
 
-  <!-- live feed; options live under the top bar -->
-  <div class="card">
+  <!-- the options' original home: adoptOptions() moves them into the
+       Options card above, keeping every handler attached -->
+  <div hidden>
     <div class="liveWrap">
     <div class="ctlCol" id="ctlColMove" style="display:none">
     <details>
@@ -1559,14 +1845,6 @@
     </div>
     </details>
     </div>
-      <div class="caseCol">
-        <h3 style="margin-top:0">Current case</h3>
-        <div id="runLast" class="muted">Start a run to watch cases being sorted.</div>
-      </div>
-      <div class="recentCol">
-        <h3 style="margin-top:0">Recent cases</h3>
-        <div id="runRecent" class="muted">—</div>
-      </div>
     </div>
   </div>
 
@@ -1586,10 +1864,12 @@
 <section id="machine">
   <!-- 1 · the machine bar: connection is STATE, not a card. Offline, the
        form lives inline; connected, it folds into a summary line. -->
+  <!-- hardware + connection: the board/firmware selector (left) drives which
+       cards the page shows; the pill is ground truth auto-detected from the
+       version line, and locks the selector while connected. Power on the right. -->
   <div class="card">
     <div class="machBar">
-      <button class="ghost" id="btnPower" style="display:none; font-weight:700"
-              title="switches the sorter board's 24V through the IoT Relay (GPIO 25)">&#x23FB; Power</button>
+      <h2 style="margin:0">Hardware</h2>
       <span class="mst" id="machState" style="color:var(--dim)">
         <span class="dot" id="machDot" style="background:var(--dim)"></span>
         OFFLINE</span>
@@ -1605,15 +1885,114 @@
         <button class="primary" id="btnConConnect">Connect</button>
       </span>
       <span id="machMeta" class="muted" style="font-size:13px"></span>
+      <button class="ghost" id="btnConDisc" style="padding:4px 12px; display:none"
+              title="close the link to the board (auto-connect stays off until you connect again)">Disconnect</button>
+      <span id="msBoard" class="pill" style="display:none; font-weight:700"></span>
       <span style="flex:1"></span>
-      <button class="ghost faded" id="btnConDisc">Disconnect</button>
+      <button class="pwrBtn" id="btnPower" disabled
+              title="switches the board's power through the IoT Relay (GPIO 25)">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 3v8"/><path
+             d="M6.3 6.8a8 8 0 1 0 11.4 0"/></svg>
+        Board power <span class="pwrChip" id="pwrChip">RELAY OFF</span></button>
+    </div>
+    <div class="hwTiles">
+      <div class="hwTile" style="flex-direction:column; align-items:stretch; gap:8px">
+        <label for="msFirmware" style="font-weight:600">Firmware</label>
+        <select id="msFirmware">
+          <option value="stock">7.2 Board - Stock</option>
+          <option value="ss2">7.2 Board - SortIQ</option>
+          <option value="pico">SortIQ-Pico - Sorter Arm</option>
+          <option value="pico-servo">SortIQ-Pico - Servo Carousel</option>
+        </select>
+      </div>
+      <label class="hwTile" id="msRelayWrap"
+             title="the board's power is switched by an IoT Relay on the Pi's GPIO 25 (any hardware)">
+        <span class="hwT"><b>Relay power</b><span>IoT Relay connected to the Pi</span></span>
+        <input type="checkbox" class="sw" id="msRelay"></label>
+      <label class="hwTile" id="msFeederWrap" style="display:none"
+             title="a case feeder runs on this board: motor on the E driver, beam on Z-STOP, E0-DIAG jumper fitted">
+        <span class="hwT"><b>Case feeder</b><span>Case feeder installed and connected to the Pico</span></span>
+        <input type="checkbox" class="sw" id="msFeeder"></label>
+    </div>
+    <div class="hwTools">
+      <button class="ghost" id="btnHwHome" disabled
+        title="homes the feed wheel on its sensor">Home wheel</button>
+      <button class="ghost" id="btnHwTestFeed" disabled
+        title="drops one case and sorts it through the doors">Test feed</button>
+      <div class="msg" id="hwMsg" style="margin:0"></div>
     </div>
     <div class="msg" id="conMsg"></div>
   </div>
 
+  <!-- Carousel sliding-door control: global endpoints + per-door exercise -->
+  <div class="card" id="feederCard" style="display:none">
+    <div class="machBar">
+      <h2 style="margin:0">Case feeder</h2>
+      <span class="pill fdPill" id="fdState">not reporting</span>
+      <span class="muted" id="fdInfo" style="font-size:12.5px"></span>
+      <span style="flex:1"></span>
+      <button class="primary" id="btnFdGo" title="start the feeder">Go</button>
+      <button class="ghost" id="btnFdStop" title="stop the feeder">Stop</button>
+      <button class="primary" id="btnFdClear" style="display:none"
+              title="the jam or empty hopper is dealt with: carry on feeding">Resume</button>
+    </div>
+    <div style="display:flex; gap:10px; align-items:center; margin-top:10px; flex-wrap:wrap">
+      <span class="muted">Speed</span><span class="fdPresets" id="fdPresets"></span>
+    </div>
+    <div class="muted" id="fdAlert" style="font-size:12.5px; margin-top:8px"></div>
+    <div class="msTile" style="margin-top:12px">
+      <h4>Settings</h4>
+      <div class="msTileRow">
+        <div><label title="nothing has passed the beam this long while feeding: warn that the hopper is empty (0 = off)"><span class="msN">Empty warning</span> <span class="muted">(s)</span><br><span class="msH">still feeding</span></label>
+          <input type="number" id="fdWarn" min="0" max="3600" step="5"></div>
+        <div><label title="nothing has passed the beam this long: stop the feeder (0 = never)"><span class="msN">Empty shutoff</span> <span class="muted">(s)</span><br><span class="msH">the feeder stops</span></label>
+          <input type="number" id="fdShutoff" min="0" max="3600" step="5"></div>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:6px; margin-top:10px; font-size:13px">
+        <label style="display:flex; gap:6px; align-items:center"><input type="checkbox" id="fdAuto">
+          Start and stop with sorting</label>
+        <label style="display:flex; gap:6px; align-items:center"><input type="checkbox" id="fdJam">
+          Jam detection (reverse the plate to clear a jam)</label>
+        <label style="display:flex; gap:6px; align-items:center"><input type="checkbox" id="fdRev">
+          Reverse the motor direction</label>
+        <label style="display:flex; gap:6px; align-items:center"><input type="checkbox" id="fdBeamHigh">
+          Beam reads HIGH with a case in it</label>
+      </div>
+      <div style="margin-top:10px"><button class="primary" id="btnFdSave">Save</button></div>
+    </div>
+    <div class="msg" id="fdMsg"></div>
+  </div>
+
+  <div class="card" id="doorCard" style="display:none">
+    <h2>Sort doors</h2>
+    <div class="numRow" style="margin-top:12px">
+      <button class="ghost" id="btnDoorsOpenAll" title="drive all eight doors open and HOLD them">Open all</button>
+      <button class="ghost" id="btnDoorsCloseAll" title="drive all eight closed, then release — the geared linkage holds at zero current">Close all</button>
+      <div class="numRow" id="doorBtns" style="gap:8px"></div>
+    </div>
+    <div class="msTile" style="margin-top:12px">
+      <h4>Positions</h4>
+      <div class="msTileRow">
+        <div><label title="the servo pulse that drives a door fully closed — the case rests on it (the floor)"><span class="msN">Closed</span><br><span class="msH">door fully in</span></label>
+          <input type="number" id="doorClosedUs" min="500" max="2500" step="10"></div>
+        <div><label title="the servo pulse that pulls a door fully clear of its drop hole"><span class="msN">Open</span><br><span class="msH">clear of the drop hole</span></label>
+          <input type="number" id="doorOpenUs" min="500" max="2500" step="10"></div>
+        <div><label title="how long a door takes to swing FULLY open, counted from that door&#39;s open command; a door closed mid-stroke leaves the case riding"><span class="msN">Open Time</span> <span class="muted">(ms)</span><br><span class="msH">until fully open</span></label>
+          <input type="number" id="doorOpenMs" min="0" max="2000" step="10"></div>
+        <div><label title="extra time once the door is fully open, for the case to clear before the door drives closed"><span class="msN">Clear Time</span> <span class="muted">(ms)</span><br><span class="msH">after fully open</span></label>
+          <input type="number" id="doorClearMs" min="0" max="1000" step="5"></div>
+        <div><label title="once the hopper runs dry, the last cases are walked out with feeds back to back; during that clear every stop waits this much longer with the doors open, so each case has time to fall. 0 = no pause"><span class="msN">Clear Pause</span> <span class="muted">(ms)</span><br><span class="msH">end-of-brass clear</span></label>
+          <input type="number" id="doorClearPause" min="0" max="3000" step="50"></div>
+      </div>
+      <div style="margin-top:10px"><button class="primary" id="btnDoorSave">Save</button></div>
+    </div>
+    <div class="msg" id="doorMsg"></div>
+  </div>
+
   <!-- 2 · slots: the badges are the centerpiece — test feed on top,
        enable/count below, calibration tucked behind its summary -->
-  <div class="card">
+  <div class="card hideServo" id="slotsCard">
     <h2>Slots</h2>
     <!-- one label column, aligned badge rows — symmetric on purpose -->
     <div class="slotGrid">
@@ -1665,19 +2044,7 @@
   <!-- 3 · settings: firmware folded into the header line, knobs fill
        the width, rare settings stay behind their summaries -->
     <div class="card">
-      <div class="ctlRow" style="margin-bottom:6px; flex-wrap:wrap">
-        <h2 style="margin:0">Machine settings</h2>
-        <span id="msBoard" class="pill" style="display:none; font-weight:700"></span>
-        <select id="msFirmware" style="max-width:220px">
-          <option value="stock">Stock CS7.2</option>
-          <option value="ss2">SortIQ fork (SS2 — pipelined feed)</option>
-          <option value="pico">SortIQ-Pico (SKR Pico board)</option>
-        </select>
-        <span class="muted" style="font-size:11.5px">firmware auto-detected on
-        connect (stock hides the fork-only tuning) · settings are stored on
-        the Pi and pushed to the board — saving while connected applies
-        immediately</span>
-      </div>
+      <h2 style="margin:0 0 6px">Machine settings</h2>
       <h3>Motion tuning <span class="muted" style="font-weight:normal; font-size:11.5px">— the knobs you tune with brass running; every value is clamped to a safe range on save</span></h3>
       <div style="display:flex; flex-direction:column; gap:10px; margin-top:6px">
 
@@ -1688,9 +2055,9 @@
               <input type="number" id="msFeedSpeed" min="1" max="100"></div>
             <div><label title="Drive current for the feed motor. More current = more torque and more heat. Raise only if the wheel skips under load; lower if the motor runs hot."><span class="msN">Current</span> <span class="muted">(mA)</span><br><span class="msH">motor drive strength</span></label>
               <input type="number" id="msFeedCurrent" min="300" max="1200" step="50"></div>
-            <div class="picoOnly"><label title="How quickly the wheel comes up to speed at the start of each cycle. Bigger number = gentler, slower launch; smaller = snappier but harder on the motor."><span class="msN">Accel</span><br><span class="msH">bigger = gentler launch</span></label>
+            <div class="picoFeed"><label title="How quickly the wheel comes up to speed at the start of each cycle. Bigger number = gentler, slower launch; smaller = snappier but harder on the motor."><span class="msN">Accel</span><br><span class="msH">bigger = gentler launch</span></label>
               <input type="number" id="msFeedAccel" min="100" max="5000" step="50"></div>
-            <div class="picoOnly"><label title="How quickly the wheel brakes into its stop at the position sensor. Bigger number = softer landing; smaller = crisper stop."><span class="msN">Decel</span><br><span class="msH">bigger = softer stop</span></label>
+            <div class="picoFeed"><label title="How quickly the wheel brakes into its stop at the position sensor. Bigger number = softer landing; smaller = crisper stop."><span class="msN">Decel</span><br><span class="msH">bigger = softer stop</span></label>
               <input type="number" id="msFeedDecRate" min="100" max="5000" step="50"></div>
             <div class="ss2Only"><label title="Distance the SS2 firmware spends ramping up to speed at the start of a cycle. Not used by SortIQ-Pico firmware — its Accel setting covers this."><span class="msN">Launch ramp</span><br><span class="msH">SS2 firmware only</span></label>
               <input type="number" id="msFeedLaunch" min="0" max="200"></div>
@@ -1704,7 +2071,7 @@
             Stop as decel ramp <span class="muted">(off = stock dead stop)</span></label>
         </div>
 
-        <div class="msTile">
+        <div class="msTile hideServo">
           <h4>Sort arm</h4>
           <div class="msTileRow">
             <div><label title="How fast the arm travels between slots. Higher = quicker sorts; too high can skip steps on hard stops."><span class="msN">Speed</span> <span class="muted">(1–100)</span><br><span class="msH">arm travel speed</span></label>
@@ -1742,7 +2109,7 @@
           </div>
         </div>
 
-        <div class="msTile">
+        <div class="msTile hideServo">
           <h4>Cycle timing</h4>
           <div class="msTileRow">
             <div><label title="The BASELINE rest the arm takes at every slot — time for the falling case to clear the chute before the next move. Too short and a quick next move can throw a case toward the wrong slot. When AirDrop is enabled, its own Drop delay replaces this number (blasted cases clear faster); Arm dwell is always added on top."><span class="msN">Slot drop delay</span> <span class="muted">(ms)</span><br><span class="msH">baseline rest at each slot (AirDrop swaps this)</span></label>
@@ -1773,7 +2140,7 @@
           </div>
         </div>
 
-        <div class="msTile">
+        <div class="msTile hideServo">
           <h4>AirDrop mod</h4>
           <label class="inline" style="display:flex; gap:6px; align-items:center; margin:0 0 4px; color:var(--dim); font-size:12.5px">
             <input type="checkbox" id="msAirDrop" style="accent-color:var(--brass)">
@@ -1812,8 +2179,7 @@
     </summary>
     <div class="inner">
       <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px">
-        <button class="ghost conCmd" data-cmd="homefeeder">Home feeder</button>
-        <button class="ghost conCmd" data-cmd="homesorter">Home sorter</button>
+        <button class="ghost conCmd hideServo" data-cmd="homesorter">Home sorter</button>
         <button class="ghost conCmd" data-cmd="getconfig">Get config</button>
         <button class="ghost conCmd" data-cmd="ping">Ping</button>
         <button class="ghost conCmd" data-cmd="version">Version</button>
@@ -1837,6 +2203,42 @@
 
 <!-- the run-report modal: summary of bins, or one bin's cases —
      rejects included (they're part of the run's story) -->
+<div id="dsImgModal" style="display:none; position:fixed; inset:0; z-index:1000;
+     background:rgba(10,12,16,.72); align-items:center; justify-content:center"
+     onclick="if(event.target===this) dsCloseDetail()">
+  <div style="background:var(--panel); border:1px solid var(--line);
+       border-radius:10px; width:min(660px, 92vw); max-height:92vh;
+       overflow-y:auto; padding:18px 22px; box-shadow:0 12px 40px rgba(0,0,0,.5)">
+    <div style="display:flex; justify-content:space-between; align-items:baseline">
+      <h2 style="margin:0 0 10px">Selected image</h2>
+      <button class="ghost" style="padding:2px 10px" onclick="dsCloseDetail()">Close</button>
+    </div>
+    <div id="dsDetail"></div>
+  </div>
+</div>
+<div id="binPickModal" style="display:none; position:fixed; inset:0; z-index:1000;
+     background:rgba(10,12,16,.72); align-items:center; justify-content:center"
+     onclick="if(event.target===this) binPickClose()">
+  <div class="repMBox" style="width:min(1100px, 94vw); max-height:92vh; display:flex; flex-direction:column; gap:10px">
+    <div style="display:flex; justify-content:space-between; align-items:baseline; gap:12px; flex-wrap:wrap">
+      <h2 style="margin:0" id="binPickTitle">Add to bin</h2>
+      <span class="muted" style="font-size:12.5px">ticked = in this bin · untick to remove, tick to add · Save writes once</span>
+    </div>
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
+      <input id="binPickFilter" placeholder="filter…" style="max-width:220px" autocomplete="off">
+      <label class="inline check" style="margin:0; display:inline-flex; gap:6px; align-items:center; font-size:12.5px; white-space:nowrap"
+             title="order the classes by how many images each has, most first (default: A to Z)"><input
+             type="checkbox" id="binPickByCount"> sort by count</label>
+      <span class="muted" id="binPickCount" style="font-size:12.5px; white-space:nowrap">0 selected</span>
+    </div>
+    <div id="binPickBody" style="overflow-y:auto; display:grid; gap:14px"></div>
+    <div class="ctlRow" style="justify-content:flex-end">
+      <button class="ghost" onclick="binPickClose()">Cancel</button>
+      <button class="primary" id="binPickSave">Save</button>
+    </div>
+    <div class="msg" id="binPickMsg"></div>
+  </div>
+</div>
 <div id="repModal" onclick="if(event.target===this) repClose()">
   <div class="repMBox">
     <div id="repMBody"></div>
@@ -1906,6 +2308,7 @@ document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   }
   syncTestStream();
   syncCollectStream();
+  syncSortCam();
 });
 
 // #train, #dataset, … open that tab directly (bookmarks, the manual's links,
@@ -2864,7 +3267,9 @@ function galRebuild(statusEl) {
       clearTimeout(galPollTimer);
       out.textContent = "rebuilding gallery…";
       const poll = async () => {
-        const s = await api("/api/gallery/rebuild");
+        let s;
+        try { s = await api("/api/gallery/rebuild"); }
+        catch (e) { out.textContent = `lost contact while rebuilding: ${e.message}`; return; }
         if (s.running) { galPollTimer = setTimeout(poll, 3000); return; }
         out.textContent = s.error
           ? `failed: ${s.error}` : `gallery done ${s.done} — ${s.log}`;
@@ -3210,6 +3615,7 @@ async function pollMachine() {
   try {
     const j = await api("/api/machine/settings");
     MACH = { connected: j.connected, mode: j.mode };
+    if (j.settings && j.settings.board) lastBoardSeen = j.settings.board;
   } catch { MACH = { connected: false, mode: null }; }
   renderMachChip(); updateColButtons();
 }
@@ -3416,7 +3822,7 @@ $("colViewBatch").onclick = () => setColView("batch");
 $("colViewSetup").onclick = () => setColView("setup");
 
 /* --------------------------- batch capture --------------------------- */
-let batchTimer = null, batchRun = null;
+let batchTimer = null, batchRun = null, batchCur = null;   // batchCur: its /api/runs row
 
 // "run_20260730_174231" -> "2026-07-30 17:42"
 function fmtRunId(id) {
@@ -3488,10 +3894,23 @@ async function batchSync() {
     sel.innerHTML = caps.map(c =>
       `<option value="${c.run}" ${c.run === batchRun ? "selected" : ""}>
          ${fmtRunId(c.run)}${c.run === caps[0].run ? " (latest)" : ""} —
-         ${c.cases_left ? `${c.cases_left} to review` : "reviewed ✓"}</option>`).join("");
+         ${c.batch_class ? `${c.batch_class} · ` : ""}${c.cases_left ? `${c.cases_left} to review` : "reviewed ✓"}</option>`).join("");
     sel.style.display = caps.length > 1 ? "" : "none";
     $("btnBatchReview").style.display = "";
     const cur = caps.find(c => c.run === batchRun);
+    batchCur = cur;
+    if (cur.batch_class) {
+      // a one-class batch: the machine checks and files it as it ends
+      let oc = {};
+      try { oc = await api(`/api/runs/${cur.run}/one_class`); } catch {}
+      const held = (oc.held || []).length;
+      $("batchStatus").textContent = oc.state === "done"
+        ? `One class · ${cur.batch_class}: ${oc.filed} filed` + (held ? ` · ${held} held for review` : " ✓")
+        : oc.state === "error" ? `One class · ${cur.batch_class}: ${oc.error}`
+        : `One class · ${cur.batch_class}: checking the batch…`;
+      if (oc.state === "checking") batchTimer = setTimeout(batchSync, 2000);
+      return;
+    }
     $("batchStatus").textContent = cur.cases_left
       ? `${cur.cases_left} case${cur.cases_left === 1 ? "" : "s"} waiting for review`
       : "fully reviewed ✓";
@@ -3537,18 +3956,137 @@ $("batchRunSel").onchange = () => {
   batchRun = $("batchRunSel").value;
   window._batchGroups = null;        // groups belong to the old batch
   window._batchExc = new Set();      // pulled-out picks don't cross batches
+  updateBatchExcBar();               // ...and neither does the "N pulled out" bar
   batchSync();
 };
 
+/* One class: the hopper holds a single class. When the batch ends the
+   machine reads every case against it, files the ones that look like it
+   and holds the rest for review here. */
+let bcHop = "mixed";
+function bcClassCount() {
+  const c = $("bcClass").value.trim().toUpperCase();
+  const known = STATE && STATE.stamp_labels.includes(c);
+  const n = known ? ((STATE.datasets.real.raw || {})[c] || 0) : null;
+  $("bcClassN").textContent = !c ? "" : n === null ? "not a class here"
+    : `${n} photo${n === 1 ? "" : "s"}${n < 10 ? " · thin" : ""}`;
+}
+$("bcHop").onclick = e => {
+  const b = e.target.closest("button[data-h]");
+  if (!b || b.disabled) return;
+  bcHop = b.dataset.h;
+  for (const x of $("bcHop").children) x.classList.toggle("on", x === b);
+  $("bcOneWrap").style.display = bcHop === "one" ? "inline-flex" : "none";
+  bcClassCount();
+};
+$("bcClass").oninput = bcClassCount;
 $("btnBatchStart").onclick = async () => {
+  const body = { mode: "serial", capture: true };
+  if (bcHop === "one") {
+    const c = $("bcClass").value.trim().toUpperCase();
+    if (!c) { $("batchStatus").textContent = "type the class that's in the hopper"; return; }
+    body.batch_class = c;
+  }
   try {
-    await postJson("/api/run/start", { mode: "serial", capture: true });
+    await postJson("/api/run/start", body);
     window._batchGroups = null;
     batchSync();
   } catch (e) { $("batchStatus").textContent = e.message; }
 };
+
+// a one-class batch reviews as its check: what was filed, what is held
+let ocWebTimer = null, ocWeb = null;     // ocWeb: the last check shown
+const esc = s => String(s ?? "").replace(/[&<>"']/g,
+  ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+async function batchOcOpen(run) {
+  clearTimeout(ocWebTimer);
+  $("batchModal").style.display = "block";
+  $("batchMMsg").textContent = "";
+  let j;
+  try { j = await api(`/api/runs/${run}/one_class`); }
+  catch (e) { $("batchMBody").innerHTML = `<div class="muted" style="padding:30px 10px">${e.message}</div>`; return; }
+  if (j.state === "pending") {
+    try { await postJson(`/api/runs/${run}/one_class`, {}); } catch {}
+    j = { state: "checking", stamp: j.stamp };
+  }
+  const head = (sub) => `<div class="repHead"><div><h2 style="margin:0">Batch · ${esc(j.stamp || "")}</h2>
+    <div class="muted">${fmtRunId(run)}${sub ? ` — ${sub}` : ""}</div></div>
+    <span style="flex:1"></span><button class="ghost" onclick="batchMClose()">Close</button></div>`;
+  if (j.state === "checking") {
+    $("batchMBody").innerHTML = head("checking") + `<div class="muted" style="padding:30px 10px">Reading every case
+      against ${esc(j.stamp || "the class")}…</div>`;
+    ocWebTimer = setTimeout(() => {
+      if ($("batchModal").style.display === "block") batchOcOpen(run);
+    }, 1500);
+    return;
+  }
+  if (j.state !== "done") {
+    $("batchMBody").innerHTML = head() + `<div style="padding:30px 10px; color:var(--red)">${esc(j.error || "the check failed")}</div>`;
+    return;
+  }
+  const stat = (v, label, col) => `<div style="display:flex; flex-direction:column">
+    <b style="font-size:22px${col ? `; color:${col}` : ""}">${v}</b><span class="muted" style="font-size:12px">${label}</span></div>`;
+  const held = j.held || [];
+  ocWeb = j;
+  $("batchMBody").innerHTML = head(held.length ? `${held.length} held for you` : "nothing left to review ✓") + `
+    <div style="display:flex; gap:28px; flex-wrap:wrap; margin-top:12px">
+      ${stat(j.checked, "checked")}${stat(j.filed, `filed as ${esc(j.stamp)}`, "var(--green)")}
+      ${j.skipped ? stat(j.skipped, "skipped as repeats") : ""}${stat(held.length, "held", held.length ? "var(--amber)" : "")}</div>
+    ${held.length ? `<div style="display:flex; align-items:center; gap:10px; margin-top:18px">
+        <b style="color:var(--amber); font-size:12px; letter-spacing:.06em">HELD · THESE DON'T LOOK LIKE ${esc(j.stamp)}</b>
+        <span style="flex:1"></span>
+        <button class="ghost" onclick="batchOcAll('${run}', 'file')">File all as ${esc(j.stamp)}</button>
+        <button class="ghost danger" onclick="batchOcAll('${run}', 'discard')">Discard all</button></div>
+      <div class="ocGrid">${held.map(c => `<div class="ocCard">
+        <img src="${c.thumb}" alt="case ${c.n}">
+        <div style="display:flex; flex-direction:column; gap:6px; min-width:0; flex:1">
+          <b>Case #${c.n}</b>
+          <span style="font-size:13px; line-height:1.35; color:${c.kind === "other" ? "var(--text)" : "var(--amber)"}">${esc(c.why)}</span>
+          <div class="ocBtns">
+            <button class="ghost" onclick="batchOcFile('${run}', ${c.n}, 'class')">File as ${esc(j.stamp)}</button>
+            ${c.kind === "other"
+              ? `<button class="ghost" onclick="batchOcFile('${run}', ${c.n}, 'read')">File as ${esc(c.read)}</button>`
+              : `<span style="display:flex; gap:6px"><input list="classList" id="ocPick${c.n}" placeholder="another class&hellip;"
+                   style="flex:1; min-width:0"><button class="ghost" onclick="batchOcFile('${run}', ${c.n}, 'typed')">File</button></span>`}
+            <button class="ghost danger" onclick="batchOcDiscard('${run}', [${c.n}])">Discard</button>
+          </div></div></div>`).join("")}</div>`
+      : `<p class="muted" style="margin-top:16px">Nothing held. Rebuild the gallery so the new photos count when sorting.</p>`}`;
+}
+async function batchOcFile(run, n, how) {
+  const c = ((ocWeb && ocWeb.held) || []).find(x => x.n === n) || {};
+  let stamp = how === "class" ? ocWeb.stamp : how === "read" ? c.read
+    : ($(`ocPick${n}`) ? $(`ocPick${n}`).value : "");
+  stamp = (stamp || "").trim().toUpperCase();
+  if (!stamp) return msg("batchMMsg", "type a class first", false);
+  if (!STATE.stamp_labels.includes(stamp)) return msg("batchMMsg", `${stamp} is not a class here`, false);
+  try {
+    await postJson(`/api/runs/${run}/cases/bulk_resolve`, { ns: [n], stamp, file_all: true });
+    msg("batchMMsg", `#${n} filed as ${stamp}`, true);
+  } catch (e) { msg("batchMMsg", e.message, false); }
+  batchOcOpen(run);
+}
+async function batchOcDiscard(run, ns) {
+  try {
+    await postJson(`/api/runs/${run}/cases/bulk_resolve`, { ns, action: "discard" });
+    msg("batchMMsg", `${ns.length} discarded`, true);
+  } catch (e) { msg("batchMMsg", e.message, false); }
+  batchOcOpen(run);
+}
+async function batchOcAll(run, what) {
+  let j;
+  try { j = await api(`/api/runs/${run}/one_class`); } catch (e) { return msg("batchMMsg", e.message, false); }
+  const ns = (j.held || []).map(c => c.n);
+  if (!ns.length) return batchOcOpen(run);
+  if (what === "discard") return batchOcDiscard(run, ns);
+  try {
+    await postJson(`/api/runs/${run}/cases/bulk_resolve`, { ns, stamp: j.stamp, file_all: true });
+    msg("batchMMsg", `${ns.length} filed as ${j.stamp}`, true);
+  } catch (e) { msg("batchMMsg", e.message, false); }
+  batchOcOpen(run);
+}
 $("btnBatchStop").onclick = async () => {
-  await postJson("/api/run/stop", {});
+  try { await postJson("/api/run/stop", {}); }
+  catch (e) { msg("colMsg", e.message, false); }
   batchSync();
 };
 
@@ -3577,6 +4115,7 @@ const BATCH_PER_PAGE = 50;
 
 async function batchMOpen() {
   if (!batchRun) return;
+  if (batchCur && batchCur.run === batchRun && batchCur.batch_class) return batchOcOpen(batchRun);
   $("batchModal").style.display = "block";
   $("batchModal").scrollTop = 0;
   $("batchMMsg").textContent = "";
@@ -3859,6 +4398,74 @@ async function batchFile(i, discard, fileAll) {
   } catch (e) { bMsg(e.message, false); }
 }
 
+/* CASE DETECTION (Camera setup): the live head brightness against the
+   cutoff, a two-sample measure (a case, an empty pocket) that suggests
+   the midpoint, and the per-camera setting. Polls only while visible. */
+const cd = { live: null, kase: null, empty: null, dirty: false };
+async function cdPoll() {
+  if (!$("collect").classList.contains("active") || colView !== "setup"
+      || document.hidden) return;
+  try {
+    const j = await api("/api/camera/case_detect");
+    cd.live = j;
+    if (j.brightness == null) {
+      $("cdLive").innerHTML = `<span class="muted">no camera frame</span>`;
+    } else {
+      const what = j.present ? "Case in pocket"
+        : j.round_head ? "Case too dim to count" : "Empty pocket";
+      $("cdLive").innerHTML = `<b style="color:${j.present ? "var(--green)"
+        : j.round_head ? "var(--amber)" : "var(--dim)"}">${what}</b> ·
+        head reads <b>${j.brightness}</b> · cutoff <b>${j.cutoff}</b>${
+        j.custom ? "" : ` <span class="muted">(default)</span>`}`;
+    }
+    if (!cd.dirty && document.activeElement !== $("cdCutoff"))
+      $("cdCutoff").value = j.cutoff;
+  } catch (e) {}
+}
+setInterval(cdPoll, 1500);
+function cdSuggest() {
+  const k = cd.kase, e = cd.empty;
+  const parts = [k != null ? `case <b>${k}</b>` : null,
+                 e != null ? `empty <b>${e}</b>` : null].filter(Boolean);
+  if (k != null && e != null) {
+    if (k <= e + 4) {
+      $("cdSuggest").innerHTML = parts.join(" · ") + ` — the case doesn't read
+        clearly brighter than the empty pocket; check the light and focus`;
+      return;
+    }
+    const mid = Math.round((k + e) / 2);
+    $("cdSuggest").innerHTML = parts.join(" · ") + ` → suggested cutoff
+      <b>${mid}</b> <button class="ghost" style="padding:1px 10px"
+      onclick="$('cdCutoff').value=${mid}; cd.dirty=true">Use ${mid}</button>`;
+  } else $("cdSuggest").innerHTML = parts.length
+    ? parts.join(" · ") + " — now measure the other one" : "";
+}
+$("btnCdCase").onclick = () => {
+  if (!cd.live || cd.live.brightness == null) return;
+  if (!cd.live.round_head) {
+    $("cdSuggest").textContent = "no case head found — put a case in the camera pocket first";
+    return;
+  }
+  cd.kase = cd.live.brightness; cdSuggest();
+};
+$("btnCdEmpty").onclick = () => {
+  if (!cd.live || cd.live.brightness == null) return;
+  cd.empty = cd.live.brightness; cdSuggest();
+};
+$("cdCutoff").oninput = () => { cd.dirty = true; };
+async function cdSave(v) {
+  try {
+    const j = await postJson("/api/camera/case_detect", { cutoff: v });
+    cd.dirty = false;
+    $("cdCutoff").value = j.cutoff;
+    $("cdMsg").textContent = v == null ? `back to the default (${j.default})`
+                                       : `saved — ${j.cutoff}`;
+    cdPoll();
+  } catch (e) { $("cdMsg").textContent = e.message; }
+}
+$("btnCdSave").onclick = () => cdSave(+$("cdCutoff").value);
+$("btnCdReset").onclick = () => cdSave(null);
+
 /* live crop previews follow whatever case is in the nest right now */
 function streamURL() {
   return "/api/stream?" + ($("camFast").checked ? "fast=1&" : "") + Date.now();
@@ -3895,11 +4502,17 @@ const livePreviewNow = debounce(livePreviewTick, 200);
 let camBase = null;                    // last saved values
 let lastBoardSeen = "";                // board name from machine settings
 
+let camCtlNow = {};        // camera controls as the sliders have them
 function camCurrent() {
   return { led: +$("ledLevel").value, color: $("ledColor").value,
            zf: +$("zoomF").value,
            zx: +$("zoomX").value, zy: +$("zoomY").value,
-           frac: +$("pocketFrac").value, rim: +$("rimScale").value };
+           frac: +$("pocketFrac").value, rim: +$("rimScale").value,
+           ctl: JSON.stringify(camCtlNow) };
+}
+async function camApplyCtl(map, preview) {
+  for (const [name, value] of Object.entries(map || {}))
+    await postJson("/api/camera/settings", { name, value, preview: !!preview });
 }
 function camIsDirty() {
   if (!camBase) return false;
@@ -3915,6 +4528,14 @@ function camDirtyUi() {
     d ? "unsaved changes — nothing applies until you press Save" : "";
 }
 function camMarkClean() { camBase = camCurrent(); camDirtyUi(); }
+// before anything reloads the saved settings over the sliders: unsaved
+// edits used to vanish silently (neither saved nor reverted), leaving
+// the light ring at the previewed level. Ask, like leaving the tab does.
+function camReloadGuard() {
+  if (!camIsDirty()) return true;
+  camLeaveGuard();
+  return true;
+}
 
 $("btnCamSave").onclick = async () => {
   const c = camCurrent(), b = camBase || {};
@@ -3928,6 +4549,12 @@ $("btnCamSave").onclick = async () => {
       await api("/api/camera/settings", { method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ zoom: { factor: c.zf, x: c.zx, y: c.zy } }) });
+    if (c.ctl !== b.ctl) {
+      const now = JSON.parse(c.ctl || "{}"), was = JSON.parse(b.ctl || "{}");
+      const changed = Object.fromEntries(
+        Object.entries(now).filter(([k, v]) => v !== was[k]));
+      await camApplyCtl(changed, false);        // persist
+    }
     if (c.frac !== b.frac || c.rim !== b.rim) {
       const j = await postJson("/api/classes",
         { imaging: { pocket_frac: c.frac, rim_scale: c.rim } });
@@ -3953,6 +4580,19 @@ $("btnCamRevert").onclick = () => {
   $("vPocketFrac").textContent = camBase.frac.toFixed(2);
   $("rimScale").value = camBase.rim;
   $("vRimScale").textContent = "×" + camBase.rim.toFixed(3);
+  const saved = JSON.parse(camBase.ctl || "{}");
+  camCtlNow = { ...saved };
+  camApplyCtl(saved, true);                  // camera back to saved values
+  document.querySelectorAll(".camCtl").forEach(el => {
+    const v = saved[el.dataset.name];
+    if (v === undefined) return;
+    if (el.type === "checkbox") el.checked = !!v;
+    else {
+      el.value = v;
+      const lab = document.querySelector(`.camCtlVal[data-for="${el.dataset.name}"]`);
+      if (lab) lab.textContent = v;
+    }
+  });
   camDirtyUi();
   camPreviewReset();     // stream + light ring snap back to saved values
   livePreviewNow();
@@ -4024,6 +4664,7 @@ async function loadCamPresets() {
 $("btnPresetApply").onclick = async () => {
   const name = $("camPresetSel").value;
   if (!name) return;
+  camReloadGuard();
   try {
     await postJson("/api/camera/presets/apply", { name });
     camMsg(`preset “${name}” applied`);
@@ -4083,9 +4724,13 @@ const camMsg = debounce(t => { $("camSetMsg").textContent = t;
 
 const RES_PRESETS = [[640, 480], [800, 600], [1024, 768], [1280, 720],
                      [1600, 1200], [1920, 1080], [2048, 1536]];
-function renderResOptions(res) {
+function renderResOptions(res, modes) {
   const cur = `${res.width}x${res.height}`;
-  const opts = RES_PRESETS.map(([w, h]) => `${w}x${h}`);
+  // the camera's OWN modes when the driver will say (Linux); the fixed
+  // presets only as a fallback — offering a size the sensor lacks just
+  // makes the driver snap elsewhere and the page lie about it
+  const opts = (modes && modes.length ? modes : RES_PRESETS)
+    .map(([w, h]) => `${w}x${h}`);
   if (res.width && !opts.includes(cur)) opts.push(cur);
   $("camRes").innerHTML = opts.map(o =>
     `<option${o === cur ? " selected" : ""}>${o.replace("x", " × ")}</option>`).join("");
@@ -4095,10 +4740,137 @@ function renderResOptions(res) {
 }
 
 function renderCamModel(s) {
+  const labels = s.model_labels || {};
+  const sel = $("camModelSel");
+  sel.innerHTML = Object.entries(labels)
+    .map(([k, v]) => `<option value="${k}"${k === s.camera_model ? " selected" : ""}>${v}</option>`)
+    .join("");
   $("camDetected").textContent = s.detected
-    ? `${(s.model_labels || {})[s.detected] || s.detected}`
-    : "camera: detection unavailable";
+    ? (s.detected === s.camera_model ? "detected — selected automatically"
+       : `detected: ${labels[s.detected] || s.detected}`)
+    : "not recognized — pick the closest match";
 }
+$("camModelSel").onchange = async () => {
+  camReloadGuard();
+  try {
+    await postJson("/api/camera/model", { model: $("camModelSel").value });
+    camMsg("camera set — controls follow this model");
+    $("camStream").src = streamURL();
+    loadCamSettings();
+  } catch (e) { camMsg(e.message); }
+};
+
+// live camera controls: ranges come from the DRIVER (they differ wildly
+// between modules), so the sliders are built from what the app reports
+function renderCamControls(s) {
+  // a camera whose controls do nothing (the OV3660) gets no tuning UI at
+  // all — its page stays exactly as it always was
+  $("camCtlCard").style.display = s.tunable ? "" : "none";
+  if (!s.tunable) return;
+  camCtlNow = {};
+  (s.controls || []).forEach(c => { camCtlNow[c.name] = c.value; });
+  const unlocked = !!s.full_controls;
+  $("camAllCtl").checked = unlocked;
+  $("camCtlRows").style.display = unlocked ? "" : "none";
+  $("camCtlResetRow").style.display = unlocked ? "" : "none";
+  if (!unlocked) { $("camCtlRows").innerHTML = ""; return; }
+  const rows = (s.controls || []).map(c => {
+    const dis = c.supported === false ? " disabled" : "";
+    const off = c.supported === false
+      ? ` <span class="muted" style="font-size:11px">not on this camera</span>` : "";
+    if (c.type === "bool") {
+      return `<div class="ctl"><label class="inline check" style="margin:0"><input type="checkbox"
+                class="camCtl" data-name="${c.name}"${c.value ? " checked" : ""}${dis}>
+                ${c.label}</label>${off}</div>`;
+    }
+    return `<div class="ctl"><label>${c.label}
+              <b class="camCtlVal" data-for="${c.name}">${c.value}</b>
+              <span class="muted" style="font-size:11px">(${c.min}…${c.max})</span>${off}</label>
+            <input type="range" class="camCtl" data-name="${c.name}"
+                   min="${c.min}" max="${c.max}" step="${c.step || 1}"
+                   value="${c.value}"${dis}></div>`;
+  }).join("");
+  $("camCtlRows").innerHTML = rows ||
+    `<span class="muted" style="font-size:12px">no controls for this camera</span>`;
+  document.querySelectorAll(".camCtl").forEach(el => {
+    const send = debounce(async () => {
+      const name = el.dataset.name;
+      const value = el.type === "checkbox" ? el.checked : +el.value;
+      try {
+        // preview: the camera changes now, the SAVED settings only on Save
+        const j = await postJson("/api/camera/settings",
+                                 { name, value, preview: true });
+        camCtlNow[name] = value;
+        if (j.auto_off) camCtlNow[j.auto_off] = false;
+        camDirtyUi();
+        // the driver ignores a manual value while its auto is on, so the
+        // server turns that auto off — reflect it instead of lying
+        if (j.auto_off) {
+          const a = document.querySelector(`.camCtl[data-name="${j.auto_off}"]`);
+          if (a) a.checked = false;
+          msg("camCtlMsg", `${j.auto_off.replace(/_/g, " ")} turned off so this takes effect`
+                           + " — press Save to keep it", true);
+        } else msg("camCtlMsg", `${name} → ${value} — press Save to keep it`, true);
+      } catch (e) { msg("camCtlMsg", e.message, false); }
+    }, 180);
+    el.oninput = () => {
+      const lab = document.querySelector(`.camCtlVal[data-for="${el.dataset.name}"]`);
+      if (lab) lab.textContent = el.value;
+      send();
+    };
+    el.onchange = send;
+  });
+}
+$("camAllCtl").onchange = async () => {
+  camReloadGuard();
+  try {
+    await postJson("/api/camera/settings", { full_controls: $("camAllCtl").checked });
+    loadCamSettings();
+  } catch (e) { msg("camCtlMsg", e.message, false); }
+};
+$("btnCamCal").onclick = async () => {
+  if (!confirm("Calibrate white balance?\n\nDo this with a case at the camera and the "
+      + "light ring in its FINAL position. Exposure stays automatic.\n\n"
+      + "Takes about fifteen seconds.")) return;
+  $("btnCamCal").disabled = true;
+  try {
+    await postJson("/api/camera/calibrate", {});
+    let misses = 0;
+    const poll = setInterval(async () => {
+      let j;
+      try { j = await api("/api/camera/calibrate/status"); misses = 0; }
+      catch {
+        // a poll that keeps failing (app restarting, link gone) used to
+        // leave this timer running and the button greyed forever
+        if (++misses < 8) return;
+        clearInterval(poll);
+        $("btnCamCal").disabled = false;
+        msg("camCtlMsg", "lost contact with the machine while calibrating — check the camera page", false);
+        return;
+      }
+      if (j.running) { msg("camCtlMsg", `calibrating — ${j.stage}…`, true); return; }
+      clearInterval(poll);
+      $("btnCamCal").disabled = false;
+      if (j.error) { msg("camCtlMsg", j.error, false); return; }
+      const r = j.result || {};
+      msg("camCtlMsg", `white balance locked at ${r.white_balance_temp}; exposure stays automatic`
+        + (r.wb_exact ? "" : " — colour is as close as this camera reaches"), true);
+      loadCamSettings();
+    }, 1500);
+  } catch (e) {
+    $("btnCamCal").disabled = false;
+    msg("camCtlMsg", e.message, false);
+  }
+};
+$("btnCamCtlReset").onclick = async () => {
+  camReloadGuard();
+  try {
+    await postJson("/api/camera/settings", { reset: true });
+    msg("camCtlMsg", "camera back to its own defaults", true);
+    $("camStream").src = streamURL();
+    loadCamSettings();
+  } catch (e) { msg("camCtlMsg", e.message, false); }
+};
 
 async function loadCamSettings() {
   try {
@@ -4106,7 +4878,8 @@ async function loadCamSettings() {
     camSettingsLoaded = true;
     $("camIndex").value = s.index;
     if (s.model_labels) renderCamModel(s);
-    if (s.resolution) renderResOptions(s.resolution);
+    renderCamControls(s);
+    if (s.resolution) renderResOptions(s.resolution, s.modes);
     $("zoomF").value = s.zoom.factor; $("zoomX").value = s.zoom.x; $("zoomY").value = s.zoom.y;
     showZoomVals();
 
@@ -4187,6 +4960,7 @@ function showZoomVals() {
   $(id).oninput = () => { showZoomVals(); camDirtyUi(); pushZoomPreview(); });
 
 $("btnCamIndex").onclick = async () => {
+  camReloadGuard();
   try {
     await api("/api/camera/settings", { method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -4313,6 +5087,9 @@ function renderReadiness() {
     else tiers.low++;
   }
   const strip = `<div class="healthStrip">
+    <span style="padding-right:22px; border-right:1px solid var(--line)">
+      <span class="n">${allowed.size}</span><br>
+      <span class="l">classes · total</span></span>
     <span><span class="n" style="color:var(--green)">${tiers.full}</span><br>
       <span class="l">well-fed · 500+</span></span>
     <span><span class="n" style="color:var(--amber)">${tiers.armed}</span><br>
@@ -5033,7 +5810,14 @@ $("btnCodeUpdate").onclick = codeUpdate;
 
 let pollTimer = null;
 async function pollTrain() {
-  const st = await api("/api/train/status");
+  let st;
+  try { st = await api("/api/train/status"); }
+  catch {
+    // one failed poll mid-training used to freeze the progress bar for
+    // the rest of the run (no reschedule on the error path)
+    clearTimeout(pollTimer); pollTimer = setTimeout(pollTrain, 3000);
+    return;
+  }
   const running = st.running;
   $("trIdle").style.display = running || st.result || st.error ? "none" : "";
   $("trRun").style.display = running ? "" : "none";
@@ -5259,9 +6043,9 @@ function showResult(j) {
                            bar: emb.class_tau ?? emb.bar } });
   $("verdict").innerHTML = ok
     ? `<span class="pill ok">SORTED</span> <b style="font-size:20px">&nbsp;${j.category}</b>
-       <span class="muted">→ bin ${j.bin}</span>`
+       <span class="muted">→ bin ${j.bin + 1}</span>`
     : `<span class="pill bad">UNMATCHED</span> <b style="font-size:17px">&nbsp;${whyText}</b>
-       <span class="muted">→ bin ${j.bin} (reject)</span>`;
+       <span class="muted">→ bin ${j.bin + 1} (reject)</span>`;
   if (j.truth) {
     const want = j.truth.stamp;
     const match = ok && j.category === want;
@@ -5280,8 +6064,8 @@ function showResult(j) {
      <span>${k} — ${(v*100).toFixed(1)}%</span></div>`).join("");
 
   $("barsHead").textContent = "Closest matches in the gallery";
-  gate(`Sharpness ≥ ${f.sharpness}`, ex.sharpness,
-       ex.sharpness >= f.sharpness, ex.sharpness === undefined);
+  gate(`Sharpness ≥ ${f.donut_sharpness}`, ex.sharpness,
+       ex.sharpness >= f.donut_sharpness, ex.sharpness === undefined);
   gate(`Match ≥ its class bar (${pc(emb.class_tau ?? emb.bar)})`, pc(emb.sim),
        emb.sim >= (emb.class_tau ?? emb.bar), emb.sim == null);
   gate(`Clear of the runner-up (gap ≥ 3%)`, pc(emb.margin),
@@ -5322,7 +6106,7 @@ function renderTestBin(bin) {
   el.innerHTML = `<h3>Destination</h3>
     <div style="display:flex; gap:10px; align-items:center">
       <span style="font-weight:800; color:var(--bg); background:var(--brass);
-        border-radius:6px; padding:1px 12px">bin ${bin}</span>
+        border-radius:6px; padding:1px 12px">bin ${bin + 1}</span>
       <span class="muted" style="font-size:12.5px">holds: ${label}</span>
     </div>`;
 }
@@ -5358,7 +6142,18 @@ function renderBins() {
   list.innerHTML = "";
   const nSlots = (STATE.slots_enabled || STATE.bins).length || 8;
   list.style.setProperty("--slots", nSlots);
+  list.style.setProperty("--cols", nSlots > 9 ? 4 : 3);
   STATE.bins = STATE.bins.map(binGroup);
+  // servo carousel: the last slot is the open pocket (no door). Both
+  // special tokens always live somewhere — they default to the pocket and
+  // can only be MOVED to a gated bin (× on the pill sends them back). A
+  // map that lacks one shows it on the pocket; the next save writes it.
+  const servo = STATE.firmware === "pico-servo";
+  const last = STATE.bins.length - 1;
+  if (servo && last >= 1) {
+    for (const tok of ["UNMATCHED", "OVERFLOW"])
+      if (!STATE.bins.some(g => g.includes(tok))) STATE.bins[last].push(tok);
+  }
   const en = new Set(STATE.slots_enabled || STATE.bins.map((_, i) => i));
   const assigned = new Set(STATE.bins.flat());            // literal entries
   const covered = new Set(STATE.bins.flatMap(binClasses)); // incl. family members
@@ -5369,24 +6164,30 @@ function renderBins() {
   const famFree = Object.keys(STATE.families || {})
     .filter(n => !assigned.has(FAM + n)).sort();
   STATE.bins.forEach((group, i) => {
-    if (!en.has(i)) return;      // disabled slots: no tray, no editor
+    const open = servo && i === last;          // the open pocket card
+    if (!en.has(i) && !open) return; // disabled slots: no tray, no editor
     const isUM = group.includes("UNMATCHED");
     const isOF = group.includes("OVERFLOW");
     const div = document.createElement("div");
     div.className = "binSlot" + (isUM ? " um" : isOF ? " of" : "");
     div.dataset.bin = i;
+    // × on a token: the servo carousel sends it back to the open pocket
+    // (never removed); elsewhere OVERFLOW is removed and UNMATCHED stays
+    const tokRm = tok => (open || (tok === "UNMATCHED" && !servo)) ? ""
+      : `<a class="binRm" data-slot="${i}" data-stamp="${tok}"
+           title="${servo ? "send back to the open pocket" : "remove"}"
+           style="cursor:pointer; margin-left:5px; opacity:.7">×</a>`;
     const chips = group.map(s => s === "UNMATCHED"
       ? `<span class="pill" style="flex:none; color:var(--um);
            border:1px solid var(--um); border-radius:999px; padding:1px 10px"
-           title="the catch-all: true rejects land here (and, without an
-           OVERFLOW bin, classified cases with no bin)">UNMATCHED</span>`
+           title="${servo ? "rejects land here — cases the model could not read"
+             : `the catch-all: true rejects land here (and, without an
+           OVERFLOW bin, classified cases with no bin)`}">UNMATCHED${tokRm("UNMATCHED")}</span>`
       : s === "OVERFLOW"
       ? `<span class="pill" style="flex:none; color:var(--blue);
            border:1px solid var(--blue); border-radius:999px; padding:1px 10px"
            title="confident reads whose class has no bin land here — the
-           UNMATCHED tray then holds only true rejects">OVERFLOW
-           <a class="binRm" data-slot="${i}" data-stamp="OVERFLOW"
-           style="cursor:pointer; margin-left:5px; opacity:.7">×</a></span>`
+           UNMATCHED tray then holds only true rejects">OVERFLOW${tokRm("OVERFLOW")}</span>`
       : s.startsWith(FAM)
       ? `<span class="chip sel" style="cursor:default; border-color:var(--brass); color:var(--brass)"
            title="${famMembers(s).join(", ") || "empty family"}">${famName(s)}
@@ -5410,8 +6211,26 @@ function renderBins() {
       : group.length
       ? `<span class="lbl">${named}</span>`
       : `<span class="lbl dim">nothing mapped</span>`;
-    if (!group.length) div.classList.add("emptybin");
     const cnt0 = binCountFor(i);
+    if (open) {
+      // full-width row: badge · "Open pocket" · pills (no ×, no editor,
+      // no classes); live count + breakdown + report link on a 2nd row
+      div.className = "binSlot open" + (isUM ? " um" : "");
+      div.innerHTML = `<div class="binLevel" id="binLevel${i}"></div>
+        <div class="binHead"><span class="num">${i + 1}</span>
+        <span class="lbl" title="no door — also catches anything that misses
+          a door">open pocket</span></div>
+        <div class="binChips">${chips}</div>
+        <div class="sgCount" id="binCount${i}"
+          style="${cnt0 ? "" : "display:none"}">${cnt0 || ""}</div>
+        <div class="sgStats" id="sgStats${i}"></div>
+        <div class="sgFill"><i id="sgFill${i}" style="width:0"></i></div>
+        <div class="levelTxt" id="binLvlTxt${i}"></div>
+        <div class="sgView" id="sgView${i}" style="display:none"></div>`;
+      list.appendChild(div);
+      return;
+    }
+    if (!group.length) div.classList.add("emptybin");
     const cap = (STATE.bin_sizes || [])[i] || 0;
     // custom bin color rides the badge inline (um/of/empty keep their
     // CSS colors — red and blue stay reserved, empty stays hollow).
@@ -5420,24 +6239,24 @@ function renderBins() {
       && (STATE.bin_colors || [])[i];
     const numHtml = !isUM && !isOF && group.length
       ? `<span class="num binTint" data-slot="${i}" style="cursor:pointer${
-          tint ? `; background:${tint}` : ""}">${i}</span>`
-      : `<span class="num">${i}</span>`;
-    div.innerHTML = `<div class="binHead">${numHtml}${lbl}</div>
+          tint ? `; background:${tint}` : ""}">${i + 1}</span>`
+      : `<span class="num">${i + 1}</span>`;
+    div.innerHTML = `<div class="binLevel" id="binLevel${i}"></div>
+      <div class="binHead">${numHtml}${lbl}</div>
       <div class="binChips">${chips}<span class="addGhost"
         data-slot="${i}">+ add</span></div>
       <div class="sgCount" id="binCount${i}"
         style="${cnt0 ? "" : "display:none"}">${cnt0 || ""}</div>
       <div class="sgStats" id="sgStats${i}"></div>
       <div class="sgFill"><i id="sgFill${i}" style="width:0"></i></div>
+      <div class="levelTxt" id="binLvlTxt${i}"></div>
       <div class="capRow"><span class="capGhost" data-slot="${i}"
         title="physical capacity in cases — calibrates the fill bar">${
         cap ? `bin size · ${cap}` : "set bin size"}</span><input type="number"
         class="capIn" data-slot="${i}" min="0" step="10"
         value="${cap || ""}" placeholder="cases"></div>
       <div class="sgView" id="sgView${i}" style="display:none"></div>
-      <input list="binTargets" class="binAdd" data-slot="${i}"
-        autocomplete="off" spellcheck="false"
-        placeholder="class, family, UNMATCHED, OVERFLOW…">`;
+`;
     list.appendChild(div);
   });
   list.querySelectorAll(".capGhost").forEach(g => g.onclick = () => {
@@ -5455,75 +6274,23 @@ function renderBins() {
     e.stopPropagation();
     binColorPop(+b.dataset.slot);
   });
-  list.querySelectorAll(".addGhost").forEach(g => g.onclick = () => {
-    const inp = g.closest(".binSlot").querySelector(".binAdd");
-    inp.classList.add("open");
-    inp.focus();
-  });
-  // one shared datalist serves every card's picker: free classes,
-  // unplaced families, and the two special tokens
-  $("binTargets").innerHTML =
-    famFree.map(n => `<option value="${FAM}${n}" label="${n} family (${
-      ((STATE.families || {})[n] || []).length} classes)">`).join("") +
-    free.map(s => `<option value="${s}">`).join("") +
-    `<option value="UNMATCHED" label="make this slot the catch-all">` +
-    `<option value="OVERFLOW" label="classified · no bin">`;
+  list.querySelectorAll(".addGhost").forEach(g =>
+    g.onclick = () => binPickOpen(+g.dataset.slot));
   list.classList.toggle("locked",
     !!(lastRunStatus && lastRunStatus.running));
   renderBinStats();
   list.querySelectorAll(".binRm").forEach(a => a.onclick = () => {
     const g = STATE.bins[+a.dataset.slot];
-    g.splice(g.indexOf(a.dataset.stamp), 1);
-    saveBins();
-  });
-  list.querySelectorAll(".binAdd").forEach(inp => {
-    inp.onblur = () => { if (!inp.value.trim()) inp.classList.remove("open"); };
-  });
-  list.querySelectorAll(".binAdd").forEach(inp => inp.onchange = () => {
-    const rawV = inp.value.trim();
-    if (!rawV) return;
-    const i = +inp.dataset.slot;
-    const up = rawV.toUpperCase();
-    const moveToken = tok => {           // UNMATCHED/OVERFLOW relocate
-      STATE.bins.forEach(g => {
-        const k = g.indexOf(tok);
-        if (k >= 0) g.splice(k, 1);
-      });
-      STATE.bins[i].push(tok);
-    };
-    if (up === "UNMATCHED") moveToken("UNMATCHED");
-    else if (up === "OVERFLOW") moveToken("OVERFLOW");
-    else if (rawV.toLowerCase().startsWith(FAM)) {
-      const name = rawV.slice(FAM.length).toUpperCase();
-      if (!(STATE.families || {})[name]) {
-        alert(`No family named "${name}".`);
-        inp.value = "";
-        return;
-      }
-      if (STATE.bins.some(g => g.includes(FAM + name))) {
-        alert(`family:${name} already has a slot.`);
-        inp.value = "";
-        return;
-      }
-      STATE.bins[i].push(FAM + name);
-    } else if (STATE.stamp_labels.includes(up)) {
-      const at = STATE.bins.findIndex(g => g.includes(up));
-      if (at >= 0) {
-        alert(`${up} is already in bin ${at} — remove it there first.`);
-        inp.value = "";
-        return;
-      }
-      STATE.bins[i].push(up);
-    } else {
-      alert(`No class named "${up}" — bins only hold existing classes.`);
-      inp.value = "";
-      return;
-    }
+    const s = a.dataset.stamp;
+    g.splice(g.indexOf(s), 1);
+    // servo carousel: a special token goes home to the open pocket
+    if (servo && (s === "UNMATCHED" || s === "OVERFLOW")
+        && !STATE.bins[last].includes(s)) STATE.bins[last].push(s);
     saveBins();
   });
   $("flStamp").value = STATE.floors.stamp_confidence ?? 0.85;
   $("vFlStamp").textContent = Math.round($("flStamp").value * 100) + "%";
-  $("flSharp").value = STATE.floors.sharpness;
+  $("flSharp").value = STATE.floors.donut_sharpness;
 }
 $("flStamp").oninput = () =>
   $("vFlStamp").textContent = Math.round($("flStamp").value * 100) + "%";
@@ -5564,13 +6331,21 @@ function renderBinStats() {
     st.textContent = txt;               // class names stay text, not HTML
     if (full) st.insertAdjacentHTML("afterbegin",
       `<b style="color:var(--red)">FULL</b>${txt ? " · " : ""}`);
+    // a bin with a size fills its whole tile like the tray (option A);
+    // one without keeps the thin bar, relative to the busiest bin
+    const pct = cap ? Math.min(100, 100 * cnt / cap) : 100 * cnt / maxC;
+    const lvl = $(`binLevel${i}`), lt = $(`binLvlTxt${i}`);
+    if (lvl) {
+      lvl.style.height = cap && cnt ? pct + "%" : "0";
+      lvl.classList.toggle("full", !!full);
+      lvl.classList.toggle("warn", !full && !!cap && pct >= 80);
+    }
+    if (lt) lt.textContent = cap && cnt ? `${Math.round(pct)}% of ${cap}` : "";
     const f = $(`sgFill${i}`);
     if (f) {
-      const pct = cap ? Math.min(100, 100 * cnt / cap) : 100 * cnt / maxC;
+      f.parentElement.style.display = cap || !cnt ? "none" : "";
       f.style.width = cnt ? Math.max(4, pct) + "%" : "0";
-      f.style.background = full ? "var(--red)"
-        : cap && pct >= 80 ? "var(--amber)" : "";
-      f.parentElement.title = cap ? `${cnt} / ${cap} cases` : "";
+      f.parentElement.title = "";
     }
     const isUM = binGroup(g).includes("UNMATCHED");
     // the catch-all's breakdown holds the model's best GUESS for each
@@ -5607,7 +6382,77 @@ function renderBinStats() {
 
 // the top bar wears the machine's state: Start when idle, live stats +
 // Stop while sorting, the tally + report actions when finished
+// A paused run, the no-brass ask and a jammed feeder need someone at the
+// machine: one card, bottom centre, on every tab.
+function runResume() {
+  const s = lastRunStatus || {};
+  return postJson(s.prompt ? "/api/run/prompt" : "/api/run/resume",
+                  s.prompt ? { action: "resume" } : {}).catch(e => alert(e.message));
+}
+function runAlertCard(html) {
+  let el = $("runAlert");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "runAlert";
+    el.style.cssText = "position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:90;" +
+      "background:var(--panel);border:2px solid var(--amber);border-radius:12px;padding:14px 18px;" +
+      "max-width:640px;box-shadow:0 10px 40px rgba(0,0,0,.55);display:none";
+    document.body.appendChild(el);
+  }
+  if (el.dataset.h !== html) { el.dataset.h = html; el.innerHTML = html; }
+  el.style.display = html ? "" : "none";
+}
+function renderRunAlert(s) {
+  if (s && s.running && s.prompt)
+    return runAlertCard(`<b style="color:var(--amber)">No brass arriving</b> — the run finishes on its own in
+      ${Math.ceil(s.prompt.left_s || 0)} s. Out of brass, or a case stuck in the feed tube? Clear it and Resume.
+      <div style="margin-top:10px;display:flex;gap:8px"><button class="primary" onclick="runResume()">Resume</button>
+      <button class="ghost" onclick="postJson('/api/run/prompt', {action: 'finish'})">Finish run now</button></div>`);
+  if (s && s.running && s.paused && s.paused.reason !== "manual")
+    return runAlertCard(`<b style="color:var(--amber)">${s.paused.reason === "tube_jam" ? "Tube jam" : "Feeder jammed"}</b> —
+      ${s.paused.reason === "tube_jam"
+        ? "cases stopped reaching the wheel but the feeder's tube is full: a case is stuck in the drop tube."
+        : "the feeder plate stalled and couldn't clear itself. Clear the bowl."}
+      The run is paused, doors closed. <div style="margin-top:10px;display:flex;gap:8px">
+      <button class="primary" onclick="runResume()">Resume</button>
+      <button class="ghost" onclick="postJson('/api/run/finish', {}).catch(e => alert(e.message))">Finish run</button></div>`);
+  let fdJam = false;
+  try { fdJam = FEEDER.on && FEEDER.last && FEEDER.last.state === "FAULT"; } catch (_) {}  // declared further down
+  if (s && s.running) fdJam = false;       // a run pauses for it instead (card above)
+  if (fdJam)
+    return runAlertCard(`<b style="color:var(--amber)">Feeder jammed</b> — the plate stalled and couldn't clear
+      itself. Clear the bowl, then restart it. <div style="margin-top:10px;display:flex;gap:8px">
+      <button class="primary" onclick="feederCmd({clear: true, run: true})">Clear and restart feeder</button>
+      <button class="ghost" onclick="feederCmd({clear: true, run: false})">Stop feeder</button></div>`);
+  runAlertCard("");
+}
+
+// Windows with the home network set to "Public" blocks every machine from
+// reaching this trainer — say so, with the fix, until it's fixed
+async function checkNetworkHint() {
+  try {
+    const j = await api("/api/host/network_hint");
+    let el = $("netHint");
+    if (!j.public_network) { if (el) el.remove(); return; }
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "netHint";
+      el.style.cssText = "position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:95;" +
+        "background:var(--panel);border:2px solid var(--amber);border-radius:12px;padding:12px 16px;" +
+        "max-width:680px;box-shadow:0 10px 40px rgba(0,0,0,.55)";
+      el.innerHTML = `<b style="color:var(--amber)">Windows has this network set to Public</b> — your SortIQ
+        machines can't reach this trainer. Fix: <b>Settings → Network &amp; internet → your connection →
+        Network profile type → Private network</b>.
+        <button class="ghost" style="margin-left:8px" onclick="this.parentNode.remove()">OK</button>`;
+      document.body.appendChild(el);
+    }
+  } catch (_) {}
+}
+checkNetworkHint();
+setInterval(checkNetworkHint, 600000);
+
 function renderSortBar(s) {
+  renderRunAlert(s);
   const bar = $("sortBar");
   if (!bar) return;
   // batch captures belong to the Collect page — the Sort page never
@@ -5637,7 +6482,24 @@ function renderSortBar(s) {
     // a pending stop must LOOK taken the moment it's pressed — the loop
     // finishes the case (or the whole end-of-brass flush) first, and
     // that silence read as an ignored button in the field
-    const live = s.stopping
+    const PZ = { manual: "PAUSED", tube_jam: "PAUSED — TUBE JAM", feeder_jam: "PAUSED — FEEDER JAMMED" };
+    const live = s.prompt
+      ? `<div class="sgLive" style="color:var(--amber)">
+          <span class="dot" style="background:var(--amber); box-shadow:0 0 8px var(--amber)"></span>
+          NO BRASS ARRIVING — finishing in ${Math.ceil(s.prompt.left_s || 0)} s</div>`
+      : s.paused
+      ? `<div class="sgLive" style="color:var(--amber)">
+          <span class="dot" style="background:var(--amber); box-shadow:0 0 8px var(--amber)"></span>
+          ${PZ[s.paused.reason] || "PAUSED"}</div>`
+      : s.pausing
+      ? `<div class="sgLive" style="color:var(--amber)">
+          <span class="dot" style="background:var(--amber); box-shadow:0 0 8px var(--amber)"></span>
+          PAUSING at the next case</div>`
+      : s.wait_note
+      ? `<div class="sgLive" style="color:var(--blue)">
+          <span class="dot" style="background:var(--blue); box-shadow:0 0 8px var(--blue)"></span>
+          ${s.wait_note.toUpperCase()}</div>`
+      : s.stopping
       ? `<div class="sgLive" style="color:var(--amber)">
           <span class="dot" style="background:var(--amber); box-shadow:0 0 8px var(--amber)"></span>
           STOPPING — sorting what's already in the wheel</div>`
@@ -5651,11 +6513,17 @@ function renderSortBar(s) {
       <div class="sgStat"><b>${s.rate}<span style="font-size:13px; color:var(--dim)">/s</span></b><span>rate</span></div>
       <div class="sgRight">
         ${live}
+        ${s.prompt || s.paused
+          ? `<button class="primary" onclick="runResume()">Resume</button>`
+          : `<button class="ghost" ${s.pausing || s.stopping ? "disabled" : ""}
+              onclick="postJson('/api/run/pause', {}).catch(e => alert(e.message))">❚❚ Pause</button>`}
+        ${s.prompt ? `<button class="ghost" onclick="postJson('/api/run/prompt', {action: 'finish'})">Finish now</button>` : ""}
         <button style="background:var(--red); border-color:var(--red);
           color:#fff; font:inherit; font-weight:600; border-radius:7px;
           padding:8px 18px; border:1px solid${s.stopping
             ? "; opacity:.35" : ""}" ${s.stopping ? "disabled" : ""}
           onclick="$('btnRunStop').click()">■ Stop</button>
+        <button class="ghost" onclick="toggleRunOpts()">Options</button>
       </div>`;
   } else if (s && s.run_id) {
     const extra = rs ? `
@@ -5667,7 +6535,11 @@ function renderSortBar(s) {
       <div class="sgStat"><b style="color:var(--amber)">${s.rejected}</b><span>unmatched</span></div>
       <div class="sgStat"><b>${s.jams}</b><span>jams</span></div>${extra}
       <div class="sgRight">
-        <span class="muted" style="font-size:12.5px">${s.run_id} · finished</span>
+        <div class="sgLive" style="color:${s.end_reason === "empty_pockets"
+          || s.end_reason === "fault" || s.end_reason === "camera_lost"
+          ? "var(--red)" : "var(--dim)"}" title="${s.end_note || ""}">
+          <span class="dot" style="background:currentColor"></span>
+          FINISHED · ${END_WORDS[s.end_reason] || s.end_reason || "done"}</div>
         <button class="ghost" onclick="repOpen('${s.run_id}', 'summary')">Report</button>
         ${s.rejected ? `<button class="ghost" style="color:var(--amber)"
           onclick="repOpen('${s.run_id}', 'bin', ${STATE.unmatched_bin ?? 0})"
@@ -5676,6 +6548,7 @@ function renderSortBar(s) {
           color:var(--bg); font:inherit; font-weight:700; border-radius:7px;
           padding:8px 18px; border:1px solid"
           onclick="$('btnRunStart').click()">▶ Sort again</button>
+        <button class="ghost" onclick="toggleRunOpts()">Options</button>
       </div>`;
   } else {
     bar.innerHTML = `
@@ -5688,16 +6561,63 @@ function renderSortBar(s) {
           color:var(--bg); font:inherit; font-weight:700; border-radius:7px;
           padding:8px 18px; border:1px solid"
           onclick="$('btnRunStart').click()">▶ Start</button>
+        <button class="ghost" onclick="toggleRunOpts()">Options</button>
       </div>`;
   }
 }
 
-// bin badge colors: six to pick from (red and blue stay reserved for
+// how a finished run ended, in the bar's words
+const END_WORDS = { out_of_brass: "out of brass", stopped: "stopped",
+  complete: "complete", fault: "machine fault", camera_lost: "camera lost",
+  empty_pockets: "camera saw empty pockets" };
+
+function toggleRunOpts() {
+  const c = $("runOptCard");
+  c.hidden = !c.hidden;
+  const d = c.querySelector("details");
+  if (d && !c.hidden) d.open = true;
+}
+
+// SORT CAMERA: Live (the real stream, default) or Last case (the head
+// crop the model judged). The MJPEG stream runs only while it is on
+// screen — Sort tab active, browser tab visible, Live selected — so it
+// costs the Pi nothing otherwise. fast=1: raw frames, no overlay.
+let sortCamView = "last";
+try { sortCamView = localStorage.getItem("sortCamView") || "last"; } catch {}
+function syncSortCam() {
+  const live = sortCamView === "live";
+  document.querySelectorAll("#camSw button").forEach(b =>
+    b.classList.toggle("on", b.dataset.v === sortCamView));
+  const camOk = STATE && STATE.camera === "ok";
+  const show = live && camOk && $("run").classList.contains("active")
+    && !document.hidden;
+  const img = $("runLiveImg");
+  if (show) {
+    if (!(img.src || "").includes("/api/stream"))
+      img.src = "/api/stream?fast=1&" + Date.now();
+  } else if (img.getAttribute("src")) img.removeAttribute("src");
+  img.hidden = !show;
+  const lastImg = $("runLastImg");
+  lastImg.hidden = live || !lastImg.getAttribute("src");
+  $("runCamMsg").hidden = live ? show : !lastImg.hidden ? true : false;
+  $("runCamMsg").textContent = live
+    ? (STATE && STATE.camera === "idle" ? "the camera opens on first use"
+       : "the camera is not available")
+    : "no case yet — start a run";
+}
+document.querySelectorAll("#camSw button").forEach(b => b.onclick = () => {
+  sortCamView = b.dataset.v;
+  try { localStorage.setItem("sortCamView", sortCamView); } catch {}
+  syncSortCam();
+});
+document.addEventListener("visibilitychange", syncSortCam);
+
+// bin badge colors: seven to pick from (red and blue stay reserved for
 // UNMATCHED and OVERFLOW), clicking the selected swatch clears back to
 // brass. Machine-scoped like bin sizes — the color names a tray on the
 // table. Mirrors the server's BIN_PALETTE.
-const BIN_PALETTE = ["#e8d44d", "#4cc46a", "#a78bfa",
-                     "#f08c3a", "#3fc8c8", "#e879b9"];
+const BIN_PALETTE = ["#e5e7eb", "#4cc46a", "#a78bfa",
+                     "#f08c3a", "#3fc8c8", "#e879b9", "#a3e635"];
 
 function binColorPop(i) {
   const was = document.querySelector(".colorPop");
@@ -5744,6 +6664,158 @@ async function saveBinSize(inp) {
   renderBins();
 }
 
+// ---- the bin picker: '+ add' on a card -------------------------------
+let binPickSlot = null;
+function binPickOpen(i) {
+  binPickSlot = i;
+  const bins = STATE.bins;
+  const where = {};                                 // token -> bin index
+  bins.forEach((g, k) => g.forEach(s => { where[s] = k; }));
+  const fams = Object.keys(STATE.families || {}).sort();
+  // classes by how much brass you have of them (most first), then A–Z:
+  // the makes that fill a bin sit at the top instead of "1776"
+  const nImg = ((STATE.datasets || {}).real || {}).raw || {};
+  // A–Z by default; the "sort by count" box (remembered per browser)
+  // puts the makes with the most images first
+  let byCount = false;
+  try { byCount = localStorage.getItem("binPickByCount") === "1"; } catch {}
+  $("binPickByCount").checked = byCount;
+  const stamps = [...STATE.stamp_labels].sort((a, b) =>
+    (byCount && ((nImg[b] || 0) - (nImg[a] || 0))) || a.localeCompare(b));
+  // ticked = in THIS bin (untick to remove); dimmed "· bin K" = placed in
+  // another bin (tick it to MOVE it here); plain = free to add
+  const box = (val, label, sub, k) => {
+    const placed = k !== undefined && k !== i;
+    const here = k === i;
+    // two lines beside the box: the name, then the count and — when it
+    // sits in another bin — that bin's badge in the bin's own colour
+    const g = placed ? bins[k] : null;
+    const tint = !placed ? "" : g.includes("UNMATCHED") ? "var(--um)"
+      : g.includes("OVERFLOW") ? "var(--blue)" : (STATE.bin_colors || [])[k] || "var(--brass)";
+    const badge = placed ? `<span style="display:inline-block; font-size:10.5px; font-weight:800;
+        color:var(--bg); background:${tint}; border-radius:5px; padding:0 6px; line-height:15px">bin ${k + 1}</span>` : "";
+    const line2 = [sub, badge].filter(Boolean).join(" ");
+    return `<label class="bpItem" data-text="${label.toLowerCase()}" data-n="${nImg[val] || 0}" style="display:flex; gap:8px;
+        align-items:center; font-size:12.5px; cursor:pointer; min-width:0; opacity:${placed ? ".7" : "1"}"
+        title="${placed ? `in bin ${k + 1} — tick to move it here` : here ? "in this bin — untick to remove" : ""}">
+      <input type="checkbox" class="bpChk" value="${val}" data-here="${here ? 1 : 0}" data-from="${placed ? k : ""}"
+        ${here ? "checked" : ""} style="margin:0; flex:none">
+      <span style="display:flex; flex-direction:column; line-height:1.25; min-width:0">
+        <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis">${label}</span>
+        ${line2 ? `<span class="muted" style="font-size:11px; white-space:nowrap">${line2}</span>` : ""}
+      </span></label>`;
+  };
+  const grid = 'style="display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:8px 14px; align-items:center"';
+  const isUM = bins[i].includes("UNMATCHED"), isOF = bins[i].includes("OVERFLOW");
+  // servo carousel: the tokens' home is the open pocket (last slot) —
+  // ticking moves one here, unticking sends it back, never removed
+  const servo = STATE.firmware === "pico-servo", pocket = bins.length;
+  const line = 'style="display:flex; gap:8px; align-items:center; font-size:12.5px; white-space:nowrap; flex-wrap:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0"';
+  $("binPickBody").innerHTML =
+    (fams.length ? `<div class="msTile"><h4>Families <span class="muted" style="text-transform:none; letter-spacing:0">— a family's classes follow it</span></h4>
+      <div ${grid}>${fams.map(n => box(FAM + n, n, `×${((STATE.families || {})[n] || []).length}`, where[FAM + n])).join("")}</div></div>` : "") +
+    `<div class="msTile"><h4>Classes</h4>
+      <div ${grid} id="binPickClasses">${stamps.map(s => box(s, s, nImg[s] ? `×${nImg[s]}` : "", where[s])).join("")}</div></div>` +
+    `<div class="msTile"><h4>Special</h4>
+      <div style="display:grid; gap:8px">
+      <label class="bpItem" data-text="unmatched rejects catch-all" ${line}>
+        <input type="checkbox" class="bpTok" value="UNMATCHED" ${isUM ? "checked" : ""}${isUM && !servo ? " disabled" : ""} style="margin:0"> UNMATCHED
+        <span class="muted">${servo
+          ? (isUM ? `rejects land here — untick to send it back to bin ${pocket}`
+                  : `send rejects here (now bin ${where.UNMATCHED !== undefined ? where.UNMATCHED + 1 : pocket})`)
+          : isUM ? "this bin is the catch-all — to move it, tick UNMATCHED in another bin"
+          : `make this bin the catch-all${where.UNMATCHED !== undefined ? ` (now bin ${where.UNMATCHED + 1})` : ""}`}</span></label>
+      <label class="bpItem" data-text="overflow classified no bin" ${line}>
+        <input type="checkbox" class="bpTok" value="OVERFLOW" ${isOF ? "checked" : ""} style="margin:0"> OVERFLOW
+        <span class="muted">classified cases whose class has no bin${servo
+          ? (isOF ? ` — untick to send it back to bin ${pocket}`
+                  : ` (now bin ${where.OVERFLOW !== undefined ? where.OVERFLOW + 1 : pocket})`)
+          : where.OVERFLOW !== undefined && !isOF ? ` (now bin ${where.OVERFLOW + 1})` : isOF ? " — untick to remove" : ""}</span></label>
+      </div></div>`;
+  $("binPickTitle").textContent = `Bin ${i + 1}`;
+  $("binPickFilter").value = "";
+  $("binPickMsg").textContent = "";
+  binPickCount();
+  document.querySelectorAll("#binPickBody .bpChk, #binPickBody .bpTok").forEach(c => c.onchange = binPickCount);
+  $("binPickModal").style.display = "flex";
+  $("binPickFilter").focus();
+}
+function binPickChanges() {
+  const add = [], drop = [], move = [];       // move = [value, fromBin]
+  document.querySelectorAll("#binPickBody .bpChk").forEach(c => {
+    const here = c.dataset.here === "1";
+    if (c.checked && !here) {
+      if (c.dataset.from !== "") move.push([c.value, +c.dataset.from]);
+      else add.push(c.value);
+    }
+    if (!c.checked && here) drop.push(c.value);
+  });
+  return { add, drop, move };
+}
+function binPickCount() {
+  const { add, drop, move } = binPickChanges();
+  const parts = [];
+  if (add.length) parts.push(`+${add.length}`);
+  if (drop.length) parts.push(`−${drop.length}`);
+  if (move.length) parts.push(`↔${move.length} moved here`);
+  $("binPickCount").textContent = parts.length ? parts.join(" · ") : "no changes";
+}
+function binPickClose() { $("binPickModal").style.display = "none"; binPickSlot = null; }
+$("binPickByCount").onchange = () => {
+  // reorder the existing boxes so ticks survive the re-sort
+  const on = $("binPickByCount").checked;
+  try { localStorage.setItem("binPickByCount", on ? "1" : "0"); } catch {}
+  const grid = $("binPickClasses");
+  if (!grid) return;
+  [...grid.children].sort((a, b) =>
+      (on && (+b.dataset.n - +a.dataset.n)) || a.dataset.text.localeCompare(b.dataset.text))
+    .forEach(el => grid.appendChild(el));
+};
+$("binPickFilter").oninput = () => {
+  const q = $("binPickFilter").value.trim().toLowerCase();
+  document.querySelectorAll("#binPickBody .bpItem").forEach(el =>
+    el.style.display = !q || el.dataset.text.includes(q) ? "" : "none");
+};
+$("binPickSave").onclick = async () => {
+  const i = binPickSlot;
+  if (i === null) return;
+  const { add, drop, move: moves } = binPickChanges();
+  const wantUM = document.querySelector('#binPickBody .bpTok[value="UNMATCHED"]').checked;
+  const wantOF = document.querySelector('#binPickBody .bpTok[value="OVERFLOW"]').checked;
+  const before = JSON.stringify(STATE.bins);
+  // the two special tokens live in exactly one bin: ticked here moves
+  // them here. OVERFLOW unticked is removed; UNMATCHED can only move
+  // (the map always needs a catch-all), so its box is locked in its bin
+  const servo = STATE.firmware === "pico-servo", last = STATE.bins.length - 1;
+  const move = (tok, want) => {
+    const had = STATE.bins[i].includes(tok);
+    if (want && !had) {
+      STATE.bins.forEach(g => { const k = g.indexOf(tok); if (k >= 0) g.splice(k, 1); });
+      STATE.bins[i].push(tok);
+    } else if (!want && had && (tok === "OVERFLOW" || servo)) {
+      STATE.bins[i].splice(STATE.bins[i].indexOf(tok), 1);
+      // servo carousel: a token never leaves the map — it goes home to
+      // the open pocket (the editor never opens for the pocket itself)
+      if (servo && !STATE.bins[last].includes(tok)) STATE.bins[last].push(tok);
+    }
+  };
+  move("UNMATCHED", wantUM); move("OVERFLOW", wantOF);
+  drop.forEach(v => { const k = STATE.bins[i].indexOf(v); if (k >= 0) STATE.bins[i].splice(k, 1); });
+  // a move leaves its old bin first, so the one-slot rule holds
+  moves.forEach(([v, from]) => {
+    const k = STATE.bins[from].indexOf(v); if (k >= 0) STATE.bins[from].splice(k, 1);
+    if (!STATE.bins[i].includes(v)) STATE.bins[i].push(v);
+  });
+  add.forEach(v => { if (!STATE.bins[i].includes(v)) STATE.bins[i].push(v); });
+  if (JSON.stringify(STATE.bins) === before) { binPickClose(); return; }
+  $("binPickSave").disabled = true;
+  try {
+    await saveBins();
+    binPickClose();
+    renderBins();
+  } finally { $("binPickSave").disabled = false; }
+};
+
 async function saveBins() {
   const bins = STATE.bins.map(binGroup);
   if (bins.filter(g => g.includes("UNMATCHED")).length !== 1)
@@ -5761,9 +6833,9 @@ async function saveBins() {
 }
 const saveFloors = debounce(async () => {
   // stamp_confidence = the Acceptance slider: a common offset on every
-  // class's self-tuned bar (0.85 neutral). Sharpness is hand-set; the
-  // runner-up margin is fixed in the decider.
-  const floors = { ...STATE.floors, sharpness: +$("flSharp").value,
+  // class's self-tuned bar (0.85 neutral). Sharpness is hand-set (scored
+  // on the case-head donut); the runner-up margin is fixed in the decider.
+  const floors = { ...STATE.floors, donut_sharpness: +$("flSharp").value,
     stamp_confidence: +$("flStamp").value };
   try { await postJson("/api/classes", { floors }); STATE.floors = floors; msg("clMsg", "floors saved ✓", true); }
   catch (e) { msg("clMsg", e.message, false); }
@@ -5834,15 +6906,23 @@ $("btnRunStart").onclick = async () => {
     updateRunChip();                 // so the chip flips immediately
   } catch (e) { msg("runMsg", e.message, false); }
 };
-$("btnRunStop").onclick = () => postJson("/api/run/stop", {}).then(pollRun);
+const runErr = e => msg("runMsg", e.message, false);   // a 409 must say so
+$("btnRunStop").onclick = () => postJson("/api/run/stop", {}).then(pollRun).catch(runErr);
 $("btnClearSlots").onclick = () => {
   if (!confirm("Clear all bin assignments? This empties the bin map (UNMATCHED stays).")) return;
-  postJson("/api/run/clear_slots", {}).then(() => { pollRun(); refresh(); });
+  postJson("/api/run/clear_slots", {}).then(() => { pollRun(); refresh(); }).catch(runErr);
 };
-$("btnResetCounters").onclick = () => postJson("/api/run/reset_counters", {}).then(pollRun);
+$("btnResetCounters").onclick = () => postJson("/api/run/reset_counters", {}).then(pollRun).catch(runErr);
 
 async function pollRun() {
   clearTimeout(runTimer);
+  if (!STATE) {
+    // a reload or deep link onto the Sort tab polls before /api/state has
+    // answered; rendering bins from a null STATE threw and killed the
+    // poller until the tab was clicked again
+    runTimer = setTimeout(pollRun, 300);
+    return;
+  }
   // off the Sort tab (or with the browser tab hidden) the poll only
   // needs counters and run-end detection — no thumbnails, slower tick
   const runVisible = $("run").classList.contains("active")
@@ -5856,7 +6936,9 @@ async function pollRun() {
     return;
   }
   lastRunStatus = s;
-  if (s.error) msg("runMsg", s.error, false);
+  // a batch capture's trouble belongs on the Collect page — that is where
+  // the operator is watching it
+  if (s.error) msg(s.capture ? "colMsg" : "runMsg", s.error, false);
 
   renderSortBar(s);
 
@@ -5882,34 +6964,32 @@ async function pollRun() {
   // Collect page's census card is their home
   if (last && !s.capture && recentKey !== pollRun._key) {
     pollRun._key = recentKey;
-    $("runLast").className = "";
-    $("runLast").innerHTML = `<div class="runCase ${classified(last) ? "" : "rej"}">
-      ${last.thumb ? `<img src="${last.thumb}" alt="current case">` : ""}
-      <div>
-        <div class="caseName">${classified(last) ? last.category : "UNMATCHED"}</div>
-        <div class="caseBadges">
-          <span class="pill dim">case #${last.n}</span>
-          <span class="pill ${classified(last) ? "ok" : "warn"}">bin ${last.bin}</span>
-          <span class="pill dim">conf ${(last.stamp_conf*100).toFixed(0)}%</span>
-          <span class="pill dim">${last.infer_ms} ms</span>
-          ${last.reason === "ok" ? "" : `<span class="pill warn">${
-            last.reason === "no_bin_mapping" ? "no bin"
-            : (REASONS[last.reason] || last.reason)}</span>`}
-        </div>
-      </div></div>`;
-    $("runRecent").className = "";
+    $("runLast").className = "caseLine" + (classified(last) ? "" : " rej");
+    $("runLast").innerHTML = `
+      <span class="caseName">${classified(last) ? last.category : "UNMATCHED"}</span>
+      <span class="numB2" style="background:${binBadgeColor(last.bin)}">${last.bin + 1}</span>
+      <span class="pill dim">${(last.stamp_conf*100).toFixed(0)}%</span>
+      <span class="pill dim">#${last.n}</span>
+      <span class="pill dim">${last.infer_ms} ms</span>
+      ${last.reason === "ok" ? "" : `<span class="pill warn">${
+        last.reason === "no_bin_mapping" ? "no bin"
+        : (REASONS[last.reason] || last.reason)}</span>`}`;
+    if (last.thumb) $("runLastImg").src = last.thumb;
+    syncSortCam();
+    $("runRecent").className = "recentStrip";
     $("runRecent").innerHTML = [...s.recent].reverse().map(r => {
       const ok = classified(r);
       const conf = ok && r.stamp_conf
         ? `<span class="rcConf${r.stamp_conf >= 0.95 ? " hi" : ""}">${
-            Math.round(r.stamp_conf * 100)}%</span>`
-        : `<span class="rcConf"></span>`;
-      return `<div class="recentRow ${ok ? "" : "rej"}">
-        ${r.thumb ? `<img src="${r.thumb}">` : ""}
-        <span class="muted">#${r.n}</span>
-        <span class="cat">${caseLabel(r)}</span>${conf}
-        <span class="numB2" style="background:${binBadgeColor(r.bin)}">${
-          r.bin}</span></div>`;
+            Math.round(r.stamp_conf * 100)}%</span>` : "";
+      const name = r.reason === "ok" ? r.category
+        : r.reason === "no_bin_mapping" ? r.category : "UNMATCHED";
+      return `<div class="rcTile ${ok ? "" : "rej"}" title="${caseLabel(r)}">
+        ${r.thumb ? `<img src="${r.thumb}" alt="">` : `<div class="rcImg"></div>`}
+        <div class="rcName">${name}</div>
+        <div class="rcMeta"><span>#${r.n}</span>${conf}
+          <span class="numB2" style="background:${binBadgeColor(r.bin)}">${
+            r.bin + 1}</span></div></div>`;
     }).join("");
   }
 
@@ -5955,6 +7035,7 @@ async function pollRun() {
       if (el) el.classList.add("drop");
     }
     renderBins._live = s;              // cards read live counts from here
+    syncSortCam();                     // stream follows camera state
     $("binList").classList.toggle("locked", !!s.running);
     renderBinStats();
   }
@@ -5974,28 +7055,25 @@ async function pollRun() {
     banner.style.display = "none";
     runTimer = setTimeout(pollRun, runVisible ? 1000 : 3000);
   } else if (s.finished) {
-    // fork firmware homing telemetry: seek µsteps per feed cycle — a
-    // rising "last" against "worst" is the wheel drifting toward a jam
-    const fs = s.feed_stats ? `<div class="muted" style="font-size:12px;
-        margin-top:4px">feed homing: last ${s.feed_stats.LastHomingSteps}
-        µsteps · worst ${s.feed_stats.MaxHomingSteps} ·
-        ${s.feed_stats.FeedCycles} cycles</div>` : "";
     if (s.capture) {
       // a finished BATCH capture never announces itself here — its
       // story (census, review) lives on the Collect page
       banner.style.display = "none";
+    } else if (s.end_reason === "empty_pockets") {
+      banner.style.display = "";
+      banner.style.borderColor = "var(--red)";
+      banner.innerHTML = `<b>Run stopped</b> — ${s.end_note || ""}`;
     } else if (s.end_reason === "out_of_brass") {
       banner.style.display = "";
+      banner.style.borderColor = "";
       banner.innerHTML = (s.flushed
         ? `🔔 <b>Out of brass</b> — run ended automatically after
-          ${s.sorted} cases. The tail cases still in the feed wheel were
-          sorted to their bins; the wheel is empty.`
+          ${s.sorted} cases.`
         : `🔔 <b>Out of brass</b> — run ended automatically after
           ${s.sorted} cases. A few unsorted cases may remain in the nest and
-          feed tube; add them to the next batch.`) + fs;
-    } else if (fs) {
-      banner.style.display = "";
-      banner.innerHTML = `✅ <b>Run ended</b> after ${s.sorted} cases.` + fs;
+          feed tube; add them to the next batch.`)
+        + (s.end_note ? `<div class="muted" style="font-weight:400;
+            font-size:12.5px; margin-top:4px">${s.end_note}</div>` : "");
     } else banner.style.display = "none";
     loadRuns();
     updateRunChip();                  // run over: board handback in progress
@@ -6025,20 +7103,37 @@ async function loadRuns() {
       const ds = r.dur_s;
       const dur = !ds ? null
         : ds >= 3600 ? `${Math.floor(ds / 3600)}h ${Math.floor(ds % 3600 / 60)}m`
-        : ds >= 60 ? `${Math.floor(ds / 60)}m`
+        : ds >= 60 ? `${Math.floor(ds / 60)}m ${Math.round(ds % 60)}s`
         : `${Math.round(ds)}s`;
-      const bits = [r.total != null ? `${r.total} case${r.total === 1 ? "" : "s"}` : null,
-                    dur, r.mode === "sim" ? "SIM" : null]
+      const spc = ds && r.total ? `${(ds / r.total).toFixed(2)} s/case` : null;
+      const l1 = [r.total != null ? `<b>${r.total}</b> case${r.total === 1 ? "" : "s"}` : null,
+                  dur, spc, r.mode === "sim" ? "SIM" : null]
         .filter(Boolean).join(" · ");
+      const l2 = [r.conf_med != null ? `<b>${Math.round(r.conf_med * 100)}%</b> median` : null,
+                  `<b style="color:${r.rejected ? "var(--amber)" : "inherit"}">${
+                    r.rejected || 0}</b> reject${r.rejected === 1 ? "" : "s"}`,
+                  r.overflow ? `<b>${r.overflow}</b> overflow` : null]
+        .filter(Boolean).join(" · ");
+      // the classes the run was mostly made of — names stay text
+      const l3 = (r.top || []).map(([c, n]) =>
+        `${String(c).replace(/[<>&]/g, "")} ${n}`).join(" · ")
+        + (r.classes > 3 ? ` · +${r.classes - 3} more` : "");
+      // a normal finish (out of brass) goes unsaid; anything else is named
+      const odd = r.end_reason && !["out_of_brass", "complete"].includes(r.end_reason);
+      const ended = odd ? `<div class="rrLine" style="color:${
+          r.end_reason === "stopped" ? "var(--amber)" : "var(--red)"}" title="${
+          (r.end_note || "").replace(/"/g, "&quot;")}">ended: ${
+          END_WORDS[r.end_reason] || r.end_reason}</div>` : "";
       const right = r.rejects
-        ? `<span class="cnt" style="color:var(--amber); line-height:1.05;
-             text-align:right">${r.rejects}<small style="display:block;
-             font-size:9px; font-weight:600; color:var(--dim);
-             letter-spacing:.07em">TO REVIEW</small></span>`
-        : `<span class="cnt" style="color:var(--green); font-size:17px">✓</span>`;
+        ? `<span class="cnt" style="color:var(--amber); font-size:13px;
+             font-weight:700">${r.rejects} to review</span>`
+        : `<span class="cnt" style="color:var(--green); font-size:16px">✓</span>`;
       return `<div class="rbt" onclick="repOpen('${r.run}', 'summary')">
-        <span class="lbl">${fmtRunId(r.run)}<small>${bits || "—"}</small></span>
-        ${right}</div>`;
+        <div class="rrHead">${fmtRunId(r.run)}${right}</div>
+        <div class="rrLine">${l1 || "—"}</div>
+        <div class="rrLine">${l2}</div>
+        ${l3 ? `<div class="rrLine" title="${l3}">${l3}</div>` : ""}
+        ${ended}</div>`;
     }).join("") : `<div class="muted">no sorting runs yet</div>`;
   } catch {}
 }
@@ -6075,8 +7170,8 @@ const repM = { open: false, run: null, view: "summary", bin: 0, page: 0,
                rejects: null, rejectsRun: null };
 const REP_PER_PAGE = 50;
 
-function binBadgeColor(i) {
-  const g = binGroup((STATE.bins || [])[i] || []);
+function binBadgeColor(i, bins) {
+  const g = binGroup((bins || STATE.bins || [])[i] || []);
   if (g.includes("UNMATCHED")) return "var(--um)";
   if (g.includes("OVERFLOW")) return "var(--blue)";
   return (STATE.bin_colors || [])[i] || "var(--brass)";
@@ -6142,13 +7237,27 @@ function repZoomCase(run, n, thumb) {
   $("repZoom").style.display = "flex";
 }
 
+// the bin map a report labels itself with: the one saved with the run,
+// never today's — reassigning bins must not rewrite old reports
+function repBinMap() {
+  const d = pollRun._repData;
+  return (d && d.bin_map) || STATE.bins || [];
+}
+
+// a map rebuilt from the run log only knows bins that caught cases —
+// an empty one may well have had classes mapped, so don't claim it didn't
+function repEmptyLabel() {
+  const d = pollRun._repData;
+  return d && d.bin_map_source === "log" ? "no cases this run" : "nothing mapped";
+}
+
 // header identity for a slot, matching the cards' vocabulary
 function repTileLabel(i) {
-  const g = binGroup((STATE.bins || [])[i] || []);
+  const g = binGroup(repBinMap()[i] || []);
   if (g.includes("UNMATCHED")) return "UNMATCHED";
   if (g.includes("OVERFLOW")) return "OVERFLOW";
   const parts = g.map(s => s.startsWith(FAM) ? s.slice(FAM.length) : s);
-  if (!parts.length) return "nothing mapped";
+  if (!parts.length) return repEmptyLabel();
   return parts.length > 2 ? `${parts[0]} +${parts.length - 1}` : parts.join(" · ");
 }
 
@@ -6168,18 +7277,23 @@ function repRender() {
     const nRej = (repM.rejects || []).length;
     const byBin = {};
     d.cases.forEach(c => byBin[c.bin] = (byBin[c.bin] || 0) + 1);
-    const um = STATE.unmatched_bin;
-    const tiles = (STATE.bins || []).map((g, i) => {
+    const RB = repBinMap();
+    const tiles = RB.map((g, i) => {
       const isUM = binGroup(g).includes("UNMATCHED");
       const cnt = (byBin[i] || 0) + (isUM ? nRej : 0);
       return `
       <div class="rbt${isUM ? " um" : ""}" onclick="repGoto('bin', ${i})">
-        <span class="numB2" style="background:${binBadgeColor(i)}">${i}</span>
+        <span class="numB2" style="background:${binBadgeColor(i, RB)}">${i + 1}</span>
         <span class="lbl">${repTileLabel(i)}${isUM && nRej
           ? `<small>${nRej} reject${nRej === 1 ? "" : "s"}</small>` : ""}</span>
         <span class="cnt">${cnt}</span>
       </div>`;
     }).join("");
+    const mapNote = d.bin_map_source === "log"
+      ? `<div class="muted" style="font-size:12px; margin-top:6px">This run is from
+          before bin assignments were saved with each run, so bins are labelled by
+          the cases that landed in them. A bin that caught no cases shows as empty
+          even if it had classes assigned.</div>` : "";
     $("repMBody").innerHTML = head(`<h2>Run report</h2>
         <span class="muted" style="font-size:13px">${repM.run}</span>`) + `
       <div class="repVitals">
@@ -6189,12 +7303,12 @@ function repRender() {
         <div class="v"><b>${rs.medconf || "—"}</b><span>median conf</span></div>
         <div class="v"><b style="color:${nRej ? "var(--red)" : "var(--text)"}">${nRej}</b><span>rejects</span></div>
       </div>
-      <div class="repBins">${tiles}</div>`;
+      <div class="repBins">${tiles}</div>${mapNote}`;
     return;
   }
   // ---- one bin ----
   const b = repM.bin;
-  const raw = (STATE.bins || [])[b];
+  const raw = repBinMap()[b];
   const g = binGroup(raw || []);
   const isUM = g.includes("UNMATCHED");
   const isOF = g.includes("OVERFLOW");
@@ -6259,7 +7373,7 @@ function repRender() {
   }
   flush();
   if (!items.length)
-    body = `<div class="muted" style="margin-top:12px">no cases landed in bin ${b} this run</div>`;
+    body = `<div class="muted" style="margin-top:12px">no cases landed in bin ${b + 1} this run</div>`;
   const pager = pages > 1 ? `<div class="repPager">
       <button class="ghost" ${page <= 0 ? "disabled" : ""}
         onclick="repGoto('bin', ${b}, ${page - 1})">‹ prev</button>
@@ -6276,10 +7390,11 @@ function repRender() {
         onclick="repGoto('summary')">‹ all bins</button>
       <span class="muted" style="font-size:13px">${run}</span>`) + `
     <div class="repBanner">
-      <span class="numB2" style="background:${binBadgeColor(b)}; font-size:14px">BIN ${b}</span>
+      <span class="numB2" style="background:${binBadgeColor(b, repBinMap())}; font-size:14px">BIN ${b + 1}</span>
       <span>${cs.length} classified${isUM ? ` · ${(repM.rejects || []).length} rejects` : ""}</span>
       <span style="flex:1"></span>
-      <span>slot holds: ${g.length ? g.map(binEntryLabel).join(", ") : "nothing mapped"}</span>
+      <span>${d.bin_map_source === "log" ? "cases landed" : "slot holds"}: ${
+        g.length ? g.map(binEntryLabel).join(", ") : repEmptyLabel()}</span>
     </div>` + body + pager;
 }
 
@@ -6387,10 +7502,13 @@ $("btnConConnect").onclick = async () => {
   } catch (e) { msg("conMsg", e.message, false); }
 };
 $("btnConDisc").onclick = async () => {
-  await postJson("/api/console/disconnect", {});
-  clearTimeout(conTimer);
-  msg("conMsg", "disconnected");
-  pollConsole();          // one more pass so the bar folds back to the form
+  if (!confirm("Disconnect from the board? Auto-connect stays off until you press Connect again.")) return;
+  try {
+    await postJson("/api/console/disconnect", {});
+    msg("conMsg", "disconnected", true);
+    loadMachineSettings();
+    pollConsole();
+  } catch (e) { msg("conMsg", e.message, false); }
 };
 document.querySelectorAll(".conCmd").forEach(b =>
   b.onclick = () => conSend(b.dataset.cmd));
@@ -6404,13 +7522,13 @@ function renderSortBtns(total) {
   for (let i = 0; i < total; i++) {
     const b = document.createElement("button");
     b.className = "numB" + (i === testSortSlot ? " sel" : "");
-    b.textContent = i;
+    b.textContent = i + 1;   // operator numbering: bins are 1-9
     b.onclick = async () => {
       testSortSlot = i;
       renderSortBtns(testSortTotal);
       try {
         const j = await postJson("/api/machine/test", { action: "sort", slot: i });
-        msg("conMsg", `sort slot ${i} → ${j.result}`, j.result === "ok");
+        msg("conMsg", `sort slot ${i + 1} → ${j.result}`, j.result === "ok");
         pollConsole();
       } catch (e) { msg("conMsg", e.message, false); }
     };
@@ -6419,17 +7537,18 @@ function renderSortBtns(total) {
 }
 renderSortBtns(8);
 $("btnTestFeed").onclick = async () => {
-  msg("conMsg", `feeding to slot ${testSortSlot}…`);
+  msg("conMsg", `feeding to slot ${testSortSlot + 1}…`);
   try {
     const j = await postJson("/api/machine/test", { action: "feed", slot: testSortSlot });
-    msg("conMsg", `feed → slot ${testSortSlot}: ` + j.result, j.result === "done");
+    msg("conMsg", `feed → slot ${testSortSlot + 1}: ` + j.result, j.result === "done");
     pollConsole();
   } catch (e) { msg("conMsg", e.message, false); }
 };
 
 // sort_steps lives in the calibration card's Grid setup (its own Apply);
 // sort_homing_offset is absorbed by per-slot calibration and has no input.
-const MS_FIELDS = { feed_speed: "msFeedSpeed", feed_steps: "msFeedSteps",
+const MS_FIELDS = { feed_speed: "msFeedSpeed", 
+  feed_steps: "msFeedSteps",
   sort_speed: "msSortSpeed",
   feed_current: "msFeedCurrent", sort_current: "msSortCurrent",
   feed_homing_offset: "msFeedHome",
@@ -6446,9 +7565,20 @@ const MS_FIELDS = { feed_speed: "msFeedSpeed", feed_steps: "msFeedSteps",
   air_drop_post_delay: "msAirPost" };
 
 /* ---- machine fault banner ------------------------------------------- */
+/* the alert is fixed and must clear the sticky top bar, whose height grows
+   when the nav wraps - publish the measured height instead of guessing */
+function topBarHeight() {
+  const t = $("topBar");
+  if (t) document.documentElement.style.setProperty(
+    "--topbar-h", (t.offsetHeight || 96) + "px");
+}
+topBarHeight();
+addEventListener("resize", topBarHeight);
+if (window.ResizeObserver) new ResizeObserver(topBarHeight).observe($("topBar"));
 function faultShow(reason) {
   const b = $("faultBanner");
   if (!b) return;
+  topBarHeight();
   if (reason) { $("faultText").textContent = reason; b.style.display = "block"; }
   else b.style.display = "none";
 }
@@ -6563,7 +7693,7 @@ function renderSlotCal(s) {
   const grid = effectiveSlotPositions(s);
   $("slotCalRows").innerHTML = Array.from({ length: n }, (_, i) => `
     <div style="display:flex; gap:4px; align-items:center; margin-bottom:5px; flex-wrap:wrap">
-      <b style="width:18px; text-align:right">${i}</b>
+      <b style="width:18px; text-align:right">${i + 1}</b>
       <input type="number" class="slotCalPos" data-slot="${i}" value="${grid[i]}"
              step="1" style="width:76px">
       <button class="ghost slotCalJog" data-slot="${i}" data-d="-16" style="flex:1; padding:3px 6px">−16</button>
@@ -6583,8 +7713,8 @@ async function slotCalSet(slot, position) {
                              { slot, position, seat: true });
     document.querySelector(`.slotCalPos[data-slot="${slot}"]`).value = j.position;
     msg("slotCalMsg", j.pushed
-      ? `slot ${slot} → ${j.position} µsteps${j.seated ? " (arm on it now)" : ""}`
-      : `slot ${slot} saved — connect to push`, true);
+      ? `slot ${slot + 1} → ${j.position} µsteps${j.seated ? " (arm on it now)" : ""}`
+      : `slot ${slot + 1} saved — connect to push`, true);
   } catch (e) { msg("slotCalMsg", e.message, false); }
   slotCalBusy = false;
 }
@@ -6634,7 +7764,7 @@ function renderSlotChecks(total, enabled) {
   const en = new Set(enabled);
   $("msSlotChecks").innerHTML = Array.from({ length: total }, (_, s) =>
     `<button class="numB msSlotCb ${en.has(s) ? "on" : "off"}"
-       data-slot="${s}">${s}</button>`).join("");
+       data-slot="${s}">${s + 1}</button>`).join("");
   document.querySelectorAll(".msSlotCb").forEach(b => b.onclick = () => {
     b.classList.toggle("on");
     b.classList.toggle("off");
@@ -6654,6 +7784,15 @@ async function loadMachineSettings() {
     mtcReflect(+j.settings.sort_flag_offset > 0);
     faultShow(j.fault);
     $("msInit").checked = !!j.settings.init_on_startup;
+    $("msRelay").checked = !!j.settings.power_relay;
+    FEEDER.on = !!j.settings.case_feeder;
+    $("msFeeder").checked = FEEDER.on;
+    $("fdWarn").value = j.settings.feeder_warn_s;
+    $("fdShutoff").value = j.settings.feeder_shutoff_s;
+    $("fdAuto").checked = !!j.settings.feeder_auto_start;
+    $("fdJam").checked = j.settings.feeder_jam_detect !== false;
+    $("fdRev").checked = !!j.settings.feeder_reversed;
+    $("fdBeamHigh").checked = !!j.settings.feeder_beam_high;
     $("msFeedDecel").checked = !!j.settings.feed_decel;
     $("msSg").checked = j.settings.stall_guard !== false;
     $("msAirDrop").checked = !!j.settings.air_drop;
@@ -6704,23 +7843,157 @@ $("btnSlotsSave").onclick = async () => {
   } catch (e) { msg("msSlotsMsg", e.message, false); }
 };
 function applyFirmwareUI(fw) {
-  const iMax = fw === "pico" ? 1600 : 1200;   // StepSticks vs onboard TMC2209
+  const pico = fw.startsWith("pico");          // pico or pico-servo
+  const servo = fw === "pico-servo";
+  const iMax = pico ? 1600 : 1200;             // StepSticks vs onboard TMC2209
   $("msFeedCurrent").max = iMax; $("msSortCurrent").max = iMax;
   const fork = fw.startsWith("ss") || fw === "pico";
   document.querySelectorAll(".forkOnly").forEach(el =>
     el.style.display = fork ? "" : "none");
   document.querySelectorAll(".picoOnly").forEach(el =>
     el.style.display = fw === "pico" ? "" : "none");
+  // feed-wheel motion settings exist on BOTH Pico builds (the server
+  // pushes them to the carousel too); only the arm-side ones are pico-only
+  document.querySelectorAll(".picoFeed").forEach(el =>
+    el.style.display = pico ? "" : "none");
   document.querySelectorAll(".ss2Only").forEach(el =>
     el.style.display = fw.startsWith("ss") ? "" : "none");
+  // SERVO CAROUSEL: no sort arm, no discrete slots — hide the arm/slot
+  // world and show the Sort doors card. The other three configs are
+  // untouched (hideServo is only on servo-irrelevant blocks).
+  document.querySelectorAll(".hideServo").forEach(el =>
+    el.style.display = servo ? "none" : "");
+  $("doorCard").style.display = servo ? "" : "none";
+  $("msFeederWrap").style.display = servo ? "flex" : "none";
+  // the arm builds test-feed from the Slots card, where the target slot is picked
+  $("btnHwTestFeed").style.display = servo ? "" : "none";
+  feederView();
+  // SortIQ-Pico builds link over the Pi's header UART — name the right
+  // port. (Relay Power shows on every build: any machine can switch its
+  // board through an IoT relay on the Pi's GPIO 25.)
+  $("conPort").placeholder = pico ? "/dev/serial0 (header UART)" : "/dev/ttyUSB0 (9600)";
 }
+/* CASE FEEDER: an optional feeder on the carousel's own board. The board
+   runs it (beam hold, jam reverse, empty shutoff); this page switches it
+   on and off, sets the speed and shows what it reports. */
+const FEEDER = { on: false, last: null };
+const FD_STATES = {
+  RUNNING: ["Feeding", "ok"], HOLD: ["Case hold", "hold"],
+  STOPPED: ["Stopped", ""], JAM_REVERSE: ["Clearing a jam", "warn"],
+  JAM_PAUSE: ["Clearing a jam", "warn"], FAULT: ["Jammed", "bad"],
+  IDLE_SHUTOFF: ["Empty — stopped", "bad"] };
+function feederView() {
+  const servo = ($("msFirmware").value || "") === "pico-servo";
+  $("feederCard").style.display = servo && FEEDER.on ? "" : "none";
+  $("sortFeeder").hidden = !(servo && FEEDER.on);
+}
+function fdPresetButtons(el, speed, presets) {
+  const key = presets.join(",") + "|" + speed;
+  if (el.dataset.key === key) return;
+  el.dataset.key = key;
+  el.innerHTML = presets.map(p =>
+    `<button class="ghost${p === speed ? " on" : ""}" data-p="${p}">${p}%</button>`).join("");
+  el.querySelectorAll("button").forEach(b =>
+    b.onclick = () => feederCmd({ speed: +b.dataset.p }));
+}
+function feederRender(j) {
+  FEEDER.last = j;
+  const st = j.status, s = j.state;
+  const [label, cls] = s ? (FD_STATES[s] || [s, ""]) : ["not reporting", "warn"];
+  for (const id of ["fdState", "sfState"]) {
+    $(id).textContent = label;
+    $(id).className = "pill fdPill " + cls;
+  }
+  let info = "";
+  if (st) {
+    const bits = [];
+    // an estimate, like the standalone feeder's screen: cases that stack
+    // on the held case pass the beam as one break, so there's no exact count
+    if (j.rate != null && (s === "RUNNING" || s === "HOLD")) bits.push(`≈ ${j.rate.toLocaleString()} cases/h`);
+    if (st.jams) bits.push(`${st.jams} jam${st.jams === 1 ? "" : "s"} cleared`);
+    if (!st.driver) bits.push("motor driver not answering");
+    else if (!st.diag) bits.push("jam flag not wired (E0-DIAG jumper?)");
+    if (st.empty) bits.push("hopper looks empty");
+    info = bits.join(" · ");
+  } else if (FEEDER.on) {
+    info = "connect the board (firmware 0.9 or newer)";
+  }
+  $("fdInfo").textContent = info;
+  $("sfInfo").textContent = info;
+  const stopped = s === "FAULT" || s === "IDLE_SHUTOFF";
+  const running = st && st.run && !stopped;
+  for (const p of ["Fd", "Sf"]) {
+    $("btn" + p + "Clear").style.display = stopped ? "" : "none";
+    $("btn" + p + "Go").style.display = running || stopped ? "none" : "";
+    $("btn" + p + "Stop").disabled = !st || !st.run;
+  }
+  fdPresetButtons($("fdPresets"), j.speed, j.presets);
+  fdPresetButtons($("sfPresets"), j.speed, j.presets);
+  const a = (j.alerts || []).slice(-1)[0];
+  $("fdAlert").textContent = a && Date.now() / 1000 - a.t < 600
+    ? `${new Date(a.t * 1000).toLocaleTimeString()} — ${a.text}` : "";
+}
+async function feederCmd(body) {
+  try {
+    await postJson("/api/feeder", body);
+    setTimeout(pollFeeder, 400);
+  } catch (e) { msg("fdMsg", e.message, false); msg("runMsg", e.message, false); }
+}
+async function pollFeeder() {
+  if (!FEEDER.on || document.hidden) return;
+  if (!$("machine").classList.contains("active") && !$("run").classList.contains("active")) return;
+  try { feederRender(await api("/api/feeder")); } catch {}
+}
+setInterval(pollFeeder, 1500);
+for (const p of ["Fd", "Sf"]) {
+  $("btn" + p + "Go").onclick = () => feederCmd({ run: true });
+  $("btn" + p + "Stop").onclick = () => feederCmd({ run: false });
+  $("btn" + p + "Clear").onclick = () => feederCmd({ clear: true, run: true });
+}
+$("msFeeder").onchange = async () => {
+  const on = $("msFeeder").checked;
+  try {
+    await postJson("/api/machine/settings", { case_feeder: on });
+    msg("hwMsg", on ? "Case feeder on — its card is below; start it with Go"
+                    : "no case feeder", true);
+    await loadMachineSettings();
+    pollFeeder();
+  } catch (e) {
+    $("msFeeder").checked = !on;
+    msg("hwMsg", e.message, false);
+  }
+};
+$("btnFdSave").onclick = async () => {
+  try {
+    const j = await postJson("/api/machine/settings", {
+      feeder_warn_s: +$("fdWarn").value, feeder_shutoff_s: +$("fdShutoff").value,
+      feeder_auto_start: $("fdAuto").checked, feeder_jam_detect: $("fdJam").checked,
+      feeder_reversed: $("fdRev").checked, feeder_beam_high: $("fdBeamHigh").checked });
+    msg("fdMsg", j.applied ? "Saved — pushed to the board" : "Saved (connect to push to the board)", true);
+    loadMachineSettings();
+  } catch (e) { msg("fdMsg", e.message, false); }
+};
+
+$("msRelay").onchange = async () => {
+  const on = $("msRelay").checked;
+  try {
+    await postJson("/api/machine/settings", { power_relay: on });
+    msg("hwMsg", on ? "Relay power on (GPIO 25) — use Board power to switch the board on"
+                    : "no relay — the board is powered directly", true);
+    pollConsole();
+  } catch (e) {
+    $("msRelay").checked = !on;
+    msg("hwMsg", e.message, false);
+  }
+};
 function firmwareBoardHint(fw, board) {
   // the board pill is ground truth from the version line — warn when the
   // selected firmware cannot be what is actually connected
   if (!board) return "";
-  if (board === "SKR Pico" && fw !== "pico")
+  const wantsPico = fw.startsWith("pico");
+  if (board === "SKR Pico" && !wantsPico)
     return "connected board is the SKR Pico — it runs SortIQ-Pico firmware";
-  if (board !== "SKR Pico" && fw === "pico")
+  if (board !== "SKR Pico" && wantsPico)
     return "connected board is a CS7.2 — it cannot run SortIQ-Pico firmware";
   return "";
 }
@@ -6728,15 +8001,17 @@ $("msFirmware").onchange = async () => {
   const fw = $("msFirmware").value;
   applyFirmwareUI(fw);
   try {
-    await postJson("/api/machine/settings", { firmware: fw });
+    const r = await postJson("/api/machine/settings", { firmware: fw });
     const hint = firmwareBoardHint(fw, lastBoardSeen);
-    msg("msMsg", hint ? hint + " — re-detected on next connect"
-      : fw === "pico" ? "SortIQ-Pico selected — full motion + jam-detection tuning"
+    const via = r && r.serial_port ? ` · connects on ${r.serial_port}` : "";
+    msg("hwMsg", hint ? hint + " — re-detected on next connect"
+      : fw === "pico-servo" ? "Servo carousel selected — sort doors + feed wheel" + via
+      : fw === "pico" ? "SortIQ-Pico selected — full motion + jam-detection tuning" + via
       : fw.startsWith("ss")
       ? "SortIQ fork selected — all tuning available"
         + (fw === "ss2" ? "; runs use the pipelined feed" : "")
       : "Stock firmware selected — fork-only tuning hidden (re-detected on next connect)", !hint);
-  } catch (e) { msg("msMsg", e.message, false); }
+  } catch (e) { msg("hwMsg", e.message, false); }
 };
 
 $("btnMsDefaults").onclick = async () => {
@@ -6966,15 +8241,112 @@ async function sysRestart(what) {
     }, 3000);
   } catch (e) { $("sysMsg").textContent = e.message; }
 }
-$("btnPower").onclick = async () => {
+function doorRender(open) {
+  const row = $("doorBtns");
+  if (!row.childElementCount)
+    for (let i = 0; i < 8; i++) {
+      const b = document.createElement("button");
+      b.className = "numB"; b.textContent = i + 1;
+      b.onclick = () => doorTest(i, b.dataset.open !== "1");
+      row.append(b);
+    }
+  [...row.children].forEach((b, i) => {
+    const on = open.includes(i);
+    b.dataset.open = on ? "1" : "0";
+    b.classList.toggle("sel", on);       // brass + dark text when held open
+    b.title = `door ${i + 1} (station ${i + 2}) — `
+              + (on ? "held OPEN, click to close" : "closed, click to open");
+  });
+}
+async function doorTest(gate, open) {
+  try {
+    const j = await postJson("/api/gates/test", { gate, open });
+    doorRender(j.open || []);
+  } catch (e) { msg("doorMsg", e.message, false); }
+}
+$("btnDoorsOpenAll").onclick = () => doorTest("all", true);
+$("btnDoorsCloseAll").onclick = () => doorTest("all", false);
+$("btnHwTestFeed").onclick = async () => {
+  msg("hwMsg", "feeding one case…");
+  try {
+    const j = await postJson("/api/machine/test", { action: "feed", slot: 0 });
+    msg("hwMsg", "Test feed: " + j.result, j.result === "done");
+    pollConsole();
+  } catch (e) { msg("hwMsg", e.message, false); }
+};
+$("btnHwHome").onclick = async () => {
+  try {
+    await postJson("/api/console/send", { line: "homefeeder" });
+    msg("hwMsg", "Homing the wheel", true);
+  } catch (e) { msg("hwMsg", e.message, false); }
+};
+$("btnDoorSave").onclick = async () => {
+  const c = +$("doorClosedUs").value, o = +$("doorOpenUs").value,
+        openMs = +$("doorOpenMs").value, clearMs = +$("doorClearMs").value,
+        pauseMs = +$("doorClearPause").value;
+  try {
+    await postJson("/api/machine/settings",
+                   { gate_pulses: Array.from({ length: 8 }, () => [c, o]),
+                     gate_open_ms: openMs, gate_clear_ms: clearMs,
+                     clear_pause_ms: pauseMs });
+    msg("doorMsg", "saved — used by the next door move and every run", true);
+  } catch (e) { msg("doorMsg", e.message, false); }
+};
+(async () => {          // populate the door controls from the machine
+  try {
+    const g = await api("/api/gates/state");
+    if (g.available) {
+      const p = (g.pulses && g.pulses[0]) || [900, 2150];
+      $("doorClosedUs").value = p[0];
+      $("doorOpenUs").value = p[1];
+      doorRender(g.open || []);
+    }
+    const m = await api("/api/machine/settings");
+    const ms = (m && m.settings) || {};
+    $("doorOpenMs").value = ms.gate_open_ms ?? 250;
+    $("doorClearMs").value = ms.gate_clear_ms ?? 50;
+    $("doorClearPause").value = ms.clear_pause_ms ?? 0;
+  } catch (e) {}
+})();
+// board power off asks first, from the card or the header; during a run
+// the same dialog only explains (the server refuses it too)
+let pwrRun = false;
+function pwrDialogMode(running) {
+  pwrRun = running;
+  $("pwrMTitle").textContent = running ? "A run is in progress" : "Switch the board off?";
+  $("pwrMText").textContent = running
+    ? "Board power stays on while a run is going. Pause and finish the run, or stop it, then switch the board off."
+    : "The wheel, doors and case feeder lose power. Switch it back on from here, the header or the touchscreen.";
+  $("pwrMYes").style.display = running ? "none" : "";
+  $("pwrMNo").textContent = running ? "OK" : "Cancel";
+}
+function pwrDialog(running) {
+  pwrDialogMode(running);
+  return new Promise(res => {
+    $("pwrModal").style.display = "flex";
+    const done = v => { $("pwrModal").style.display = "none"; res(v); };
+    $("pwrMYes").onclick = () => done(true);
+    $("pwrMNo").onclick = () => done(false);
+  });
+}
+async function powerPress() {
   const on = $("btnPower").dataset.on === "1";
-  if (on && !confirm("Turn the sorter board power OFF? The machine link drops until you power it back on.")) return;
+  if (on) {
+    // open at once on what the run poller last saw (it only runs on some
+    // tabs), then let a fresh status turn the dialog into the run notice
+    const ask = pwrDialog(!!(lastRunStatus && lastRunStatus.running));
+    api("/api/run/status?brief=1").then(s => { if (s && s.running) pwrDialogMode(true); })
+      .catch(() => {});
+    if (!await ask || pwrRun) return;
+  }
   try {
     const j = await postJson("/api/power", { on: !on });
     $("btnPower").dataset.on = j.on ? "1" : "0";
     pollConsole();
   } catch (e) { alert(e.message); }
-};
+}
+$("btnPower").onclick = powerPress;
+$("pwrHeader").onclick = powerPress;
 $("btnRestartApp").onclick = () => sysRestart("app");
 $("btnRebootPi").onclick = () => sysRestart("pi");
 $("btnShutdownPi").onclick = async () => {
@@ -7113,29 +8485,50 @@ async function pollConsole() {
   let j = null;
   try { j = await api("/api/console/log"); } catch {}
   const connected = !!(j && j.connected);
+  // port open, no answer yet — not a board until it replies
+  const connecting = !connected && !!(j && j.connecting);
   // board power switch (IoT Relay via GPIO): shown only where the pin exists
   const pw = j ? j.power : null;
-  if (pw === null || pw === undefined) { $("btnPower").style.display = "none"; }
-  else {
-    $("btnPower").style.display = "";
-    $("btnPower").dataset.on = pw ? "1" : "0";
-    $("btnPower").style.color = pw ? "var(--green)" : "var(--dim)";
-    $("btnPower").innerHTML = pw ? "&#x23FB; Board ON" : "&#x23FB; Power on";
+  // no relay: the button stays, greyed; the header icon goes
+  const hasPw = pw !== null && pw !== undefined;
+  $("btnPower").disabled = !hasPw;
+  $("btnPower").dataset.on = pw ? "1" : "0";
+  $("btnPower").classList.toggle("on", !!pw);
+  $("pwrChip").textContent = !hasPw ? "RELAY OFF" : pw ? "ON" : "OFF";
+  $("btnPower").title = hasPw ? "switches the board's power through the IoT Relay (GPIO 25)"
+                              : "turn on Relay power to switch the board from here";
+  $("pwrHeader").style.display = hasPw ? "" : "none";
+  if (hasPw) {
+    const ps = !pw ? "off" : connected ? "on" : "wait";
+    $("pwrHeader").className = "hdrPwr " + ps;
+    $("pwrHeader").title = { on: "Board power: on, click to switch off",
+                             off: "Board power: off, click to switch on",
+                             wait: "Board power: on, waiting for the board" }[ps];
   }
+  const busy = !!(lastRunStatus && lastRunStatus.running);
+  $("btnHwHome").disabled = $("btnHwTestFeed").disabled = !connected || busy;
   $("btnConConnect").classList.toggle("faded", connected);
-  $("btnConDisc").classList.toggle("faded", !connected);
+  // connected = the board's own version line is authoritative; lock the
+  // selector so a mismatched firmware can't be picked over live hardware
+  $("msFirmware").disabled = connected;
+  $("msFirmware").title = connected
+    ? "auto-detected from the connected board — disconnect to change"
+    : "";
   if (connected) syncConMode(j.mode);
   // the machine bar wears the connection: dot + summary when connected,
   // the connect form when not
-  $("machDot").style.background = connected ? "var(--green)" : "var(--dim)";
+  const stateColor = connected ? "var(--green)" : connecting ? "var(--amber)" : "var(--dim)";
+  $("machDot").style.background = stateColor;
   $("machDot").style.boxShadow = connected ? "0 0 8px var(--green)" : "";
-  $("machState").style.color = connected ? "var(--green)" : "var(--dim)";
-  $("machState").lastChild.textContent = connected ? " CONNECTED" : " OFFLINE";
+  $("machState").style.color = stateColor;
+  $("machState").lastChild.textContent =
+    connected ? " CONNECTED" : connecting ? " CONNECTING…" : " OFFLINE";
   $("machConnForm").style.display = connected ? "none" : "flex";
+  $("btnConDisc").style.display = connected ? "" : "none";
   $("conDockTitle").textContent = (j && j.board ? j.board : "Board") + " monitor";
   $("machMeta").textContent = !connected ? ""
     : j.mode === "serial"
-    ? `${j.board || "CS7.2"} board · ${j.port || $("conPort").value.trim() || "/dev/ttyUSB0"} · 9600`
+    ? `${j.board ? j.board + " board" : "board"} · ${j.port || $("conPort").value.trim() || "/dev/ttyUSB0"} · 9600`
     : "Simulator (virtual CS7.2)";
   const html = connected
     ? j.log.map(l =>
@@ -7159,6 +8552,16 @@ async function pollConsole() {
   if (conDockOpen || $("machine").classList.contains("active"))
     conTimer = setTimeout(pollConsole, 900);
 }
+
+// The touchscreen (or any other browser) can switch the board's power or
+// connect it: every tab keeps the board state current, not just the
+// Machine tab and the open monitor dock (they poll faster on their own).
+setInterval(() => {
+  if (document.hidden) return;
+  pollConsole();       // clears its own timer first: never doubles a running loop
+  if (document.querySelector("#run.active")) updateRunChip();
+  if ($("collect").classList.contains("active")) pollMachine();
+}, 3000);
 
 /* -------------------- floating monitor dock -------------------------- */
 let conDockOpen = false;

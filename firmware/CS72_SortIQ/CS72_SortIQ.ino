@@ -1,4 +1,4 @@
-/// VERSION CS 7.2.250925.6.1-SS2 — SortIQ fork ///
+/// VERSION CS 7.2.250925.6.2-SS2 — SortIQ fork ///
 /// Forked from CS 7.2.250925.6.1 (stock: github.com/sjseth/AI-Case-Sorter-CS7.2) ///
 ///
 /// Derived from Seth Hahner's AI-Case-Sorter-CS7.2 firmware

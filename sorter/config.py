@@ -52,9 +52,18 @@ class Config:
         enabled = sorted({int(s) for s in enabled if 0 <= int(s) < self.slots_total})
         self.slots_enabled = enabled or list(range(self.slots_total))
         self.bin_count = self.slots_total
-        self.bins = [normalize_bin(b) for b in
-                     list(mj.get("bins") or [])[:self.bin_count]]
+        # the profile's own layout, before this machine's slot count trims
+        # it: a trainer (default 8 slots) mirroring a 9-slot carousel used
+        # to lose the 9th bin — the UNMATCHED one — and then refuse the
+        # profile outright ("exactly one bin must be UNMATCHED"), which
+        # killed every dataset pull's crop rebuild. The trim
+        # is right for a machine with fewer chutes; the catch-all simply
+        # falls back to the last slot (unmatched_bin below), and the
+        # one-UNMATCHED rule is judged on what the profile says.
+        profile_bins = [normalize_bin(b) for b in list(mj.get("bins") or [])]
+        self.bins = profile_bins[:self.bin_count]
         self.bins += [[] for _ in range(self.bin_count - len(self.bins))]
+        self._profile_bins = profile_bins
         # families: a named group of classes assignable to a slot as one
         # unit. Slots store the intent as a "family:NAME" token (so future
         # members follow automatically); expansion to real classes happens
@@ -83,7 +92,9 @@ class Config:
         # (None), those cases ride the unmatched bin as before.
         self.overflow_bin = next((i for i, g in enumerate(self.bins)
                                   if "OVERFLOW" in g), None)
-        self.floors = mj["floors"]
+        # defaults under the model's own floors: a floor added later (the
+        # donut blur floor) reaches every existing model without a rewrite
+        self.floors = {**profiles.DEFAULT_FLOORS, **mj["floors"]}
         self.imaging = mj.get("imaging", dict(profiles.DEFAULT_IMAGING))
         # classes the user benched from training (Dataset page checkbox):
         # still collected, labeled, in the gallery, and offered in reject
@@ -115,9 +126,9 @@ class Config:
                     if s not in ("UNMATCHED", "OVERFLOW")]
         if len(assigned) != len(set(assigned)):
             problems.append("a headstamp is assigned to more than one bin")
-        if sum("UNMATCHED" in g for g in self.bins) != 1:
+        if sum("UNMATCHED" in g for g in self._profile_bins) != 1:
             problems.append("exactly one bin must be UNMATCHED")
-        if sum("OVERFLOW" in g for g in self.bins) > 1:
+        if sum("OVERFLOW" in g for g in self._profile_bins) > 1:
             problems.append("at most one bin can be OVERFLOW")
         frac = self.imaging.get("pocket_frac", 0.42)
         if not 0.1 <= float(frac) <= 1.0:

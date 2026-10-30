@@ -10,9 +10,7 @@ routes each of the eight sorter ports into **1" hose** by default, and
 the included adapters convert any port to **3/4" PEX tubing** instead —
 run rigid PEX to your bins, or hose where you need the flexibility.
 
-> **Experimental parts.** These have been running fine on the
-> reference machine for a while, but your mileage may vary. Printed in
-> PLA at 0.2 mm layers with 4 walls.
+> **Experimental parts.** Printed in PLA at 0.2 mm layers with 4 walls.
 
 ## Parts
 

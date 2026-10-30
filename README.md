@@ -1,7 +1,7 @@
 # SortIQ — vision-powered brass sorting
 **A remix of an awesome DIY project.** SortIQ is a fork/remix of [Seth Hahner's](https://github.com/sjseth) brilliant [AI Case Sorter CS7.2](https://github.com/sjseth/AI-Case-Sorter-CS7.2) — the machine itself (mechanics, electronics, stock firmware) is his design, and none of this would exist without it. SortIQ replaces the desktop software side with a self-contained Raspberry Pi application (on-device TFLite inference, an open-set embedding classifier that says "I don't know" instead of guessing, in-browser dataset collection and machine control, LAN-based training) and carries a [firmware fork](firmware/README.md) with per-slot calibration and motion profiles. If you want the original experience, go build his — it's great.
 
-**License:** [GPL-3.0](LICENSE), same as upstream. **No warranty — use at your own risk** (see [Disclaimer](#disclaimer) below). The firmware fork and the firmware simulator derive from Seth's GPL-3.0 code; the rest is original but ships under the same license to keep the whole program unambiguous.
+**License:** [GPL-3.0](LICENSE), same as upstream. **No warranty — use at your own risk** (see [Disclaimer](#disclaimer) below). The firmware fork derives from Seth's GPL-3.0 code; the rest is original but ships under the same license to keep the whole program unambiguous.
 
 SortIQ sorts fired pistol brass by **headstamp**. A camera photographs each
 case head as the CS7.2 machine feeds it past; an embedding network matches
@@ -16,8 +16,10 @@ browser — collection, training, calibration, and live sorting runs.
 |---|---|
 | **The machine** | Seth's CS7.2: feed wheel, camera tube + light ring, 8-slot sorter — driven by its Arduino Uno board (2× TMC2209) over USB serial. Runs the stock firmware or the [SortIQ fork](firmware/README.md) (per-slot µstep calibration, true motion profiles, homing telemetry). |
 | **The brain** | A Raspberry Pi (4 or 5; tested on both) running the SortIQ app as a service (`sortiq.service`, port 5000). Inference-only by design — TFLite runtime, no TensorFlow. ~100 ms per verdict on a Pi 5, ~200 ms on a Pi 4. A Pi 3B (1 GB) runs the full app and classifies just as accurately at ~740 ms per verdict — it can sort in a pinch at roughly a third of the pace, but isn't recommended as the machine's brain. |
-| **The camera** | The stock OV3660 USB module, with in-app controls for the light ring, digital zoom/pan, and crop geometry (primer mask, rim adjust). |
+| **The camera** | The stock OV3660 USB module or the Suyin HD (50° lens) module, auto-detected, with in-app controls for the light ring, digital zoom/pan, crop geometry (primer mask, rim adjust) and, on the Suyin, the camera's own image controls and a white-balance calibration. |
 | **The trainer** | Any Mac or Windows PC on the network, running this same app. It mirrors the machine's dataset over HTTP (incremental after the first sync) and trains new embedding generations that install back over the network — the Pi hot-reloads. See [docs/TRAINER_SETUP.md](docs/TRAINER_SETUP.md). |
+| **The servo carousel** | A second machine design on an SKR Pico: a geared 12-pocket wheel and eight servo gate doors, with an optional case feeder run from the same board. Renders, parts list and screws in [hardware/carousel](hardware/carousel/), the controller case in [hardware/pico-controller](hardware/pico-controller/), setup in [docs/PICO_MACHINE_SETUP.md](docs/PICO_MACHINE_SETUP.md). |
+| **The touchscreen** | Optional: a 7" HDMI touchscreen on the machine's post, plugged into the Pi, runs sorting, capture, reject review and the machine controls without a phone or PC. The installer sets it up when it finds one plugged in. Parts and the printed mount in [hardware/touchscreen](hardware/touchscreen/). |
 | **Printable parts** | [hardware/manifold](hardware/manifold/) — an experimental replacement sorter base (1" hose or 3/4" PEX per port), sort pipes, and 9mm drop-in funnels. |
 
 ## How a case gets sorted
@@ -62,8 +64,8 @@ as 3 photos).
   uv run webui/server.py        # http://localhost:5000
   ```
 
-  The Machine tab can connect a **simulated CS7.2 board** (an event-level
-  port of the real firmware — the same simulator the test suite drives), and
+  The Machine tab can connect a **simulated machine** (a virtual board and
+  a synthetic camera, so runs can be exercised with no hardware), and
   the Collect tab falls back to file upload or synthetic rendered brass, so
   the full collect → train → sort loop works on a bare laptop.
 
@@ -71,12 +73,14 @@ as 3 photos).
 
 - **Collect** — live preview with head-detect overlay, one-key chained
   capture (feed → photograph → label → repeat), model pre-labeling, a
-  full-speed **batch capture** mode that photographs a whole hopper and
-  reviews as grouped confirm-cards, and camera setup (zoom, light ring,
+  full-speed **batch capture** mode that photographs a whole hopper (a
+  **mixed lot** reviewed as grouped confirm-cards, or **one class**
+  checked and filed automatically), and camera setup (zoom, light ring,
   crop geometry).
 - **Train** — dataset health strip and per-class readiness bars, the
-  installed embedding generation with its gallery stats, dataset mirror
-  from the machine, and restorable archives of every model generation.
+  installed embedding generation with its gallery stats, **Train
+  models…** to drive training on your PC, a dataset copy to USB, and
+  restorable archives of every model generation.
 - **Dataset** — class cards with readiness bars, full-page image browser,
   an **Exemplars** card showing exactly which photos do the matching (pin
   or exclude any), variant **families**, the **set-aside tray** for
@@ -89,28 +93,49 @@ as 3 photos).
   auto-assign, an optional **OVERFLOW** bin so the catch-all holds only
   true rejects, live per-bin dashboards with capacity-calibrated fill
   bars, end-of-brass flush that empties the wheel into the correct bins,
-  per-bin reports, and reject review that turns mistakes into training
+  per-bin reports, pause/resume with jam and no-brass prompts, the case
+  feeder strip, and reject review that turns mistakes into training
   data.
-- **Machine** — board connection and console, machine settings, slot
-  enable/disable, per-slot position calibration (fork firmware), network
-  panel.
+- **Machine** — board connection and console, machine settings for the
+  hardware detected (CS7.2 stock or fork, SortIQ-Pico sort arm, PicoServo
+  carousel), slot enable/disable, per-slot position calibration, the
+  carousel's sort doors, board power through an optional IoT relay (also
+  from a header icon), Home wheel / Test feed, and the optional case
+  feeder. The network dialog lives behind the header's Wi-Fi icon.
+- **Fleet** — every SortIQ machine on the network: model, camera and
+  board health, live run status, build, and one-click update.
 - **Docs** — full user documentation served in-app.
+
+The optional 7" touchscreen carries the machine-side half of this:
+**Sort**, **Capture** (single cases or a whole hopper), **Review** of
+rejects and sorted cases, **Stats** with the thinnest classes and a
+copy-to-USB, and the **Machine** controls, plus the network and Pi
+controls behind its gear icon.
 
 ## Repo map
 
 ```
 webui/            the app: Flask server + single-page UI + in-app docs
 sorter/           pipeline: camera, imaging (crops), embedding classifier,
-                  CS7.2 serial transport, firmware simulator, profiles
-tools/            pi_deploy.sh, the embedding training pipeline (teacher
-                  bench, student distillation, gallery build, GPU job
-                  runner), firmware selftests (run against the simulator)
-firmware/         the CS72_SortIQ firmware fork (stock firmware lives in
-                  Seth's repo — that's also the flash-back rollback)
+                  board serial transport, carousel gates, simulated
+                  machine, profiles
+tools/            pi_deploy.sh and the Pi installer, the embedding
+                  training pipeline (teacher bench, student distillation,
+                  gallery build, GPU job runner), the trainer's Windows
+                  autostart
+firmware/         CS72_SortIQ — the CS7.2 Arduino firmware fork (stock
+                  firmware lives in Seth's repo — that's also the rollback)
+                  SortIQ_Pico — the SKR Pico sort-arm build
+                  SortIQ_PicoServo — the SKR Pico servo-carousel build
+hardware/         build files that never ship to a machine: the servo
+                  carousel (renders, parts list), the Pico controller
+                  case, the 7" touchscreen mount, and the CS7.2
+                  manifold STLs
 calibers/         per-caliber/model profiles: dataset, crops, trained models
                   (a blank 9mm/Default template ships; data stays local)
 docs/             QUICK_START.md, USER_MANUAL.md, PI_SETUP.md,
-                  TRAINER_SETUP.md
+                  PICO_MACHINE_SETUP.md, TRAINER_SETUP.md,
+                  TRAINING_GUIDE.md, COMMUNITY_HEADSTAMPS.md
 config.json       global settings (camera, serial, active profile pointer)
 pyproject.toml    dependencies + uv.lock are authoritative (uv run / uv sync);
 uv.lock           requirements.txt is a plain-pip fallback kept in step —
