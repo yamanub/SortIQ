@@ -5564,6 +5564,7 @@ class RunManager:
         (run_dir / "run.json").write_text(json.dumps(
             {"mode": params.get("mode", "sim"), "capture": self.capture,
              "batch_class": self.batch_class,
+             "profile": {"cartridge": cfg.cartridge, "model": cfg.model_name},
              "bins": [list(g) for g in cfg.bins]}))
         _prune_runs(KEEP_RUNS)          # keep only the newest N runs on disk
         transport = camera = None
@@ -10151,12 +10152,20 @@ def api_test():
     })
 
 
+# AutoUndefined is part of this app, with per-installation private state.
+# Both paid analysis and automatic filing default OFF; no key is shipped.
+from sorter.autoundefined.flask_integration import register as _register_autoundefined
+_auto_undefined = _register_autoundefined(app, ROOT, run_mgr.status, _counts_dirty)
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=5000)
     ap.add_argument("--host", default="0.0.0.0")  # reachable on the LAN, like the Pi will be
     args = ap.parse_args()
     _instance_lock = _single_instance(args.port)   # before any thread starts
+    if os.environ.get('SORTIQ_AUTOUNDEFINED_WORKER', '1') != '0':
+        _auto_undefined.start_worker()
     # probe the GPU sandbox once per boot so the Train page can show its
     # state up front (trainer PCs only — the Pi has no WSL)
     if _gpu_supported():

@@ -1543,6 +1543,47 @@
       <button class="ghost danger" id="btnDeleteModel">Delete model</button>
     </div>
     <div class="msg" id="selMsg"></div>
+    <div id="beastSettings" style="margin-top:20px;padding-top:16px;border-top:1px solid var(--line,#39433b)">
+      <h3>Automatic identification · OpenAI API</h3>
+      <p class="muted" style="font-size:13px">Unidentified crops are analysed with GPT-6.1 Sol and the installed SortIQ recognizer. Choose whether successful results are filed automatically or kept for review. API usage is billed to your OpenAI account.</p>
+      <style>
+        #beastActivation,#beastFilingActivation{display:flex;align-items:center;gap:12px;margin:17px 0 5px}
+        :is(#beastToggle,#beastAutoFileToggle){position:relative;flex:none;box-sizing:border-box;width:58px;min-width:58px;height:32px;min-height:32px;padding:0;border:1px solid #59616d;border-radius:999px;background:#343b45;cursor:pointer;transition:background .15s,border-color .15s}
+        :is(#beastToggle,#beastAutoFileToggle)[aria-checked="true"]{background:#d6ad48;border-color:#e4bd60}
+        :is(#beastToggle,#beastAutoFileToggle) .beastSwitchThumb{position:absolute;top:4px;left:4px;width:22px;height:22px;border-radius:50%;background:#f4f1e8;box-shadow:0 1px 3px #0005;transition:transform .15s}
+        :is(#beastToggle,#beastAutoFileToggle)[aria-checked="true"] .beastSwitchThumb{transform:translateX(26px);background:#1c222a}
+        :is(#beastToggle,#beastAutoFileToggle):focus-visible{outline:3px solid #e4bd60;outline-offset:3px}
+        :is(#beastToggle,#beastAutoFileToggle):disabled{opacity:.55;cursor:wait}
+        #beastToggleState,#beastAutoFileState{font-weight:700;min-width:25px;color:var(--text,#e5e9ee)}
+      </style>
+      <div id="beastActivation">
+        <button id="beastToggle" type="button" role="switch" aria-label="Automatic identification" aria-checked="false" aria-describedby="beastToggleHelp" disabled><span class="beastSwitchThumb" aria-hidden="true"></span></button>
+        <span style="font-weight:600">Automatic identification</span>
+        <span id="beastToggleState" aria-live="polite">Loading…</span>
+      </div>
+      <p id="beastToggleHelp" class="muted" style="font-size:12px;margin:4px 0 17px">When off, no new images are sent for analysis. A request already in progress can finish. Saved suggestions remain available.</p>
+      <div id="beastFilingActivation">
+        <button id="beastAutoFileToggle" type="button" role="switch" aria-label="Automatic filing" aria-checked="false" aria-describedby="beastAutoFileHelp" disabled><span class="beastSwitchThumb" aria-hidden="true"></span></button>
+        <span style="font-weight:600">Automatic filing</span>
+        <span id="beastAutoFileState" aria-live="polite">Loading…</span>
+      </div>
+      <p id="beastAutoFileHelp" class="muted" style="font-size:12px;margin:4px 0 8px">Files completed results with a valid class that do not require manual review. Unreadable results and model disagreements stay unidentified. Originals are backed up; every filing can be undone.</p>
+      <p id="beastAutoFileStatus" class="muted" style="font-size:12px;margin:4px 0 17px" aria-live="polite"></p>
+      <div class="ctlRow" style="gap:12px;align-items:flex-end;flex-wrap:wrap">
+        <div style="flex:1;min-width:220px">
+          <label for="beastApiKey">OpenAI API key</label>
+          <input id="beastApiKey" type="password" autocomplete="new-password" autocapitalize="off" spellcheck="false" placeholder="Paste a new secret key to set or replace it" style="width:100%;box-sizing:border-box;min-height:40px;padding:9px 12px;border:1px solid var(--line,#39434f);border-radius:6px;background:var(--panel,#20262d);color:var(--text,#e5e9ee);font:inherit">
+        </div>
+        <button class="primary" id="beastSaveKey" type="button">Save / replace API key</button>
+        <a class="ghost" href="/autoundefined/" target="_blank" rel="noopener" style="text-decoration:none;padding:8px 14px;border-radius:7px">Review unidentified cases ↗</a>
+      </div>
+      <p class="muted" style="font-size:12px">The saved key is never displayed or included in dataset exports. Leave the field empty to keep it. Saving validates access without generating a paid model response.</p>
+      <p id="beastKeyStatus" class="muted" style="font-size:13px" aria-live="polite"></p>
+      <p id="beastQueueStatus" class="muted" style="font-size:13px"></p>
+      <p id="beastLocalStatus" class="muted" style="font-size:12px"></p>
+      <div id="beastSettingsMessage" class="msg" role="status" aria-live="polite"></div>
+    </div>
+
     <h3>Backup &amp; Pi export</h3>
     <div style="display:flex; gap:10px; flex-wrap:wrap">
       <a class="ghost" style="text-decoration:none; padding:8px 14px; border-radius:7px"
@@ -3226,8 +3267,9 @@ async function loadTray() {
         <div class="tThumbs">${g.cases.slice(0, 6).map(c =>
           `<img src="${c.thumb}" title="#${c.n}">`).join("")}${
           g.cases.length > 6 ? `<span class="muted" style="align-self:center; font-size:12px">+${g.cases.length - 6}</span>` : ""}</div>
+        ${window.beastTrayHint ? beastTrayHint(g) : ''}
         <div style="display:flex; gap:6px; align-items:center">
-          <input type="text" id="trayName_${i}" placeholder="name… (${g.cases.length})"
+          <input type="text" id="trayName_${i}" value="${window.beastTrayDefault ? beastTrayDefault(g) : ''}" placeholder="name… (${g.cases.length})"
                  style="flex:1; min-width:0">
           <button class="ghost" style="padding:3px 10px" onclick="trayFile(${i})">File</button>
           <button class="ghost danger" style="padding:3px 8px" title="discard this group"
@@ -7418,10 +7460,11 @@ function repCaseCard(run, c) {
 
 function repRejCard(run, r) {
   return `
-    <div class="revCard" id="rev_${r.n}">
+    <div class="revCard" id="rev_${r.n}" data-beast-case="${run}/${r.n}">
       <img src="${r.thumb}" loading="lazy"
         onclick="repZoomCase('${run}', ${r.n}, '${r.thumb}')">
       <div class="why">#${r.n} · ${rejectWhy(r)}</div>
+      <div class="beastNativeNote muted" style="font-size:12px">${window.beastRejectHint ? beastRejectHint(r) : ""}</div>
       <input list="classList" class="revStamp" autocomplete="off"
         spellcheck="false" value="${r.stamp || ""}"
         placeholder="class — or UNKNOWN to set aside">
@@ -8738,5 +8781,6 @@ document.querySelector('nav button[data-tab="machine"]').addEventListener("click
 refresh().then(() => { pollTrain(); loadArchive(); loadRuns(); pollMachine(); loadNetwork(); loadTrainMachine(); loadGpu(); });
 if (localStorage.getItem("conDock") === "1") setConDock(true);
 </script>
+<script src="/static/autoundefined/settings.js" defer></script>
 </body>
 </html>

@@ -1254,7 +1254,9 @@ function renderOneReject() {
   $("rWhy").innerHTML = r.stamp
     ? `Best guess <b>${esc(r.stamp)}</b> ${pct(r.conf)}${e.bar ? ` · bar ${pct(e.bar)}` : ""}${e.runner ? ` · runner-up ${esc(e.runner)} ${pct(e.runner_sim)}` : ""}<br><span class="dim">${esc(REASONS[r.reason] || r.reason || "")}</span>`
     : esc(REASONS[r.reason] || r.reason || "");
-  const picks = [...new Set([r.stamp, e.runner].filter(n => n && labels().includes(n)))];
+  const ai = r.ai_proposal;
+  if (ai) $("rWhy").innerHTML += `<br><span class="dim">GPT: ${esc(ai.stamp || 'unclear')}${ai.local_model?.available ? ' · SortIQ: ' + esc(ai.local_model.stamp) : ''}${ai.disagreement ? ' · models disagree' : ''}</span>`;
+  const picks = [...new Set([ai?.stamp, r.stamp, e.runner].filter(n => n && labels().includes(n)))];
   $("rFile").innerHTML = picks.map(n => `<button class="btn big" data-f="${esc(n)}">${esc(n)}</button>`).join("") +
     `<button class="btn big" id="rOther">Another class…</button>
      <div class="row" style="margin-top:auto"><button class="btn grow" id="rSkip">Skip</button>

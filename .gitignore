@@ -13,7 +13,19 @@ models/
 runs/
 gpu_jobs/
 
+# Installation-private AutoUndefined state. API keys live outside this tree.
+var/
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+openai-key*
+
 # Build output and scratch
 *.zip
 *.log
 firmware/**/.pio/
+
+*.sqlite3*

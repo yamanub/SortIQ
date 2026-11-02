@@ -80,6 +80,7 @@ rsync -az --delete \
   --exclude runs --exclude .claude --exclude 'data/' \
   --exclude config.json --exclude 'calibers/' \
   --exclude 'gpu_jobs/' --exclude '*.log' \
+  --exclude 'var/' --exclude '.env' --exclude '.env.*' \
   "$SRC/" "$TARGET:SortIQ/"
 
 # seed config + model templates ONLY if the Pi doesn't have them yet.

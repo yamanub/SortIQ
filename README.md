@@ -1,4 +1,10 @@
-# SortIQ — vision-powered brass sorting
+# SortIQ AutoUndefined
+
+This fork extends [yamanub/SortIQ](https://github.com/yamanub/SortIQ) v1.6.0 with automatic identification of unidentified crops, optional automatic filing, and reversible review. In the standard web app, open **Dataset → Caliber & model** to configure both independent switches and your own OpenAI API key. Both switches start off. The key input is always blank; no key or personal dataset ships with this repository.
+
+See [AutoUndefined setup and recovery](docs/AUTOUNDEFINED.md) and the [changelog](CHANGELOG.md). The original SortIQ documentation follows.
+
+## SortIQ — vision-powered brass sorting
 **A remix of an awesome DIY project.** SortIQ is a fork/remix of [Seth Hahner's](https://github.com/sjseth) brilliant [AI Case Sorter CS7.2](https://github.com/sjseth/AI-Case-Sorter-CS7.2) — the machine itself (mechanics, electronics, stock firmware) is his design, and none of this would exist without it. SortIQ replaces the desktop software side with a self-contained Raspberry Pi application (on-device TFLite inference, an open-set embedding classifier that says "I don't know" instead of guessing, in-browser dataset collection and machine control, LAN-based training) and carries a [firmware fork](firmware/README.md) with per-slot calibration and motion profiles. If you want the original experience, go build his — it's great.
 
 **License:** [GPL-3.0](LICENSE), same as upstream. **No warranty — use at your own risk** (see [Disclaimer](#disclaimer) below). The firmware fork derives from Seth's GPL-3.0 code; the rest is original but ships under the same license to keep the whole program unambiguous.
