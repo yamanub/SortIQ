@@ -61,6 +61,10 @@ def register(app, root, run_status, counts_dirty=None):
         if not isinstance(body,dict):raise ValueError('Expected a JSON object.')
         if action in ('config','settings'):return jsonify(service.configure(body))
         if action=='scan':return jsonify(imported=service.scan())
+        if action=='select-class':
+            return jsonify(service.select_class(body.get('id'),body.get('stamp'),body.get('profile')))
+        if action=='file-all':
+            return jsonify(service.file_all(body.get('profile')))
         if action=='file':
             return jsonify(service.file_case(body.get('id'),body.get('stamp'),body.get('profile'),body.get('confirmed')))
         if action in ('undo','recover'):

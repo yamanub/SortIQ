@@ -17,7 +17,9 @@ The worker discovers rejects, explicitly unmatched capture frames, and unidentif
 
 The installed local embedding model supplies a second opinion. An optional compatible community model can be placed at `var/autoundefined/community/<cartridge>/shadow_embed.tflite` together with `shadow_gallery.npz`. The model and gallery fingerprints must match. Without a separate pair, the installed profile model is used. Installing community weights is a separate action; none are bundled here.
 
-Automatic filing requires a completed API response, a valid existing class, no manual-review flag or model disagreement, unchanged source/profile, and a stopped sorter. Unreadable or disputed results stay for confirmation. The feature does not create new classes automatically. Proposed classes can be corrected during manual review.
+Automatic filing requires a completed API response, a valid existing class, no manual-review flag or model disagreement, unchanged source/profile, and a stopped sorter. Unreadable or disputed results stay for confirmation. The feature does not create new classes automatically. Proposed classes can be corrected during manual review. **File under class** is the filing destination when **Confirm & file** is pressed; no additional checkbox is required. Changing the selection saves a user classification across page reloads and server restarts, without filing the image. A saved user choice is held for explicit filing and is never silently replaced by automatic API filing.
+
+**File All**, beside the queue controls, files identified cases in the displayed caliber/model profile. Saved user selections take priority over valid, completed API suggestions. Unidentified, disputed and interrupted cases, cases in other profiles, and undone cases are skipped. A user can explicitly select a class to resolve an ambiguous result. Each image uses the same original backup, durable receipt and Undo operation as single-image filing. Individual failures are reported while other eligible images can finish; repeating the action does not duplicate completed filings.
 
 ## State, keys and updates
 
@@ -38,3 +40,8 @@ To revert the application code, disable both switches, stop the server, and rest
 Run `python -m unittest discover -s tests -v` in an environment with Flask, NumPy and OpenCV. Tests use synthetic crops and mocked API responses; they do not call paid APIs or operate hardware. For a web preview without starting the automatic worker, set `SORTIQ_AUTOUNDEFINED_WORKER=0` when starting the server.
 
 The 2026-11-02 integration passed 50 tests locally and on the test Raspberry Pi. The actual upstream Flask server was also loaded from an isolated copy: Dataset, settings script, review and configuration routes returned successfully, with both switches off and no saved key. No paid model requests or hardware movement were used for this verification.
+
+
+The File All update passed 63 tests on the test Raspberry Pi, plus browser checks against isolated synthetic images: changing CBC to S&B immediately before Confirm & file, persisting a manual classification over reload, filing API and user classifications together, showing the actual filed class, and undoing all three images. Original bytes and output removal were verified. No paid API request or production image was used.
+
+This update adds only a nullable `user_stamp` database column. The previous code can read the upgraded database, and code rollback retains queue records, archives and external keys. Saved user classifications are unavailable in the previous UI; resolve or file them before reverting. For each dataset change, use Undo before reverting code.

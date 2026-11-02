@@ -64,6 +64,8 @@ def init():
         c.execute("INSERT OR IGNORE INTO settings VALUES ('auto_file','false')")
         if 'auto_file_blocked' not in {r['name'] for r in c.execute('PRAGMA table_info(cases)')}:
             c.execute('ALTER TABLE cases ADD COLUMN auto_file_blocked INTEGER NOT NULL DEFAULT 0')
+        if 'user_stamp' not in {r['name'] for r in c.execute('PRAGMA table_info(cases)')}:
+            c.execute('ALTER TABLE cases ADD COLUMN user_stamp TEXT')
         row=c.execute("SELECT value FROM settings WHERE key='installation_id'").fetchone()
         if row is None:
             ident=uuid.uuid4().hex
@@ -382,7 +384,7 @@ def review_rows():
 
 
 def auto_file_stamp(row):
-    if row['state']!='review' or row['auto_file_blocked'] or row['error'] or not row['proposal']:
+    if row['user_stamp'] or row['state']!='review' or row['auto_file_blocked'] or row['error'] or not row['proposal']:
         return None
     if not (SORTIQ/row['source']).is_file():return None
     try:proposal=json.loads(row['proposal'])
@@ -398,6 +400,57 @@ def auto_file_stamp(row):
     try:settings=settings_for(json.loads(row['profile']))
     except (ValueError,OSError,KeyError):return None
     return stamp if stamp in settings.get('stamp_labels',[]) else None
+
+
+def select_class(ident, stamp, profile):
+    """Persist an explicit user choice without filing or changing the API result."""
+    with LOCK:
+        row=getcase(ident)
+        current,settings,_=profile_state()
+        if row['state'] not in ('review','queued','error'):
+            raise ValueError('This case is not available for classification.')
+        if profile!=current or profile!=json.loads(row['profile']):
+            raise ValueError('Profile changed. Review this case in its original profile.')
+        if stamp is not None and (not isinstance(stamp,str) or stamp not in settings.get('stamp_labels',[]) or any(x in stamp for x in ('/','\\','..'))):
+            raise ValueError('Choose an existing class.')
+        source=SORTIQ/row['source']
+        if not source.is_file() or digest(source)!=row['fingerprint']:
+            raise ValueError('The source changed. Refresh the queue.')
+        with db() as c:
+            c.execute('UPDATE cases SET user_stamp=?,auto_file_blocked=0 WHERE id=?',(stamp,ident))
+            event(c,ident,'class_selected',{'stamp':stamp,'profile':profile})
+        return {'ok':True}
+
+
+def bulk_stamp(row, profile):
+    if row['state'] not in ('review','queued','error') or json.loads(row['profile'])!=profile:
+        return None
+    if row['auto_file_blocked']:return None
+    if row['user_stamp']:
+        stamp=row['user_stamp']
+        settings=settings_for(profile)
+        return stamp if stamp in settings.get('stamp_labels',[]) else None
+    return auto_file_stamp(row)
+
+
+def file_all(profile):
+    """File a fixed snapshot, retaining individual receipts and reporting failures."""
+    with LOCK:
+        if profile!=profile_state()[0]:raise ValueError('Profile changed. Refresh the queue.')
+        if call('/api/run/status?brief=1').get('running'):
+            raise ValueError('Wait until sorting has stopped before filing.')
+        with db() as c:
+            rows=c.execute('SELECT * FROM cases ORDER BY created,id').fetchall()
+        targets=[(r['id'],bulk_stamp(r,profile)) for r in rows]
+        targets=[(ident,stamp) for ident,stamp in targets if stamp is not None]
+        filed=[];failed=[]
+        for ident,stamp in targets:
+            try:
+                file_case(ident,stamp,profile,True)
+                filed.append(ident)
+            except (ValueError,OSError,RuntimeError):
+                failed.append({'id':ident,'error':'Filing failed. Original and recovery archive retained; inspect this case.'})
+        return {'ok':not failed,'filed':filed,'failed':failed,'skipped':len(rows)-len(targets)}
 
 
 def auto_file_one():
@@ -572,7 +625,7 @@ def undo(ident):
         receipt['state'] = 'undone'
         write_receipt(row, receipt)
         with db() as c:
-            c.execute("UPDATE cases SET state='review',auto_file_blocked=1 WHERE id=?", (ident,))
+            c.execute("UPDATE cases SET state='review',user_stamp=NULL,auto_file_blocked=1 WHERE id=?", (ident,))
             event(c, ident, 'undone', receipt)
         changed_dataset()
         return {'ok': True}
@@ -591,9 +644,10 @@ def recover():
             elif receipt['state'] == 'filed':
                 c.execute("UPDATE cases SET state='filed' WHERE id=?", (row['id'],))
             elif receipt['state']=='undone':
-                c.execute("UPDATE cases SET state='review',auto_file_blocked=1 WHERE id=?",(row['id'],))
+                if row['state']=='review' and row['user_stamp'] and not row['auto_file_blocked']:continue
+                c.execute("UPDATE cases SET state='review',user_stamp=NULL,auto_file_blocked=1 WHERE id=?",(row['id'],))
             elif receipt['state']=='rolled_back' and receipt.get('filed_by')=='automatic':
-                c.execute("UPDATE cases SET state='review',auto_file_blocked=1 WHERE id=?",(row['id'],))
+                c.execute("UPDATE cases SET state='review',user_stamp=NULL,auto_file_blocked=1 WHERE id=?",(row['id'],))
             elif receipt['state']=='rolled_back' and row['state'] in ('filing', 'filed', 'recovery'):
                 c.execute("UPDATE cases SET state='review' WHERE id=?", (row['id'],))
 
@@ -629,7 +683,7 @@ def recover_case(ident):
         receipt['state'] = 'rolled_back'
         write_receipt(row, receipt)
         with db() as c:
-            c.execute("UPDATE cases SET state='review', error=NULL,auto_file_blocked=1 WHERE id=?", (ident,))
+            c.execute("UPDATE cases SET state='review',user_stamp=NULL, error=NULL,auto_file_blocked=1 WHERE id=?", (ident,))
             event(c, ident, 'recovered', receipt)
         return {'ok': True}
 
@@ -641,10 +695,12 @@ def snapshot():
         enabled = json.loads(c.execute("SELECT value FROM settings WHERE key='enabled'").fetchone()[0])
         auto_file = json.loads(c.execute("SELECT value FROM settings WHERE key='auto_file'").fetchone()[0])
     for row in rows:
+        row['available'] = (SORTIQ / row['source']).is_file()
+        row['filing_stamp'] = bulk_stamp(row,profile) if row['available'] else None
         row['profile'] = json.loads(row['profile'])
         row['proposal'] = json.loads(row['proposal']) if row['proposal'] else None
+        row['filed_stamp'] = json.loads(row['receipt']).get('stamp') if row['receipt'] and row['state']=='filed' else None
         row.pop('receipt', None)
-        row['available'] = (SORTIQ / row['source']).is_file()
     return {'cases': rows, 'profile': profile, 'labels': model.get('stamp_labels', []),
             'enabled': enabled, 'auto_file':auto_file, 'model': MODEL, 'status': dict(STATUS)}
 

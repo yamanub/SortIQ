@@ -44,6 +44,140 @@ class Workflow(unittest.TestCase):
         self.calls.stop()
         self.temp.cleanup()
 
+    def review_client(self):
+        from flask import Flask,jsonify
+        from sorter.autoundefined.flask_integration import register
+        app=Flask(__name__)
+        app.add_url_rule('/api/runs/<run_id>/rejects/<int:n>/resolve','api_run_reject_resolve',lambda run_id,n:jsonify(original=True),methods=['POST'])
+        app.add_url_rule('/api/tray/resolve','api_tray_resolve',lambda:jsonify(original=True),methods=['POST'])
+        register(app,b.SORTIQ,lambda:{'running':False})
+        b.scan()
+        self.ident=b.snapshot()['cases'][0]['id']
+        return app.test_client()
+
+    def test_confirm_files_selected_class_instead_of_api_proposal(self):
+        client=self.review_client();self.make_auto_ready()
+        result=client.post('/autoundefined/api/file',json={'id':self.ident,'stamp':'S&B','profile':self.profile,'confirmed':True})
+        self.assertEqual(result.status_code,200)
+        receipt=json.loads(b.getcase(self.ident)['receipt'])
+        self.assertEqual(receipt['stamp'],'S&B')
+        self.assertTrue(all('/S&B/' in x['path'] for x in receipt['outputs']))
+        self.assertFalse((self.directory/'data/stamp/CBC').exists())
+        self.assertEqual(b.snapshot()['cases'][0]['filed_stamp'],'S&B')
+        b.undo(self.ident);self.assertEqual(self.source.read_bytes(),self.original)
+
+    def test_saved_user_choice_survives_restart_and_bulk_overrides_api(self):
+        self.make_auto_ready()
+        b.select_class(self.ident,'S&B',self.profile);b.init()
+        self.assertEqual(b.getcase(self.ident)['user_stamp'],'S&B')
+        self.assertEqual(b.snapshot()['cases'][0]['filing_stamp'],'S&B')
+        result=b.file_all(self.profile);self.assertEqual(result['filed'],[self.ident])
+        self.assertEqual(json.loads(b.getcase(self.ident)['receipt'])['stamp'],'S&B')
+        b.undo(self.ident)
+        self.assertEqual(self.source.read_bytes(),self.original)
+        self.assertIsNone(b.getcase(self.ident)['user_stamp'])
+        self.assertEqual(b.file_all(self.profile)['filed'],[])
+        b.init();self.assertEqual(b.file_all(self.profile)['filed'],[])
+
+    def test_bulk_api_and_manual_cases_each_get_receipt_and_exact_undo(self):
+        self.make_auto_ready()
+        second=self.run/'rejects/0002_A.png';second.write_bytes(self.original);b.scan()
+        other=next(r['id'] for r in b.snapshot()['cases'] if r['id']!=self.ident)
+        b.select_class(other,'S&B',self.profile)
+        result=b.file_all(self.profile)
+        self.assertCountEqual(result['filed'],[self.ident,other]);self.assertEqual(result['failed'],[])
+        for ident in result['filed']:
+            receipt=json.loads(b.getcase(ident)['receipt'])
+            self.assertTrue(all(b.digest(b.SORTIQ/x['path'])==x['sha256'] for x in receipt['outputs']))
+            b.undo(ident)
+        self.assertEqual(self.source.read_bytes(),self.original);self.assertEqual(second.read_bytes(),self.original)
+
+    def test_bulk_skips_unidentified_ambiguous_local_and_other_profiles(self):
+        for proposal in [None,{'stamp':'CBC'},dict(self.make_auto_ready(),needs_manual_review=True),
+                         dict(self.make_auto_ready(),disagreement=True),dict(self.make_auto_ready(),stamp='UNKNOWN')]:
+            with b.db() as c:c.execute("UPDATE cases SET state='review',proposal=? WHERE id=?",(json.dumps(proposal) if proposal else None,self.ident))
+            self.assertEqual(b.file_all(self.profile)['filed'],[])
+            self.assertEqual(self.source.read_bytes(),self.original)
+        self.make_auto_ready()
+        with b.db() as c:c.execute('UPDATE cases SET profile=? WHERE id=?',(json.dumps({'cartridge':'other','model':'Fixture'}),self.ident))
+        self.assertEqual(b.file_all(self.profile)['filed'],[])
+
+    def test_bulk_failure_reports_case_and_preserves_source_then_retry_is_safe(self):
+        self.make_auto_ready();self.source.write_bytes(b'changed')
+        result=b.file_all(self.profile)
+        self.assertFalse(result['ok']);self.assertEqual(result['failed'][0]['id'],self.ident)
+        self.assertEqual(self.source.read_bytes(),b'changed')
+        self.source.write_bytes(self.original)
+        self.assertEqual(b.file_all(self.profile)['filed'],[self.ident])
+        self.assertEqual(b.file_all(self.profile)['filed'],[])
+
+    def test_bulk_running_sorter_and_stale_profile_are_blocked(self):
+        self.make_auto_ready()
+        with patch.object(b,'call',return_value={'running':True}):
+            with self.assertRaises(ValueError):b.file_all(self.profile)
+        with self.assertRaises(ValueError):b.file_all({'cartridge':'other','model':'Fixture'})
+        self.assertEqual(self.source.read_bytes(),self.original)
+
+    def test_user_choice_blocks_automatic_api_class_filing(self):
+        self.make_auto_ready();b.select_class(self.ident,'S&B',self.profile)
+        b.configure({'auto_file':True});self.assertFalse(b.auto_file_one())
+        b.file_all(self.profile)
+        self.assertEqual(json.loads(b.getcase(self.ident)['receipt'])['stamp'],'S&B')
+
+    def test_class_selection_and_bulk_routes_validate_and_persist(self):
+        client=self.review_client()
+        for stamp in ['../CBC','UNKNOWN','missing',12]:
+            response=client.post('/autoundefined/api/select-class',json={'id':self.ident,'stamp':stamp,'profile':self.profile})
+            self.assertEqual(response.status_code,400)
+        response=client.post('/autoundefined/api/select-class',json={'id':self.ident,'stamp':'S&B','profile':self.profile})
+        self.assertEqual(response.status_code,200)
+        response=client.post('/autoundefined/api/file-all',json={'profile':self.profile})
+        self.assertEqual(response.status_code,200);self.assertEqual(response.json['filed'],[self.ident])
+        self.assertEqual(json.loads(b.getcase(self.ident)['receipt'])['stamp'],'S&B')
+        b.undo(self.ident);self.assertEqual(self.source.read_bytes(),self.original)
+
+    def test_clearing_user_choice_restores_api_candidate(self):
+        self.make_auto_ready();b.select_class(self.ident,'S&B',self.profile)
+        b.select_class(self.ident,None,self.profile)
+        self.assertEqual(b.snapshot()['cases'][0]['filing_stamp'],'CBC')
+
+    def test_bulk_continues_after_individual_disk_failure(self):
+        self.make_auto_ready()
+        second=self.run/'rejects/0002_A.png';second.write_bytes(self.original);b.scan()
+        other=next(r['id'] for r in b.snapshot()['cases'] if r['id']!=self.ident)
+        b.select_class(other,'S&B',self.profile)
+        original_file=b.file_case
+        def fail_one(ident,*args,**kwargs):
+            if ident==self.ident:raise OSError('synthetic full disk')
+            return original_file(ident,*args,**kwargs)
+        with patch.object(b,'file_case',side_effect=fail_one):result=b.file_all(self.profile)
+        self.assertEqual(result['filed'],[other]);self.assertEqual(result['failed'][0]['id'],self.ident)
+        self.assertEqual(self.source.read_bytes(),self.original)
+        b.undo(other);self.assertEqual(second.read_bytes(),self.original)
+
+    def test_existing_database_migrates_without_losing_case_or_settings(self):
+        with b.db() as c:
+            c.execute('ALTER TABLE cases DROP COLUMN user_stamp')
+            c.execute("UPDATE settings SET value='true' WHERE key='auto_file'")
+        b.init();b.init()
+        self.assertIsNone(b.getcase(self.ident)['user_stamp'])
+        self.assertTrue(b.configuration()['auto_file'])
+        self.assertEqual(self.source.read_bytes(),self.original)
+
+    def test_bulk_post_rejects_cross_origin_without_filing(self):
+        client=self.review_client();self.make_auto_ready()
+        response=client.post('/autoundefined/api/file-all',json={'profile':self.profile},headers={'Origin':'https://evil.example'})
+        self.assertEqual(response.status_code,403)
+        self.assertEqual(self.source.read_bytes(),self.original)
+
+    def test_explicit_reclassification_after_undo_survives_restart(self):
+        self.make_auto_ready();b.file_all(self.profile);b.undo(self.ident)
+        b.select_class(self.ident,'S&B',self.profile);b.init()
+        self.assertEqual(b.getcase(self.ident)['user_stamp'],'S&B')
+        self.assertEqual(b.file_all(self.profile)['filed'],[self.ident])
+        self.assertEqual(json.loads(b.getcase(self.ident)['receipt'])['stamp'],'S&B')
+        b.undo(self.ident);self.assertEqual(self.source.read_bytes(),self.original)
+
     def test_duplicate_scan_does_not_duplicate(self):
         self.assertEqual(b.scan(),0)
         self.assertEqual(len(b.snapshot()['cases']),1)
