@@ -23,7 +23,7 @@ import os
 from pathlib import Path
 
 CODE_DIRS = ("docs", "firmware", "sorter", "tools", "webui")
-CODE_FILES = ("LICENSE", "README.md", "requirements.txt", "VERSION",
+CODE_FILES = ("LICENSE", "README.md", "CHANGELOG.md", "requirements.txt", "VERSION",
               "pyproject.toml", "uv.lock", ".python-version")
 _SKIP_DIRS = {"__pycache__", ".git", ".venv", ".claude", "data", "runs"}
 _SKIP_SUFFIXES = {".pyc", ".log"}
