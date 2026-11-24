@@ -1,10 +1,10 @@
-# SortIQ-Pico 2.8
+# SortIQ-Pico 2.9
 
 Firmware for the SKR Pico sort-arm machine: a feed wheel and a stepper sort
 arm, driven with FastAccelStepper (PIO step generation) under the same
 serial protocol as the CS7.2 fork. The app drives it like any other board.
 
-**Ready to flash:** `SortIQ-Pico-2.8.uf2` in this folder. On the Pi,
+**Ready to flash:** `SortIQ-Pico-2.9.uf2` in this folder. On the Pi,
 `~/SortIQ/tools/flash_pico.sh arm` flashes it; a new board needs the BOOT
 jumper for its first flash. Building from source (PlatformIO, `pio run`) is
 only needed to change the firmware, and needs the local library patch under
@@ -29,7 +29,7 @@ only needed to change the firmware, and needs the local library patch under
 | Sort arm motor | **Y** driver output | step 6 / dir 5 / en 7 | onboard TMC2209, UART addr 2 |
 | Feed homing opto | **X-STOP** | 4 | input, pull-up — LOW = blocked |
 | Sort homing opto | **Y-STOP** | 3 | input, pull-up — LOW = blocked |
-| Brass/case sensor | **WD-DET** | 22 | input, pull-up — HIGH = brass present; needs the P_S·IO22 "Proximity Switch" jumper fitted, NPN jumper out for a PNP sensor |
+| Brass/case sensor | **WD-DET** | 22 | input, pull-up — PNP sensor: HIGH = brass, NPN jumper out; NPN sensor: LOW = brass, NPN jumper fitted and `proxnpn:1`. Needs the P_S·IO22 "Proximity Switch" jumper fitted |
 | LED ring MOSFET module — trigger | **the Pi's GPIO 18** | — | 20 kHz hardware PWM from the app, not this board |
 | LED ring MOSFET module — power in | **E0-STOP** header, 5 V + GND | — | supply only |
 | Controller case fans | **FAN1**, **FAN2** | 17, 18 | full speed from boot |
@@ -84,6 +84,7 @@ them is needed to run the machine.
 | `feedstats` | Feed cycle, homing and sort-stall counters |
 | `feeddebug:1` / `feeddebug:0` | One trace line per feed cycle, on or off |
 | `debounceTime:<ms>` | Case-sensor confirm time (default 100) |
+| `proxnpn:1` / `proxnpn:0` | Case sensor type: NPN or PNP (default PNP, kept in EEPROM; the app sets it from its **NPN case sensor** switch) |
 | `launchsettle:<ms>` | Pause before each feed move (default 0) |
 | `fan:<0-100>` | FAN2 speed (full speed from boot) |
 | `homefeeder`, `homesorter` | Home the feed wheel or the sort arm |

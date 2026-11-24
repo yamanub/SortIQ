@@ -57,13 +57,23 @@ PCA9685.
 | Cyan | **Y** motor and **Y-STOP** (GPIO 3) | **Sort arm only:** the arm stepper and its slotted homing opto. Pull the Y DIAG jumper. |
 | Orange | FAN1 (IO17), FAN2 (IO18), FAN3 (IO20) | FAN1 and FAN2 are the controller case fans, FAN3 is the camera fan. All three are plain two-wire fans at full speed from boot; the app does not control them. |
 | Yellow | E0-STOP, 5 V and GND only | Power for the LED ring's MOSFET module. The ring's PWM comes from the Pi's GPIO 18, so the ring is dark whenever the board is off. |
-| Blue | WD-DET (12/24V · GND · P_S) | The M8 inductive case sensor: brown to 12/24V, blue to GND, black to P_S. HIGH on GPIO 22 means a case is staged. |
+| Blue | WD-DET (12/24V · GND · P_S) | The M8 inductive case sensor: brown to 12/24V, blue to GND, black to P_S. PNP or NPN, set on the Machine tab (below). |
 | Lime | "Proximity Switch" jumper (P_S · IO22) | **Fitted.** It carries WD-DET's conditioned output to GPIO 22. Without it the sensor's LED lights but the firmware never sees a case. |
 | Pink | **E** motor, **Z-STOP** (GPIO 25), **E0-DIAG** jumper | **Carousel with a case feeder only:** the feeder motor, its break-beam sensor, and the jumper fitted for jam detection. See [Case feeder](#case-feeder). |
 
-**Case sensor gotchas.** Remove the board's **NPN** jumper for a PNP
-sensor such as the LJ8A3 `-Z/BY`; fit it only for an NPN `-Z/BX`. And
-the sensor plugs into **WD-DET**, not the identical-looking **Laser**
+**Case sensor type.** Either type works; match the board and the app
+to the sensor:
+
+| Sensor | Board's NPN jumper | Machine tab → Hardware → **NPN case sensor** |
+|---|---|---|
+| PNP, such as the LJ8A3 `-Z/BY` | removed | off |
+| NPN, such as the LJ8A3 `-Z/BX` | fitted | on |
+
+To check it, send `sensors` from the Machine tab console: `"prox"` reads
+`1` with a case at the sensor and `0` without. Reversed readings mean the
+**NPN case sensor** switch is set the wrong way.
+
+**Case sensor gotcha.** The sensor plugs into **WD-DET**, not the identical-looking **Laser**
 header next to it: the Laser header's signal pin is FAN3's output
 (IO20), so a sensor there lights up but never reaches GPIO 22.
 
@@ -199,8 +209,8 @@ The images ship in the repo, so there is nothing to compile:
 
 | Machine | Image |
 |---|---|
-| Servo carousel | `firmware/SortIQ_PicoServo/SortIQ-PicoServo-0.9.2.uf2` |
-| Sort arm | `firmware/SortIQ_Pico/SortIQ-Pico-2.8.uf2` |
+| Servo carousel | `firmware/SortIQ_PicoServo/SortIQ-PicoServo-0.9.3.uf2` |
+| Sort arm | `firmware/SortIQ_Pico/SortIQ-Pico-2.9.uf2` |
 
 The board's logic runs off **24 V, not USB**, so it must be powered to
 flash. With its 24 V off it never appears, whatever the USB cable is doing.

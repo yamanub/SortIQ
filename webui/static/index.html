@@ -1914,6 +1914,10 @@ automatically); unknown or low-confidence cases go to the UNMATCHED bin">
              title="a case feeder runs on this board: motor on the E driver, beam on Z-STOP, E0-DIAG jumper fitted">
         <span class="hwT"><b>Case feeder</b><span>Case feeder installed and connected to the Pico</span></span>
         <input type="checkbox" class="sw" id="msFeeder"></label>
+      <label class="hwTile" id="msNpnWrap" style="display:none"
+             title="on for an NPN case sensor (-Z/BX), which pulls WD-DET LOW on brass; off for a PNP one (-Z/BY)">
+        <span class="hwT"><b>NPN case sensor</b><span>On for an NPN (-Z/BX) sensor, off for PNP (-Z/BY)</span></span>
+        <input type="checkbox" class="sw" id="msNpn"></label>
     </div>
     <div class="hwTools">
       <button class="ghost" id="btnHwHome" disabled
@@ -7785,6 +7789,7 @@ async function loadMachineSettings() {
     faultShow(j.fault);
     $("msInit").checked = !!j.settings.init_on_startup;
     $("msRelay").checked = !!j.settings.power_relay;
+    $("msNpn").checked = !!j.settings.case_sensor_npn;
     FEEDER.on = !!j.settings.case_feeder;
     $("msFeeder").checked = FEEDER.on;
     $("fdWarn").value = j.settings.feeder_warn_s;
@@ -7865,6 +7870,7 @@ function applyFirmwareUI(fw) {
     el.style.display = servo ? "none" : "");
   $("doorCard").style.display = servo ? "" : "none";
   $("msFeederWrap").style.display = servo ? "flex" : "none";
+  $("msNpnWrap").style.display = pico ? "flex" : "none";
   // the arm builds test-feed from the Slots card, where the target slot is picked
   $("btnHwTestFeed").style.display = servo ? "" : "none";
   feederView();
@@ -7974,6 +7980,20 @@ $("btnFdSave").onclick = async () => {
   } catch (e) { msg("fdMsg", e.message, false); }
 };
 
+$("msNpn").onchange = async () => {
+  const on = $("msNpn").checked;
+  try {
+    const j = await postJson("/api/machine/settings", { case_sensor_npn: on });
+    msg("hwMsg", (on ? "NPN case sensor" : "PNP case sensor") +
+      (j.applied ? " — pushed to the board"
+                 : " — saved, not on the board yet: it needs a connected board" +
+                   " running SortIQ-Pico 2.9 / PicoServo 0.9.3 or later"), !!j.applied);
+    pollConsole();
+  } catch (e) {
+    $("msNpn").checked = !on;
+    msg("hwMsg", e.message, false);
+  }
+};
 $("msRelay").onchange = async () => {
   const on = $("msRelay").checked;
   try {
@@ -8024,6 +8044,7 @@ $("btnMsDefaults").onclick = async () => {
     if ("sort_current" in d) $("msSortCurrent").value = d.sort_current;
     $("msFeedDecel").checked = !!d.feed_decel;
     if (d.stall_guard !== undefined) $("msSg").checked = !!d.stall_guard;
+    if (d.case_sensor_npn !== undefined) $("msNpn").checked = !!d.case_sensor_npn;
     $("msAirDrop").checked = !!d.air_drop;
     syncAirDropFields();
     msg("msMsg", "Fields reset to the bench-proven defaults — click Save to apply", true);

@@ -9247,6 +9247,9 @@ MACHINE_DEFAULTS = {"feed_speed": 94, "feed_steps": 60, "sort_speed": 94,
                     # ONLY for a known-empty single-case bench test.
                     "gate_prefire_warmup": 12,
                     "led_color": "#ffffff",   # WS2812 ring mix (SKR Pico only)
+                    # SKR Pico case sensor on WD-DET: False = PNP (HIGH on
+                    # brass), True = NPN (LOW on brass)
+                    "case_sensor_npn": False,
                     "slots_total": 8, "slots_enabled": None,   # None = all
                     # per-slot physical capacity in cases; None/0 entries =
                     # uncalibrated (fill bars fall back to relative widths)
@@ -9315,6 +9318,7 @@ FIRMWARE_PROFILES = {
              "feed_homing_offset": 0},
 }
 _MACHINE_BOOLS = ("init_on_startup", "feed_decel", "air_drop", "stall_guard", "power_relay",
+                  "case_sensor_npn",
                   "case_feeder", "feeder_auto_start", "feeder_reversed",
                   "feeder_beam_high", "feeder_jam_detect")
 MAX_SLOTS = 12                # matches the fork's slot table size
@@ -9417,7 +9421,8 @@ _SETTER_CMD = {"feed_speed": "feedspeed", "feed_steps": "feedsteps",
                "air_drop_pre_delay": "airdroppredelay",
                # sic: the firmware's command name carries a typo — match it
                "air_drop_signal_ms": "airdropdsignalduration",
-               "air_drop_post_delay": "airdroppostdelay"}
+               "air_drop_post_delay": "airdroppostdelay",
+               "case_sensor_npn": "proxnpn"}
 _GETCONFIG_KEY = {"feed_speed": "FeedMotorSpeed", "feed_steps": "FeedCycleSteps",
                   "sort_speed": "SortMotorSpeed", "sort_steps": "SortSteps",
                   "feed_current": "FeedMotorCurrent", "sort_current": "SortMotorCurrent",
@@ -9443,7 +9448,8 @@ _GETCONFIG_KEY = {"feed_speed": "FeedMotorSpeed", "feed_steps": "FeedCycleSteps"
                   "air_drop": "AirDropEnabled",
                   "air_drop_pre_delay": "AirDropPreDelay",
                   "air_drop_signal_ms": "AirDropSignalTime",
-                  "air_drop_post_delay": "AirDropPostDelay"}
+                  "air_drop_post_delay": "AirDropPostDelay",
+                  "case_sensor_npn": "CaseSensorNPN"}
 
 
 def effective_slot_positions(m):
@@ -9550,7 +9556,7 @@ def _apply_machine_settings(settings):
     fw = str(machine_settings().get("firmware", "stock"))
     pico_only = {"sort_decel", "feed_accel", "feed_decel_rate",
                  "stall_guard", "feed_stall_threshold",
-                 "sort_flag_offset", "sort_flag_width"}
+                 "sort_flag_offset", "sort_flag_width", "case_sensor_npn"}
     fork_only = {"sort_accel", "sort_home_backoff", "sort_home_slow",
                  "feed_launch", "feed_decel", "arm_dwell", "slot_positions"}
     # both Pico builds (pico, pico-servo) speak the whole pico set — the
@@ -9564,8 +9570,14 @@ def _apply_machine_settings(settings):
             continue
         if not is_pico and key in pico_only:
             continue
-        if key in settings and settings[key] is not None and _console_request(
-                f"{cmd}:{int(settings[key])}", lambda l: l.strip() == "ok", timeout=2.0):
+        if key not in settings or settings[key] is None:
+            continue
+        # firmware older than Pico 2.9 / PicoServo 0.9.3 answers "?" to
+        # proxnpn: stop waiting at once instead of stalling the connect
+        done = ((lambda l: l.strip() in ("ok", "?")) if key == "case_sensor_npn"
+                else (lambda l: l.strip() == "ok"))
+        reply = _console_request(f"{cmd}:{int(settings[key])}", done, timeout=2.0)
+        if reply and reply.strip() == "ok":
             applied += 1
     # PICO-SERVO machines: the LED ring hangs on the PI's GPIO18 hardware
     # PWM (20 kHz sysfs), not the board — the firmware accepts cameraledlevel

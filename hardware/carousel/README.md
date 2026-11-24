@@ -58,7 +58,7 @@ it up. The app finds the board and sets it up. The steps are in
 | 1 | [CS7.2 camera light ring](https://shop.sjseth.com/products/cs7-2-camera-light-ring) | Seth's ring, dimmed by the Pi through the MOSFET module |
 | 1 | [Spring for the camera tension cam](https://www.amazon.com/dp/B0BRHFY8HR) | Goes with `Tension Cam Camera.stl` |
 | 1 | [BIGTREETECH SKR Pico](https://www.amazon.com/dp/B09MVJ5XKH) | |
-| 1 | [M8 inductive proximity sensor, LJ8A3-2-Z](https://www.amazon.com/dp/B072M9T26C) | Case sensor, on WD-DET. The linked one is the NPN `-Z/BX`: fit the board's NPN jumper. A PNP `-Z/BY` works too, with that jumper removed |
+| 1 | [M8 inductive proximity sensor, LJ8A3-2-Z](https://www.amazon.com/dp/B072M9T26C) | Case sensor, on WD-DET. The linked one is the NPN `-Z/BX`: fit the board's NPN jumper and turn on **NPN case sensor** on the Machine tab. A PNP `-Z/BY` works too, with that jumper removed and the switch off |
 | 2 | [24 V fans for the controller case](https://www.amazon.com/dp/B0CN39MCPL) | FAN1 and FAN2, full speed from boot |
 | 1 | [24 V camera fan](https://www.amazon.com/dp/B08R9J189W) | FAN3, full speed from boot |
 | 1 | [MOSFET module for the LED ring](https://www.amazon.com/dp/B0DZP1NCVW) | Power from E0-STOP 5 V, PWM from the Pi's GPIO 18 |

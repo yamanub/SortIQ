@@ -7,8 +7,8 @@ reply on connect and shows the settings for that build.
 |---|---|---|---|
 | CS7.2, stock | the stock CS7.2 firmware | [Seth's repo](https://github.com/sjseth/AI-Case-Sorter-CS7.2) | as upstream |
 | CS7.2, SortIQ fork | `7.2.250925.6.2-SS2` | [CS72_SortIQ](CS72_SortIQ/) (source) | arduino-cli over USB, below |
-| SKR Pico sort arm | `SortIQ-Pico-2.8` | [SortIQ_Pico](SortIQ_Pico/README.md) | `~/SortIQ/tools/flash_pico.sh arm` |
-| SKR Pico carousel, with the optional case feeder | `SortIQ-PicoServo-0.9.2` | [SortIQ_PicoServo](SortIQ_PicoServo/README.md) | `~/SortIQ/tools/flash_pico.sh carousel` |
+| SKR Pico sort arm | `SortIQ-Pico-2.9` | [SortIQ_Pico](SortIQ_Pico/README.md) | `~/SortIQ/tools/flash_pico.sh arm` |
+| SKR Pico carousel, with the optional case feeder | `SortIQ-PicoServo-0.9.3` | [SortIQ_PicoServo](SortIQ_PicoServo/README.md) | `~/SortIQ/tools/flash_pico.sh carousel` |
 
 The SKR Pico images ship ready to flash; the full procedure is in
 [docs/PICO_MACHINE_SETUP.md](../docs/PICO_MACHINE_SETUP.md#flashing-the-skr-pico).

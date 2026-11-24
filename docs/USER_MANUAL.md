@@ -524,6 +524,10 @@ presets and **Go** / **Stop**.
     does the same from any tab. Switching off asks first, and is refused
     while a run is going. Without a relay, leave it off and power the
     board from its own switch.
+  - **NPN case sensor** (SKR Pico builds) — on for an NPN case sensor
+    (LJ8A3 `-Z/BX`), off for a PNP one (`-Z/BY`). See
+    [PICO_MACHINE_SETUP.md](PICO_MACHINE_SETUP.md#skr-pico-wiring) for the
+    matching board jumper.
   - **Case feeder** (carousel only, optional) — tick it if a case feeder
     is wired to the SKR Pico (see
     [PICO_MACHINE_SETUP.md](PICO_MACHINE_SETUP.md#case-feeder)).

@@ -19,7 +19,7 @@
 #include <EEPROM.h>
 #include <hardware/gpio.h>
 
-#define FIRMWARE_VERSION "SortIQ-Pico-2.8 (7.2-SS2-PICO)"
+#define FIRMWARE_VERSION "SortIQ-Pico-2.9 (7.2-SS2-PICO)"
 
 // ---------------- pins (SKR Pico) ----------------
 #define FEED_STEP 11
@@ -32,7 +32,12 @@
 // the endstop inputs carry the optos.
 #define FEED_HOME 4           // X-STOP slotted opto, LOW = blocked
 #define SORT_HOME 3           // Y-STOP slotted opto, LOW = blocked
-#define PROX_PIN  22          // WD-DET conditioned prox, HIGH = brass
+#define PROX_PIN  22          // WD-DET conditioned prox (see proxNpn)
+
+// Case sensor type: a PNP sensor drives WD-DET HIGH on brass, an NPN one
+// pulls it LOW. proxnpn:1 flips the reading; kept in EEPROM 14..15.
+bool proxNpn = false;
+inline bool brassAtSensor() { return (digitalRead(PROX_PIN) == HIGH) != proxNpn; }
 #define AUX_FAN1  17          // FAN1: controller case fan, full at boot
 #define AUX_FAN2  20          // FAN3: camera fan, full at boot
 #define CASEFAN   18          // FAN2: controller case fan, full at boot
@@ -791,7 +796,7 @@ void feedService() {
       return;
     case F_WAIT_BRASS:
       if (waitMsgT == 0) { waitMsgT = millis(); feedWaitStart = millis(); }
-      if (forceFeed || digitalRead(PROX_PIN) == HIGH) {
+      if (forceFeed || brassAtSensor()) {
         feedT0 = millis();
         feedState = forceFeed ? F_WAIT_SORT : F_DEBOUNCE;
         return;
@@ -825,7 +830,7 @@ void feedService() {
       }
       return;
     case F_DEBOUNCE:
-      if (digitalRead(PROX_PIN) != HIGH) { feedState = F_WAIT_BRASS; waitMsgT = 0; return; }
+      if (!brassAtSensor()) { feedState = F_WAIT_BRASS; waitMsgT = 0; return; }
       if (millis() - feedT0 >= (uint32_t)debounceTime) feedState = F_WAIT_SORT;
       return;
     case F_LAUNCH:                                 // standstill + settle before
@@ -995,6 +1000,18 @@ void persistFeedHomingOffset() {                   // like the carousel build:
   EEPROM.commit();
 }
 
+#define NPN_MAGIC_ADDR 14
+#define NPN_DATA_ADDR  15
+#define NPN_MAGIC      0x5C
+void persistProxNpn() {                            // the app pushes this on
+  uint8_t want = proxNpn ? 1 : 0;                  // every connect: write the
+  if (EEPROM.read(NPN_MAGIC_ADDR) == NPN_MAGIC &&  // flash only on a change
+      EEPROM.read(NPN_DATA_ADDR) == want) return;
+  EEPROM.write(NPN_MAGIC_ADDR, NPN_MAGIC);
+  EEPROM.write(NPN_DATA_ADDR, want);
+  EEPROM.commit();
+}
+
 // =====================================================================
 // protocol
 // =====================================================================
@@ -1025,6 +1042,7 @@ void sendConfig() {
   host.print(F(",\"CaseFanLevel\":")); host.print(caseFanLevel);
   host.print(F(",\"CameraLEDLevel\":")); host.print(cameraLEDLevel);
   host.print(F(",\"DebounceTimeout\":")); host.print(debounceTime);
+  host.print(F(",\"CaseSensorNPN\":")); host.print(proxNpn ? 1 : 0);
   host.print(F(",\"LaunchSettle\":")); host.print(launchSettle);
   host.print(F(",\"SortAccelFactor\":")); host.print(sortAccF);
   host.print(F(",\"SortDecelFactor\":")); host.print(sortDecF);
@@ -1127,7 +1145,7 @@ void handleCommand() {
   if (input == "sensors") {
     host.print(F("{\"feedHoming\":")); host.print(digitalRead(FEED_HOME));
     host.print(F(",\"sortHoming\":")); host.print(digitalRead(SORT_HOME));
-    host.print(F(",\"prox\":")); host.print(digitalRead(PROX_PIN));
+    host.print(F(",\"prox\":")); host.print(brassAtSensor() ? 1 : 0);
     host.print(F(",\"sortHomed\":")); host.print(sortHomed ? 1 : 0);
     host.print(F(",\"motorPower\":")); host.print(motorPower ? 1 : 0);
     host.println(F("}"));
@@ -1270,6 +1288,11 @@ void handleCommand() {
   SET_INT("armdwell:", armDwellMs, 0, 1000, );
   SET_INT("notificationdelay:", notificationDelay, 0, 1000, );
   SET_INT("debounceTime:", debounceTime, 0, 2000, );
+  if (input.startsWith(F("proxnpn:"))) {          // case sensor: 1 = NPN
+    proxNpn = toBool(input.substring(8));
+    persistProxNpn();
+    host.println(F("ok")); return;
+  }
   SET_INT("launchsettle:", launchSettle, 0, 1000, );
   SET_INT("automotorstandbytimeout:", motorStandby, 0, 3600, );
   SET_INT("sorthomebackoff:", sortHomeBackoff, 0, 400, );
@@ -1328,6 +1351,8 @@ void setup() {
     int v = -1; EEPROM.get(FHO_DATA_ADDR, v);
     if (v >= 0 && v <= 30) feedHomingOffset = v;
   }
+  if (EEPROM.read(NPN_MAGIC_ADDR) == NPN_MAGIC)     // case sensor type
+    proxNpn = EEPROM.read(NPN_DATA_ADDR) == 1;
 
   pinMode(FEED_HOME, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(FEED_HOME), feedHomeIsr, FALLING);

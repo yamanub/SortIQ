@@ -1,4 +1,4 @@
-# SortIQ-PicoServo 0.9.2
+# SortIQ-PicoServo 0.9.3
 
 Firmware for the SKR Pico servo-carousel machine: a 12-station wheel on the
 feed stepper, geared through a 25T pinion on the wheel's 72T ring gear
@@ -7,7 +7,7 @@ that the app drives over the Pi's I²C bus. It also runs the optional case
 feeder on the same board. The sort-arm machine's firmware is
 [SortIQ_Pico](../SortIQ_Pico/); both are supported.
 
-**Ready to flash:** `SortIQ-PicoServo-0.9.2.uf2` in this folder. On the Pi,
+**Ready to flash:** `SortIQ-PicoServo-0.9.3.uf2` in this folder. On the Pi,
 `~/SortIQ/tools/flash_pico.sh carousel` flashes it; a new board needs the
 BOOT jumper for its first flash. Building from source (PlatformIO,
 `pio run`) is only needed to change the firmware, and the
@@ -32,7 +32,8 @@ apply, including the `claimed_pios` local patch in `.pio/libdeps` (marker:
   (`feedwheelrev:`, app default 9216) kept in EEPROM.
 - **Tab opto:** X-STOP (GPIO 4). 12 tabs on a 30° grid, 768 microsteps apart.
 - **Case sensor:** WD-DET (GPIO 22) at the load station. Fit the P_S·IO22
-  "Proximity Switch" jumper; remove the NPN jumper for a PNP sensor.
+  "Proximity Switch" jumper. PNP sensor: NPN jumper removed. NPN sensor:
+  NPN jumper fitted and `proxnpn:1` (the app's **NPN case sensor** switch).
 - **Gate doors:** PCA9685 at 0x40 on the **Pi's** I²C bus (SDA pin 3,
   SCL pin 5, VCC from the Pi's 3.3 V). The servo rail runs from its own 5 V
   supply into the PCA9685's V+ terminals, with a common ground. The app
@@ -80,6 +81,7 @@ them is needed to run the machine.
 | `feeddebug:1` / `feeddebug:0` | One trace line per feed cycle, on or off |
 | `feedjog:<usteps>` | Open-loop wheel jog, no sensors: tape-mark the wheel and jog until the mark closes to measure wheel steps per turn |
 | `debounceTime:<ms>` | Case-sensor confirm time (default 100) |
+| `proxnpn:1` / `proxnpn:0` | Case sensor type: NPN or PNP (default PNP, kept in EEPROM; the app sets it from its **NPN case sensor** switch) |
 | `launchsettle:<ms>` | Pause before each feed move (default 0) |
 | `fan:<0-100>` | FAN2 speed (full speed from boot) |
 | `homefeeder` | Home the wheel |

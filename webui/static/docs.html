@@ -444,14 +444,21 @@ Y-STOP. Click to open full size.</figcaption>
 <tr><td><b style="color:#2fc9c3">Cyan</b></td><td><b>Y</b> motor and <b>Y-STOP</b> (GPIO 3)</td><td><b>sort arm only:</b> the arm stepper and its slotted homing opto; pull the Y DIAG jumper</td></tr>
 <tr><td><b style="color:#f5812a">Orange</b></td><td>FAN1 (IO17), FAN2 (IO18), FAN3 (IO20)</td><td>FAN1 and FAN2 are the controller case fans, FAN3 is the camera fan. All three are plain two-wire fans at full speed from boot; the app does not control them</td></tr>
 <tr><td><b style="color:#d9c300">Yellow</b></td><td>E0-STOP, 5 V and GND only</td><td>power for the LED ring's MOSFET module; the ring's PWM comes from the Pi's GPIO 18, which is why the ring is dark whenever the board is off</td></tr>
-<tr><td><b style="color:#3f48cc">Blue</b></td><td>WD-DET (12/24V · GND · P_S)</td><td>the M8 inductive case sensor: brown to 12/24V, blue to GND, black to P_S; HIGH on GPIO 22 = a case is staged</td></tr>
+<tr><td><b style="color:#3f48cc">Blue</b></td><td>WD-DET (12/24V · GND · P_S)</td><td>the M8 inductive case sensor: brown to 12/24V, blue to GND, black to P_S; PNP or NPN, set on the Machine tab (below)</td></tr>
 <tr><td><b style="color:#9fc800">Lime</b></td><td>“Proximity Switch” jumper (P_S · IO22)</td><td><b>fitted</b> — it carries WD-DET's conditioned output to GPIO 22. Without it the sensor's LED lights but the firmware never sees a case</td></tr>
 <tr><td><b style="color:#ff5ccd">Pink</b></td><td><b>E</b> motor, <b>Z-STOP</b> (GPIO 25), <b>E0-DIAG</b> jumper</td><td><b>carousel with a case feeder only:</b> the feeder motor on E; its break-beam receiver on Z-STOP (signal to IO25, plus 5 V and GND, with the emitter sharing 5 V and GND); the E0-DIAG jumper <b>fitted</b> for jam detection and the Z-DIAG jumper <b>removed</b>. The ring MOSFET keeps using only E0-STOP's 5 V and GND</td></tr>
 </table>
 <p class="docsNote">
-<b>Case sensor gotchas.</b> Remove the board's <b>NPN</b> jumper for a PNP
-sensor such as the LJ8A3 <code>-Z/BY</code>; fit it only for an NPN
-<code>-Z/BX</code>. And the sensor plugs into <b>WD-DET</b>, not the
+<b>Case sensor type.</b> A PNP sensor (LJ8A3 <code>-Z/BY</code>): the
+board's <b>NPN</b> jumper removed and Machine tab → Hardware → <b>NPN case
+sensor</b> off. An NPN sensor (LJ8A3 <code>-Z/BX</code>): the jumper fitted
+and the switch on. To check, send <code>sensors</code> from the Machine tab
+console: <code>"prox"</code> reads <code>1</code> with a case at the sensor
+and <code>0</code> without; reversed readings mean the switch is set the
+wrong way.
+</p>
+<p class="docsNote">
+<b>Case sensor gotcha.</b> The sensor plugs into <b>WD-DET</b>, not the
 identical-looking <b>Laser</b> header next to it: the Laser header's signal
 pin is FAN3's output (IO20), so a sensor there lights up but never reaches
 GPIO 22.
